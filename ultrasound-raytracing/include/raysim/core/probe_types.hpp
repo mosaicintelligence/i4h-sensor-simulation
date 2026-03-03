@@ -24,7 +24,8 @@ namespace raysim {
 enum ProbeType {
   PROBE_TYPE_CURVILINEAR = 0,
   PROBE_TYPE_LINEAR_ARRAY = 1,
-  PROBE_TYPE_PHASED_ARRAY = 2
+  PROBE_TYPE_PHASED_ARRAY = 2,
+  PROBE_TYPE_IVUS = 3
 };
 
 }  // namespace raysim

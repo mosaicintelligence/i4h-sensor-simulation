@@ -181,6 +181,17 @@ class CUDAAlgorithms {
                                                   float sector_angle, float far, uint2 output_size,
                                                   cudaStream_t stream);
 
+  /**
+   * Convert IVUS polar scan data to unwrapped display (angle horizontal, depth vertical)
+   *
+   * @param scan_lines 2D array (depth samples x angular rays)
+   * @param size Size of scan line array (buffer_size, num_angular_rays)
+   * @param output_size Width and height of output image in pixels (angle, depth)
+   * @param stream [in] CUDA stream
+   */
+  std::unique_ptr<CudaMemory> scan_convert_ivus(CudaMemory* scan_lines, uint2 size,
+                                                uint2 output_size, cudaStream_t stream);
+
  private:
   const CudaLauncher normalize_launcher_;
   const CudaLauncher convolve_rows_launcher_;
@@ -193,6 +204,7 @@ class CUDAAlgorithms {
   const CudaLauncher scan_convert_curvilinear_launcher_;
   const CudaLauncher scan_convert_linear_launcher_;
   const CudaLauncher scan_convert_phased_launcher_;
+  const CudaLauncher scan_convert_ivus_launcher_;
 
   static const size_t NUM_SUB_STREAMS =
       2;  //< Some algorithms run parallel operations in sub-streams
@@ -208,6 +220,8 @@ class CUDAAlgorithms {
   std::unique_ptr<CudaTexture> scan_convert_linear_texture_;
   std::shared_ptr<CudaArray> scan_convert_phased_array_;
   std::unique_ptr<CudaTexture> scan_convert_phased_texture_;
+  std::shared_ptr<CudaArray> scan_convert_ivus_array_;
+  std::unique_ptr<CudaTexture> scan_convert_ivus_texture_;
 };
 
 }  // namespace raysim

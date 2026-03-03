@@ -35,6 +35,7 @@ struct Params {
   Material* materials;
   uint32_t background_material_id;
   cudaTextureObject_t scattering_texture;
+  float scattering_resolution_mm;  ///< Voxel scale for scattering texture [mm]; use smaller value for IVUS
   OptixTraversableHandle handle;
   float source_frequency;
   float contact_epsilon;

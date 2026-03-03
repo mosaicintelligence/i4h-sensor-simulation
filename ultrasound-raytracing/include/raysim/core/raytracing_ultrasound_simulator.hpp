@@ -19,7 +19,9 @@
 #define CPP_RAYTRACING_ULTRASOUND_SIMULATOR
 
 #include <memory>
+#include <optional>
 
+#include "raysim/core/probe_types.hpp"
 #include "raysim/cuda/cuda_helper.hpp"
 #include "raysim/cuda/optix_helper.hpp"
 
@@ -139,6 +141,7 @@ class RaytracingUltrasoundSimulator {
   CudaMemory psf_tmp_;
 
   std::unique_ptr<CudaMemory> tgc_curve_;
+  std::optional<ProbeType> tgc_probe_type_;  ///< Probe type used to build current TGC (for cache invalidation)
 
   void update_psfs(const BaseProbe* probe, cudaStream_t stream);
 };

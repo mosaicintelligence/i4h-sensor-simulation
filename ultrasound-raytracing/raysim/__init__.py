@@ -21,6 +21,7 @@ A GPU-accelerated ultrasound simulation package that uses ray-tracing for realis
 
 from .ray_sim_python import (
     CurvilinearProbe,
+    IVUSProbe,
     LinearArrayProbe,
     Materials,
     PhasedArrayProbe,
@@ -34,6 +35,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "CurvilinearProbe",
+    "IVUSProbe",
     "LinearArrayProbe",
     "Materials",
     "PhasedArrayProbe",
