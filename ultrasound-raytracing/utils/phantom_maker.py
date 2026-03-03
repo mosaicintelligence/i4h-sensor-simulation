@@ -323,9 +323,156 @@ def generate_sphere_in_oval_phantom(
 
     return sphere_filename, oval_filename, combined_filename
 
+
+def generate_cylinder_mesh(
+    output_dir="mesh",
+    radius=4.0,
+    length=4.0,
+    num_segments=129,
+    inward_normals=True,
+):
+    """
+    Generate an open cylinder (curved wall only, no caps) for IVUS vessel phantoms.
+    Axis is along Y; cross-sections in the xz plane are circles. Units are mm.
+    Use inward_normals=True so rays from the lumen (center) hit the front face.
+    Default 129 segments avoids alignment with 256 IVUS rays (reduces black bands).
+
+    Args:
+        output_dir: Directory to write the OBJ file (default: mesh).
+        radius: Cylinder radius in mm (default: 4.0).
+        length: Extent along Y in mm; cylinder runs from y=-length/2 to y=length/2 (default: 4.0).
+        num_segments: Number of segments around the circumference (default: 129).
+        inward_normals: If True, normals point toward the axis (for imaging from inside).
+
+    Returns:
+        Path to the written OBJ file.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    filename = os.path.join(output_dir, "Cylinder.obj")
+
+    half = length / 2.0
+    vertices = []
+    normals = []
+
+    # Two rings: y = -half and y = +half
+    for ring in (0, 1):
+        y = -half if ring == 0 else half
+        for i in range(num_segments):
+            theta = 2 * math.pi * i / num_segments
+            x = radius * math.cos(theta)
+            z = radius * math.sin(theta)
+            vertices.append((x, y, z))
+            # Normal: inward (toward axis) for IVUS so rays from center hit front face
+            sign = -1.0 if inward_normals else 1.0
+            nx = sign * math.cos(theta)
+            nz = sign * math.sin(theta)
+            normals.append((nx, 0.0, nz))
+
+    with open(filename, "w") as f:
+        f.write("# Open cylinder mesh (IVUS vessel phantom)\n")
+        f.write(f"# Radius={radius} mm, length={length} mm, segments={num_segments}\n")
+        f.write("# Axis along Y; normals inward for imaging from lumen\n\n")
+        f.write("o Cylinder\n\n")
+        for v in vertices:
+            f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+        f.write("\n")
+        for n in normals:
+            f.write(f"vn {n[0]:.6f} {n[1]:.6f} {n[2]:.6f}\n")
+        f.write("\n")
+        # Winding so the inner face (toward axis) is front: swap vertex order vs outward-facing
+        for i in range(num_segments):
+            i_next = (i + 1) % num_segments
+            v0 = i + 1
+            v1 = i_next + 1
+            v2 = i_next + num_segments + 1
+            v3 = i + num_segments + 1
+            # (v0, v2, v1) and (v0, v3, v2) so face normal points inward
+            f.write(f"f {v0}//{v0} {v2}//{v2} {v1}//{v1}\n")
+            f.write(f"f {v0}//{v0} {v3}//{v3} {v2}//{v2}\n")
+
+    return filename
+
+
+def generate_cylinder_thick_mesh(
+    output_dir="mesh",
+    inner_radius=3.5,
+    outer_radius=4.0,
+    length=4.0,
+    num_segments=129,
+):
+    """
+    Generate a thick-walled open cylinder (inner and outer surfaces, no caps).
+    Writes two OBJ files: Cylinder_inner.obj and Cylinder_outer.obj, both
+    with correct winding and normals for IVUS (imaging from inside the lumen).
+    Load both meshes into the world to get a wall with thickness.
+    Default 129 segments avoids alignment with 256 IVUS rays (reduces black bands).
+
+    Args:
+        output_dir: Directory to write the OBJ files (default: mesh).
+        inner_radius: Radius of the lumen-facing surface in mm (default: 3.5).
+        outer_radius: Radius of the outer surface in mm (default: 4.0).
+        length: Extent along Y in mm (default: 4.0).
+        num_segments: Number of segments around the circumference (default: 129).
+
+    Returns:
+        Tuple (path_inner, path_outer).
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    half = length / 2.0
+
+    # Both surfaces use inward normals so rays from the lumen (and from inside the wall)
+    # hit the front face and the tracer records both echoes.
+    for name, radius, inward in (
+        ("Cylinder_inner", inner_radius, True),
+        ("Cylinder_outer", outer_radius, True),
+    ):
+        vertices = []
+        normals = []
+        for ring in (0, 1):
+            y = -half if ring == 0 else half
+            for i in range(num_segments):
+                theta = 2 * math.pi * i / num_segments
+                x = radius * math.cos(theta)
+                z = radius * math.sin(theta)
+                vertices.append((x, y, z))
+                sign = -1.0 if inward else 1.0
+                nx = sign * math.cos(theta)
+                nz = sign * math.sin(theta)
+                normals.append((nx, 0.0, nz))
+
+        filename = os.path.join(output_dir, f"{name}.obj")
+        with open(filename, "w") as f:
+            f.write(f"# {name} for IVUS thick vessel wall\n")
+            f.write(f"# Radius={radius} mm, length={length} mm\n\n")
+            f.write(f"o {name}\n\n")
+            for v in vertices:
+                f.write(f"v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\n")
+            f.write("\n")
+            for n in normals:
+                f.write(f"vn {n[0]:.6f} {n[1]:.6f} {n[2]:.6f}\n")
+            f.write("\n")
+            for i in range(num_segments):
+                i_next = (i + 1) % num_segments
+                v0, v1 = i + 1, i_next + 1
+                v2 = i_next + num_segments + 1
+                v3 = i + num_segments + 1
+                # Inward winding so front face is toward axis (hit from lumen or from inside wall)
+                f.write(f"f {v0}//{v0} {v2}//{v2} {v1}//{v1}\n")
+                f.write(f"f {v0}//{v0} {v3}//{v3} {v2}//{v2}\n")
+
+    return (
+        os.path.join(output_dir, "Cylinder_inner.obj"),
+        os.path.join(output_dir, "Cylinder_outer.obj"),
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description='Generate 3D phantom meshes for ultrasound simulation')
-    parser.add_argument('type', choices=['checker', 'sphere_in_oval'], help='Type of phantom to generate')
+    parser.add_argument(
+        'type',
+        choices=['checker', 'sphere_in_oval', 'cylinder'],
+        help='Type of phantom to generate',
+    )
     parser.add_argument('--output', '-o', default='mesh', help='Output directory (default: mesh)')
 
     # Checker phantom arguments
@@ -342,6 +489,20 @@ def main():
     parser.add_argument('--sphere-offset', type=float, nargs=3, default=[10.0, 5.0, 0.0],
                       help='Offset of sphere from center in mm (default: 10.0 5.0 0.0)')
 
+    # Cylinder (IVUS vessel) arguments
+    parser.add_argument('--cylinder-radius', type=float, default=4.0,
+                        help='Cylinder radius in mm (default: 4.0)')
+    parser.add_argument('--cylinder-length', type=float, default=4.0,
+                        help='Cylinder length along Y in mm (default: 4.0)')
+    parser.add_argument('--cylinder-segments', type=int, default=129,
+                        help='Number of angular segments (default: 129, avoids IVUS ray alignment)')
+    parser.add_argument('--cylinder-thick', action='store_true',
+                        help='Generate thick wall: Cylinder_inner.obj and Cylinder_outer.obj')
+    parser.add_argument('--cylinder-inner-radius', type=float, default=3.5,
+                        help='Inner radius for thick cylinder in mm (default: 3.5)')
+    parser.add_argument('--cylinder-outer-radius', type=float, default=4.0,
+                        help='Outer radius for thick cylinder in mm (default: 4.0)')
+
     args = parser.parse_args()
 
     # Generate the requested phantom
@@ -354,6 +515,24 @@ def main():
             height=args.checker_height
         )
         print(f"Generated checker phantom: {output_file}")
+    elif args.type == "cylinder":
+        if getattr(args, 'cylinder_thick', False):
+            path_inner, path_outer = generate_cylinder_thick_mesh(
+                output_dir=args.output,
+                inner_radius=args.cylinder_inner_radius,
+                outer_radius=args.cylinder_outer_radius,
+                length=args.cylinder_length,
+                num_segments=args.cylinder_segments,
+            )
+            print(f"Generated thick cylinder: {path_inner}, {path_outer}")
+        else:
+            output_file = generate_cylinder_mesh(
+                output_dir=args.output,
+                radius=args.cylinder_radius,
+                length=args.cylinder_length,
+                num_segments=args.cylinder_segments,
+            )
+            print(f"Generated cylinder mesh: {output_file}")
     else:  # sphere_in_oval
         sphere_file, oval_file, combined_file = generate_sphere_in_oval_phantom(
             output_dir=args.output,

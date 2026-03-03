@@ -18,6 +18,7 @@
 from raysim.ray_sim_python import (
     CurvilinearProbe,
     Hitable,
+    IVUSProbe,
     LinearArrayProbe,
     Material,
     Materials,
@@ -33,6 +34,7 @@ from raysim.ray_sim_python import (
 __all__ = [
     "CurvilinearProbe",
     "Hitable",
+    "IVUSProbe",
     "LinearArrayProbe",
     "Material",
     "Materials",

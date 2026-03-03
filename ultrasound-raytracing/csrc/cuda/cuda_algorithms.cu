@@ -440,6 +440,24 @@ static __global__ void scan_convert_phased_kernel(cudaTextureObject_t input, uin
   output[index.y * output_size.x + index.x] = tex2D<float>(input, source_x, source_y);
 }
 
+// IVUS: unwrapped polar display (angle horizontal, depth vertical)
+// Input texture: (s, t) = (depth_norm, angle_norm) with size (buffer_size, num_angular_rays)
+static __global__ void scan_convert_ivus_kernel(cudaTextureObject_t input, uint2 input_size,
+                                                float* __restrict__ output, uint2 output_size) {
+  (void)input_size;
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+
+  if ((index.x >= output_size.x) || (index.y >= output_size.y)) { return; }
+
+  // Output: index.x = angle (0 .. width-1), index.y = depth (0 .. height-1)
+  // Standard unwrapped IVUS: horizontal = angle, vertical = depth (probe at top)
+  const float angle_norm = (float(index.x) + 0.5f) / float(output_size.x);
+  const float depth_norm = (float(index.y) + 0.5f) / float(output_size.y);
+
+  output[index.y * output_size.x + index.x] = tex2D<float>(input, depth_norm, angle_norm);
+}
+
 CUDAAlgorithms::CUDAAlgorithms()
     : normalize_launcher_((void*)&normalize_kernel),
       convolve_rows_launcher_((void*)&convolve_rows_kernel),
@@ -451,7 +469,8 @@ CUDAAlgorithms::CUDAAlgorithms()
       median_clip_launcher_((void*)&median_clip_kernel),
       scan_convert_curvilinear_launcher_((void*)&scan_convert_curvilinear_kernel),
       scan_convert_linear_launcher_((void*)&scan_convert_linear_kernel),
-      scan_convert_phased_launcher_((void*)&scan_convert_phased_kernel) {
+      scan_convert_phased_launcher_((void*)&scan_convert_phased_kernel),
+      scan_convert_ivus_launcher_((void*)&scan_convert_ivus_kernel) {
   CUDA_CHECK(cudaFuncSetAttribute(hilbert_kernel,
                                   cudaFuncAttributeMaxDynamicSharedMemorySize,
                                   HilbertForwardFFT::shared_memory_size));
@@ -730,6 +749,35 @@ std::unique_ptr<CudaMemory> CUDAAlgorithms::scan_convert_phased(CudaMemory* scan
                                        output_size,
                                        sector_angle,
                                        far);
+
+  return std::move(grid_z);
+}
+
+std::unique_ptr<CudaMemory> CUDAAlgorithms::scan_convert_ivus(CudaMemory* scan_lines,
+                                                             uint2 input_size, uint2 output_size,
+                                                             cudaStream_t stream) {
+  if (scan_convert_ivus_array_ &&
+      ((scan_convert_ivus_array_->get_size().width != input_size.x) ||
+       (scan_convert_ivus_array_->get_size().height != input_size.y))) {
+    scan_convert_ivus_array_.reset();
+  }
+  if (!scan_convert_ivus_array_) {
+    scan_convert_ivus_array_ = std::make_shared<CudaArray>(
+        cudaExtent({input_size.x, input_size.y, 0}), cudaChannelFormatKindFloat, sizeof(float));
+    scan_convert_ivus_texture_ = std::make_unique<CudaTexture>(
+        scan_convert_ivus_array_, cudaAddressModeClamp, cudaFilterModeLinear);
+  }
+
+  scan_convert_ivus_array_->upload(scan_lines, stream);
+
+  auto grid_z = std::make_unique<CudaMemory>(output_size.x * output_size.y * sizeof(float), stream);
+
+  scan_convert_ivus_launcher_.launch(output_size,
+                                    stream,
+                                    scan_convert_ivus_texture_->get_texture().get(),
+                                    input_size,
+                                    reinterpret_cast<float*>(grid_z->get_ptr(stream)),
+                                    output_size);
 
   return std::move(grid_z);
 }

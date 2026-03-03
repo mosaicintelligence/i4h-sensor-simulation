@@ -30,6 +30,7 @@
 
 #include "raysim/core/curvilinear_probe.hpp"
 #include "raysim/core/hitable.hpp"
+#include "raysim/core/ivus_probe.hpp"
 #include "raysim/core/linear_array_probe.hpp"
 #include "raysim/core/material.hpp"
 #include "raysim/core/phased_array_probe.hpp"
@@ -364,13 +365,34 @@ Elements steer beams electronically to create a sector image from a small footpr
            py::arg("speed_of_sound") = 1.54f,
            py::arg("pulse_duration") = 2.0f);
 
+  py::class_<raysim::IVUSProbe, raysim::BaseProbe>(m, "IVUSProbe", R"pbdoc(
+IVUS (Intravascular Ultrasound) probe. Single rotating transducer at catheter center;
+rays emanate radially over 360° for a cross-sectional vessel image.
+)pbdoc")
+      .def(py::init<const raysim::Pose&,
+                    uint32_t,
+                    float,
+                    float,
+                    uint32_t,
+                    float,
+                    float,
+                    float>(),
+           py::arg("pose") = raysim::Pose(),
+           py::arg("num_angular_rays") = 256,
+           py::arg("frequency") = 40.0f,
+           py::arg("elevational_height") = 0.0f,
+           py::arg("num_el_samples") = 1,
+           py::arg("f_num") = 1.0f,
+           py::arg("speed_of_sound") = 1.54f,
+           py::arg("pulse_duration") = 2.0f);
+
   // Bind SimParams struct
   py::class_<raysim::RaytracingUltrasoundSimulator::SimParams>(m, "SimParams", R"pbdoc(
         Simulation parameters for ultrasound imaging.
 
         Parameters:
-            - t_far: Maximum imaging depth
-            - buffer_size: Ray buffer size
+            - t_far: Maximum imaging depth [mm]. For IVUS, this is max radial depth (e.g. 5–10 mm).
+            - buffer_size: Samples per ray (depth). Must match the build's Hilbert row length (e.g. 4096).
             - max_depth: Maximum ray reflection depth
             - min_intensity: Minimum ray intensity threshold
             - use_scattering: Enable scattering simulation
@@ -378,15 +400,15 @@ Elements steer beams electronically to create a sector image from a small footpr
             - median_clip_filter: Enable median clip filter for speckle reduction
             - enable_cuda_timing: Enable CUDA timing measurements
             - write_debug_images: Enable debug image output
-            - b_mode_size: B-mode image size as (width, height), accepts tuple, list, or numpy array
+            - b_mode_size: B-mode image size (width, height). For IVUS unwrapped display: (angle pixels, depth pixels).
     )pbdoc")
       .def(py::init<>())
       .def_readwrite("t_far",
                      &raysim::RaytracingUltrasoundSimulator::SimParams::t_far,
-                     "Maximum imaging depth")
+                     "Maximum imaging depth [mm]. For IVUS: max radial depth.")
       .def_readwrite("buffer_size",
                      &raysim::RaytracingUltrasoundSimulator::SimParams::buffer_size,
-                     "Ray buffer size")
+                     "Samples per ray (depth). Must match build's Hilbert row length (e.g. 4096).")
       .def_readwrite("max_depth",
                      &raysim::RaytracingUltrasoundSimulator::SimParams::max_depth,
                      "Maximum ray reflection depth")

@@ -230,8 +230,12 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
   }
 
   if (!psf_lat_) {
+    // For point-source probes (e.g. IVUS) element_spacing is 0; use fallback to avoid div-by-zero
+    const float inv_spacing = probe->get_element_spacing() > 0.f
+                                 ? 1.f / probe->get_element_spacing()
+                                 : 1.f;
     psf_lat_ = create_gaussian_psf(
-        stream, probe->get_lateral_resolution(), 1.f / probe->get_element_spacing());
+        stream, probe->get_lateral_resolution(), inv_spacing);
   }
 
   if ((probe->get_num_el_samples() > 1) && !psf_elev_) {
@@ -286,6 +290,8 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
         reinterpret_cast<Material*>(materials_->get_material_data()->get_ptr(sim_params.stream));
     params.background_material_id = materials_->get_index(world_->get_background_material());
     params.scattering_texture = world_->get_scattering_texture();
+    params.scattering_resolution_mm =
+        (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) ? 10.f : 50.f;
     params.handle = world_->get_gas_handle();
     params.source_frequency = probe->get_frequency();
     params.contact_epsilon = sim_params.contact_epsilon;
@@ -354,11 +360,20 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     CudaTiming cuda_timing(
         sim_params.enable_cuda_timing, "Time-Gain-Compensation", sim_params.stream);
 
-    if (!tgc_curve_ || (tgc_curve_->get_size() / sizeof(float) != sim_params.buffer_size)) {
-      std::vector<ControlPoint> control_points{{0.f, 0.f}, {40.f, 28.f}};  // (depth [cm], amp [dB])
-
+    const bool tgc_size_ok = tgc_curve_ && (tgc_curve_->get_size() / sizeof(float) == sim_params.buffer_size);
+    const bool tgc_probe_match = tgc_probe_type_.has_value() && (*tgc_probe_type_ == probe->get_probe_type());
+    if (!tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
+      std::vector<ControlPoint> control_points;
+      if (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) {
+        // IVUS: short depth range (typical 0–10 mm); TGC over 0–1 cm
+        control_points = {{0.f, 0.f}, {1.f, 14.f}};  // (depth [cm], amp [dB])
+      } else {
+        // Abdominal / general: 0–40 cm
+        control_points = {{0.f, 0.f}, {40.f, 28.f}};
+      }
       tgc_curve_ = create_piece_wise_tgc(
           sim_params.stream, sim_params.buffer_size, control_points, 1540.f, SAMPLING_FREQ);
+      tgc_probe_type_ = probe->get_probe_type();
     }
     cuda_algorithms_->mul_row(d_scanlines.get(), plane_size, tgc_curve_.get(), sim_params.stream);
   }
@@ -434,7 +449,6 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
                                                        sim_params.stream);
         break;
       case ProbeType::PROBE_TYPE_CURVILINEAR:
-
         b_mode = cuda_algorithms_->scan_convert_curvilinear(d_scanlines.get(),
                                                             plane_size,
                                                             probe->get_sector_angle(),
@@ -442,6 +456,12 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
                                                             sim_params.t_far + probe->get_radius(),
                                                             sim_params.b_mode_size,
                                                             sim_params.stream);
+        break;
+      case ProbeType::PROBE_TYPE_IVUS:
+        b_mode = cuda_algorithms_->scan_convert_ivus(d_scanlines.get(),
+                                                     plane_size,
+                                                     sim_params.b_mode_size,
+                                                     sim_params.stream);
         break;
     }
   }
@@ -463,6 +483,13 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     case ProbeType::PROBE_TYPE_LINEAR_ARRAY:
       min_x = -probe->get_width() / 2.0f;
       max_x = probe->get_width() / 2.0f;
+      min_z = 0.f;
+      max_z = sim_params.t_far;
+      break;
+    case ProbeType::PROBE_TYPE_IVUS:
+      // Unwrapped display: x = angle (degrees 0..360), z = depth (mm, 0..t_far)
+      min_x = 0.f;
+      max_x = 360.f;
       min_z = 0.f;
       max_z = sim_params.t_far;
       break;

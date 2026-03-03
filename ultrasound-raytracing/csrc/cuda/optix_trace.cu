@@ -41,9 +41,9 @@ static __forceinline__ __device__ Payload get_payload() {
   return payload;
 }
 
-static __device__ float get_scattering_value(float3 pos, const Material* material,
-                                             float resolution_mm = 50.f) {
-  // Convert point to texture coordinates
+static __device__ float get_scattering_value(float3 pos, const Material* material) {
+  // Convert point to texture coordinates (resolution_mm sets speckle scale)
+  const float resolution_mm = params.scattering_resolution_mm;
   pos /= resolution_mm;
 
   const float2 scatter_val = tex3D<float2>(params.scattering_texture, pos.x, pos.y, pos.z);
@@ -302,6 +302,22 @@ static __forceinline__ __device__ void generate_phased_array_probe_ray_local(
   out_direction = normalize(out_direction);
 }
 
+// Helper function to generate ray for IVUS probe in local coordinates
+static __forceinline__ __device__ void generate_ivus_probe_ray_local(
+    const RayGenData* ray_gen_data, float d_x, float3& out_origin, float3& out_direction) {
+  (void)ray_gen_data;
+  // Map d_x from [-0.5, 0.5] to angle in [0, 2*pi] for full 360° radial sweep
+  constexpr float two_pi = 6.28318530717958647692f;
+  const float angle = (d_x + 0.5f) * two_pi;
+
+  // Single origin at catheter center (point source)
+  out_origin = make_float3(0.f, 0.f, 0.f);
+
+  // Radial direction in xz plane: +z at angle 0, consistent with IVUSProbe::get_local_element_direction
+  out_direction = make_float3(sinf(angle), 0.f, cosf(angle));
+  out_direction = normalize(out_direction);
+}
+
 extern "C" __global__ void __raygen__rg() {
   const uint3 idx = optixGetLaunchIndex();
   const uint3 dim = optixGetLaunchDimensions();
@@ -327,6 +343,11 @@ extern "C" __global__ void __raygen__rg() {
 
     case PROBE_TYPE_PHASED_ARRAY: {
       generate_phased_array_probe_ray_local(ray_gen_data, d_x, origin, direction);
+      break;
+    }
+
+    case PROBE_TYPE_IVUS: {
+      generate_ivus_probe_ray_local(ray_gen_data, d_x, origin, direction);
       break;
     }
   }
