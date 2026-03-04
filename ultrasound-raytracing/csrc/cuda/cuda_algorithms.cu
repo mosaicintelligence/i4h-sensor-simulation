@@ -83,6 +83,38 @@ static __global__ void convolve_columns_kernel(const float* __restrict__ source,
   dst[offset] = sum;
 }
 
+static __global__ void convolve_columns_depth_dependent_kernel(const float* __restrict__ source,
+                                                               uint3 size,
+                                                               float* __restrict__ dst,
+                                                               const float* __restrict__ kernel_2d,
+                                                               uint32_t depth_bins,
+                                                               uint32_t kernel_radius) {
+  const uint3 index = make_uint3(blockIdx.x * blockDim.x + threadIdx.x,
+                                 blockIdx.y * blockDim.y + threadIdx.y,
+                                 blockIdx.z * blockDim.z + threadIdx.z);
+
+  if ((index.x >= size.x) || (index.y >= size.y) || (index.z >= size.z)) { return; }
+
+  const uint32_t kernel_len = 2 * kernel_radius + 1;
+  const uint32_t depth_bin = (size.x > 0)
+                                 ? min((index.x * depth_bins) / size.x, depth_bins - 1u)
+                                 : 0u;
+  const float* kernel = kernel_2d + depth_bin * kernel_len;
+
+  const int k_min = -min(static_cast<int>(index.y), static_cast<int>(kernel_radius));
+  const int k_max = min(static_cast<int>(size.y - 1 - index.y), static_cast<int>(kernel_radius));
+  const int offset = ((index.z * size.y) + index.y) * size.x + index.x;
+  source += offset + k_min * size.x;
+
+  float sum = 0.f;
+  for (int k = k_min; k <= k_max; ++k) {
+    sum += *source * kernel[k + kernel_radius];
+    source += size.x;
+  }
+
+  dst[offset] = sum;
+}
+
 static __global__ void convolve_planes_kernel(const float* __restrict__ source, uint3 size,
                                               float* __restrict__ dst,
                                               const float* __restrict__ kernel,
@@ -462,6 +494,8 @@ CUDAAlgorithms::CUDAAlgorithms()
     : normalize_launcher_((void*)&normalize_kernel),
       convolve_rows_launcher_((void*)&convolve_rows_kernel),
       convolve_columns_launcher_((void*)&convolve_columns_kernel),
+      convolve_columns_depth_dependent_launcher_(
+          (void*)&convolve_columns_depth_dependent_kernel),
       convolve_planes_launcher_((void*)&convolve_planes_kernel),
       mean_planes_launcher_((void*)&mean_planes_kernel),
       log_compression_launcher_((void*)&log_compression_kernel),
@@ -525,6 +559,21 @@ void CUDAAlgorithms::convolve_columns(CudaMemory* source, uint3 size, CudaMemory
                                     reinterpret_cast<float*>(dst->get_ptr(stream)),
                                     reinterpret_cast<const float*>(kernel->get_ptr(stream)),
                                     kernel->get_size() / sizeof(float) / 2);
+}
+
+void CUDAAlgorithms::convolve_columns_depth_dependent(CudaMemory* source, uint3 size,
+                                                      CudaMemory* dst, CudaMemory* kernel_2d,
+                                                      uint32_t depth_bins, uint32_t kernel_radius,
+                                                      cudaStream_t stream) {
+  convolve_columns_depth_dependent_launcher_.launch(
+      size,
+      stream,
+      reinterpret_cast<const float*>(source->get_ptr(stream)),
+      size,
+      reinterpret_cast<float*>(dst->get_ptr(stream)),
+      reinterpret_cast<const float*>(kernel_2d->get_ptr(stream)),
+      depth_bins,
+      kernel_radius);
 }
 
 void CUDAAlgorithms::convolve_planes(CudaMemory* source, uint3 size, CudaMemory* dst,

@@ -40,6 +40,8 @@ class IVUSProbe : public BaseProbe {
    * @param f_num F-number (focal length / aperture) - unitless
    * @param speed_of_sound Speed of sound in tissue in mm/μs
    * @param pulse_duration Duration of excitation pulse in cycles
+   * @param element_radius_mm Element radius in mm (e.g. 0.6 for focused circular element; 0 = point source)
+   * @param focal_length_mm Focal length in mm (e.g. 4); beam narrowest at this depth (0 = no focus)
    */
   explicit IVUSProbe(const Pose& pose = Pose(make_float3(0.f, 0.f, 0.f),
                                              make_float3(0.f, 0.f, 0.f)),
@@ -49,10 +51,14 @@ class IVUSProbe : public BaseProbe {
                      uint32_t num_el_samples = 1,
                      float f_num = 1.0f,
                      float speed_of_sound = 1.54f,  // mm/us
-                     float pulse_duration = 2.f)
+                     float pulse_duration = 2.f,
+                     float element_radius_mm = 0.6f,
+                     float focal_length_mm = 4.f)
       : BaseProbe(pose, num_angular_rays, frequency, elevational_height, num_el_samples, f_num,
                   speed_of_sound, pulse_duration, 0.f),  // width = 0 (point source)
-        sector_angle_(360.f) {}
+        sector_angle_(360.f),
+        element_radius_mm_(element_radius_mm),
+        focal_length_mm_(focal_length_mm) {}
 
   /**
    * Get element position in local probe coordinates.
@@ -87,8 +93,13 @@ class IVUSProbe : public BaseProbe {
 
   ProbeType get_probe_type() const override { return ProbeType::PROBE_TYPE_IVUS; }
 
+  float get_element_radius_mm() const override { return element_radius_mm_; }
+  float get_focal_length_mm() const override { return focal_length_mm_; }
+
  private:
-  float sector_angle_;  ///< 360° for full circumferential sweep
+  float sector_angle_;       ///< 360° for full circumferential sweep
+  float element_radius_mm_;  ///< Element radius in mm (0 = point source)
+  float focal_length_mm_;    ///< Focal length in mm (beam narrowest at this depth; 0 = no focus)
 };
 
 }  // namespace raysim

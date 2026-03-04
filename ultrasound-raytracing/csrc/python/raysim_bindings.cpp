@@ -172,7 +172,8 @@ PYBIND11_MODULE(ray_sim_python, m) {
         Get the index of a predefined material.
 
         Args:
-            name (str): Material name (e.g., "water", "fat", "muscle", "liver", "bone", "blood")
+            name (str): Material name (e.g., "water", "fat", "muscle", "liver", "bone", "blood",
+                "lumen", "vessel_wall", "extravascular")
 
         Returns:
             int: Material index for use in World objects
@@ -376,6 +377,8 @@ rays emanate radially over 360° for a cross-sectional vessel image.
                     uint32_t,
                     float,
                     float,
+                    float,
+                    float,
                     float>(),
            py::arg("pose") = raysim::Pose(),
            py::arg("num_angular_rays") = 256,
@@ -384,7 +387,11 @@ rays emanate radially over 360° for a cross-sectional vessel image.
            py::arg("num_el_samples") = 1,
            py::arg("f_num") = 1.0f,
            py::arg("speed_of_sound") = 1.54f,
-           py::arg("pulse_duration") = 2.0f);
+           py::arg("pulse_duration") = 2.0f,
+           py::arg("element_radius_mm") = 0.6f,
+           py::arg("focal_length_mm") = 4.0f)
+      .def_property_readonly("element_radius_mm", &raysim::IVUSProbe::get_element_radius_mm)
+      .def_property_readonly("focal_length_mm", &raysim::IVUSProbe::get_focal_length_mm);
 
   // Bind SimParams struct
   py::class_<raysim::RaytracingUltrasoundSimulator::SimParams>(m, "SimParams", R"pbdoc(

@@ -66,6 +66,22 @@ class CUDAAlgorithms {
                         cudaStream_t stream);
 
   /**
+   * Depth-dependent column convolution (lateral PSF varies with row/depth).
+   * For each row index.x, uses kernel from kernel_2d[depth_bin], where depth_bin = index.x * depth_bins / size.x.
+   *
+   * @param source [in] source buffer (size.x = depth, size.y = lateral/angle)
+   * @param size [in] buffer size (uint3: depth, lateral, planes)
+   * @param dst [out] destination buffer
+   * @param kernel_2d [in] 2D kernel: depth_bins rows × (2*kernel_radius+1) columns, row-major
+   * @param depth_bins [in] number of depth bins
+   * @param kernel_radius [in] half-width of each 1D kernel
+   * @param stream [in] CUDA stream
+   */
+  void convolve_columns_depth_dependent(CudaMemory* source, uint3 size, CudaMemory* dst,
+                                        CudaMemory* kernel_2d, uint32_t depth_bins,
+                                        uint32_t kernel_radius, cudaStream_t stream);
+
+  /**
    * Plane convolution filter.
    *
    * @param source [in] source buffer data
@@ -196,6 +212,7 @@ class CUDAAlgorithms {
   const CudaLauncher normalize_launcher_;
   const CudaLauncher convolve_rows_launcher_;
   const CudaLauncher convolve_columns_launcher_;
+  const CudaLauncher convolve_columns_depth_dependent_launcher_;
   const CudaLauncher convolve_planes_launcher_;
   const CudaLauncher mean_planes_launcher_;
   const CudaLauncher log_compression_launcher_;
