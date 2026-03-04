@@ -253,6 +253,18 @@ class BaseProbe {
    */
   virtual ProbeType get_probe_type() const { return ProbeType::PROBE_TYPE_LINEAR_ARRAY; }
 
+  /**
+   * Get element radius in mm (for focused single-element probes, e.g. IVUS).
+   * @return Element radius in mm, or 0 if not applicable
+   */
+  virtual float get_element_radius_mm() const { return 0.f; }
+
+  /**
+   * Get focal length in mm (for focused single-element probes, e.g. IVUS).
+   * @return Focal length in mm, or 0 if not applicable
+   */
+  virtual float get_focal_length_mm() const { return 0.f; }
+
  protected:
   /**
    * Probe coordinate system convention:

@@ -133,6 +133,7 @@ class RaytracingUltrasoundSimulator {
   CudaMemory pipeline_params_;
 
   float probe_frequency_ = 0.f;
+  std::optional<ProbeType> psf_ax_probe_type_;  ///< Probe type for which psf_ax_ was built (IVUS uses causal kernel)
   std::unique_ptr<CudaMemory> psf_ax_;
   float probe_element_spacing_ = 0.f;
   std::unique_ptr<CudaMemory> psf_lat_;
@@ -140,10 +141,19 @@ class RaytracingUltrasoundSimulator {
   std::unique_ptr<CudaMemory> psf_elev_;
   CudaMemory psf_tmp_;
 
+  /// Depth-dependent lateral PSF for IVUS (focused element): one kernel per depth bin
+  std::unique_ptr<CudaMemory> psf_lat_2d_;
+  uint32_t psf_lat_2d_depth_bins_ = 0;
+  uint32_t psf_lat_2d_kernel_radius_ = 0;
+  float psf_lat_2d_element_radius_ = 0.f;
+  float psf_lat_2d_focal_length_ = 0.f;
+  uint32_t psf_lat_2d_buffer_size_ = 0;
+  float psf_lat_2d_t_far_ = 0.f;
+
   std::unique_ptr<CudaMemory> tgc_curve_;
   std::optional<ProbeType> tgc_probe_type_;  ///< Probe type used to build current TGC (for cache invalidation)
 
-  void update_psfs(const BaseProbe* probe, cudaStream_t stream);
+  void update_psfs(const BaseProbe* probe, cudaStream_t stream, uint32_t buffer_size, float t_far);
 };
 
 }  // namespace raysim
