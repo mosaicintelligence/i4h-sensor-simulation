@@ -341,7 +341,8 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
     const float k = SAMPLING_FREQ * 1e-6;  // [1/us]
     float axial_width = probe->get_axial_resolution();
     if (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) {
-      // Causal Hanning axial PSF so the strong wall echo does not leak backward into the lumen.
+      // Causal axial PSF with one-sided window (peak at true depth, no central null)
+      // so wire phantoms show a single spot and wall echo does not leak into lumen.
       const float n_cycles = static_cast<float>(probe->get_pulse_duration());
       const float extent_mm = n_cycles * probe->get_wave_length();
       psf_ax_ = create_ivus_axial_psf_causal(stream, extent_mm, k, probe->get_frequency(), 1.54f);
