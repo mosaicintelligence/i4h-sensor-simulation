@@ -86,23 +86,53 @@ static __device__ float get_intensity_at_distance(float distance, float medium_a
  * @param material
  * @param intensities
  */
+// Pseudo-random in [0,1) from unsigned seed (repeatable, no RNG state)
+static __device__ float hash_float(uint32_t seed) {
+  const uint32_t k = 1103515245u;
+  const uint32_t b = 12345u;
+  return __uint2float_rn((k * seed + b) % (1u << 31)) / __uint2float_rn(1u << 31);
+}
+
 static __device__ void sample_intensities(float3 origin, float3 dir, float t_ancestors, float t_min,
                                           float t_max, float intensity, const Material* material,
-                                          float* intensities) {
-  // Early out for materials with zero scattering density or coefficient
+                                          float* scanline, uint32_t ray_index) {
+  if (params.disable_scatter) { return; }
   if ((material->mu0_ <= 0.f) || (material->sigma_ == 0.f)) { return; }
 
-  const uint32_t steps = ((t_max - t_min) / params.t_far) * params.buffer_size + 0.5f;
-  const float t_step = (t_max - t_min) / steps;
-  const float3 start = origin + t_min * dir;
+  const float range = t_max - t_min;
+  if (range <= 0.f) { return; }
 
-  intensities += get_intensity_offset(t_ancestors + t_min);
+  if (params.use_point_scatterer_model) {
+    // Field II style: discrete scatterers per segment (e.g. ~20–40 per resolution cell).
+    // Use a fixed number of scatter "points" at pseudo-random depths to avoid correlated
+    // integration along the ray that causes radial streaks.
+    constexpr uint32_t N_POINTS = 40u;
+    const uint32_t segment_seed = ray_index * 7919u + static_cast<uint32_t>(t_ancestors * 1000.f);
+    for (uint32_t i = 0; i < N_POINTS; ++i) {
+      const float u = hash_float(segment_seed + i * 31u);
+      const float t_val = t_min + u * range;
+      const float depth = t_ancestors + t_val;
+      const uint32_t bin = get_intensity_offset(depth);
+      if (bin >= params.buffer_size) { continue; }
+      const float3 pos_world = origin + (t_ancestors + t_val) * dir;
+      const float scatter = get_scattering_value(pos_world, material) * intensity *
+                            get_intensity_at_distance(t_val - t_min, material->attenuation_);
+      scanline[bin] += scatter;
+    }
+    return;
+  }
 
+  // Dense integration (original): one sample per depth bin step
+  const uint32_t steps = (range / params.t_far) * params.buffer_size + 0.5f;
+  const float t_step = (steps > 0) ? (range / steps) : 0.f;
   for (uint32_t step = 0; step < steps; ++step) {
-    const float distance = (step * t_step);
-    const float3 pos = start + distance * dir;
-    intensities[step] += get_scattering_value(pos, material) * intensity *
-                         get_intensity_at_distance(distance, material->attenuation_);
+    const float t_val = t_min + (step + 0.5f) * t_step;
+    const float depth = t_ancestors + t_val;
+    const uint32_t bin = get_intensity_offset(depth);
+    if (bin >= params.buffer_size) { continue; }
+    const float3 pos_world = origin + (t_ancestors + t_val) * dir;
+    scanline[bin] += get_scattering_value(pos_world, material) * intensity *
+                     get_intensity_at_distance(t_val - t_min, material->attenuation_);
   }
 }
 
@@ -400,6 +430,7 @@ extern "C" __global__ void __miss__ms() {
   if (params.contact_epsilon > 0.f && ray.depth == 0) { return; }
 
   // no hits, just do scattering up to t_far
+  const uint32_t ray_index = idx.y * optixGetLaunchDimensions().x + idx.x;
   sample_intensities(
       optixGetWorldRayOrigin(),
       optixGetWorldRayDirection(),
@@ -408,7 +439,8 @@ extern "C" __global__ void __miss__ms() {
       optixGetRayTmax(),
       ray.intensity,
       &params.materials[ray.current_material_id],
-      &params.scanlines[(idx.y * optixGetLaunchDimensions().x + idx.x) * params.buffer_size]);
+      &params.scanlines[ray_index * params.buffer_size],
+      ray_index);
 }
 
 template <OptixPrimitiveType PRIM_TYPE>
@@ -428,12 +460,13 @@ static __device__ void closest_hit() {
   const uint32_t current_material_id = ray.current_material_id;
   const Material* current_material = &params.materials[current_material_id];
   const uint3 idx = optixGetLaunchIndex();
-  float* const scanline =
-      &params.scanlines[(idx.y * optixGetLaunchDimensions().x + idx.x) * params.buffer_size];
+  const uint32_t ray_index = idx.y * optixGetLaunchDimensions().x + idx.x;
+  float* const scanline = &params.scanlines[ray_index * params.buffer_size];
 
   // add scattering contribution up to hit
   sample_intensities(
-      ray_orig, ray_dir, ray.t_ancestors, t_min, t, ray.intensity, current_material, scanline);
+      ray_orig, ray_dir, ray.t_ancestors, t_min, t, ray.intensity, current_material, scanline,
+      ray_index);
 
   // Don't generate secondary rays is max depth is reached
   if (ray.depth + 1 >= params.max_depth) { return; }
@@ -471,7 +504,11 @@ static __device__ void closest_hit() {
   const float reflected_intensity = final_intensity * R;
   const float refracted_intensity = final_intensity * (1 - R);
 
-  // Add specular reflection from transmitted energy
+  // Add hit echo: impedance-based backscatter (so point reflectors / interfaces are visible)
+  // plus specular term from transmitted energy (nonzero only for off-normal viewing).
+  const uint32_t hit_bin = get_intensity_offset(ray.t_ancestors + t);
+  scanline[hit_bin] += reflected_intensity;
+
   const float ray_coherence_attenuation = __powf(0.3f, ray.depth);
   const float specular_reflection = calculate_specular_intensity(reflected_dir,
                                                                  refracted_dir,
@@ -479,7 +516,7 @@ static __device__ void closest_hit() {
                                                                  ray_dir,
                                                                  next_material->specularity_) *
                                     ray_coherence_attenuation;
-  scanline[get_intensity_offset(ray.t_ancestors + t)] = 2.f * specular_reflection;
+  scanline[hit_bin] += 2.f * specular_reflection;
 
   // Self-intersection avoidance
   float3 front_start, back_start, wld_norm;
