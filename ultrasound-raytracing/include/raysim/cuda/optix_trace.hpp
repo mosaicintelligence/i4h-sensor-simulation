@@ -39,6 +39,9 @@ struct Params {
   OptixTraversableHandle handle;
   float source_frequency;
   float contact_epsilon;
+  int disable_scatter;  ///< If non-zero, skip scatter accumulation
+  int use_point_scatterer_model;  ///< If non-zero (e.g. IVUS), use sparse point-like scatter per segment (Field II style)
+  float scatter_integral_scale;   ///< Scale for scatter integral (>=1); 0 = strict integral (can be too dark)
 };
 
 struct RayGenData {
