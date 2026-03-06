@@ -102,11 +102,15 @@ static __device__ void sample_intensities(float3 origin, float3 dir, float t_anc
   const float range = t_max - t_min;
   if (range <= 0.f) { return; }
 
+  // Backscatter approximates the line integral int (sigma(s)*I(s)) ds.
+  // Weight by (range/steps) for correct integral; scale by scatter_integral_scale so the
+  // result is in a displayable range for both wire (lumen) and vascular/cystic (tissue) phantoms.
+  const float integral_weight = (params.scatter_integral_scale > 0.f)
+                                    ? (range * params.scatter_integral_scale)
+                                    : range;
   if (params.use_point_scatterer_model) {
-    // Field II style: discrete scatterers per segment (e.g. ~20–40 per resolution cell).
-    // Use a fixed number of scatter "points" at pseudo-random depths to avoid correlated
-    // integration along the ray that causes radial streaks.
     constexpr uint32_t N_POINTS = 40u;
+    const float segment_weight = integral_weight / static_cast<float>(N_POINTS);
     const uint32_t segment_seed = ray_index * 7919u + static_cast<uint32_t>(t_ancestors * 1000.f);
     for (uint32_t i = 0; i < N_POINTS; ++i) {
       const float u = hash_float(segment_seed + i * 31u);
@@ -117,22 +121,24 @@ static __device__ void sample_intensities(float3 origin, float3 dir, float t_anc
       const float3 pos_world = origin + (t_ancestors + t_val) * dir;
       const float scatter = get_scattering_value(pos_world, material) * intensity *
                             get_intensity_at_distance(t_val - t_min, material->attenuation_);
-      scanline[bin] += scatter;
+      scanline[bin] += segment_weight * scatter;
     }
     return;
   }
 
-  // Dense integration (original): one sample per depth bin step
+  // Dense integration: one sample per depth bin
   const uint32_t steps = (range / params.t_far) * params.buffer_size + 0.5f;
   const float t_step = (steps > 0) ? (range / steps) : 0.f;
+  const float segment_weight = (steps > 0u) ? (integral_weight / static_cast<float>(steps)) : 0.f;
   for (uint32_t step = 0; step < steps; ++step) {
     const float t_val = t_min + (step + 0.5f) * t_step;
     const float depth = t_ancestors + t_val;
     const uint32_t bin = get_intensity_offset(depth);
     if (bin >= params.buffer_size) { continue; }
     const float3 pos_world = origin + (t_ancestors + t_val) * dir;
-    scanline[bin] += get_scattering_value(pos_world, material) * intensity *
-                     get_intensity_at_distance(t_val - t_min, material->attenuation_);
+    const float scatter = get_scattering_value(pos_world, material) * intensity *
+                         get_intensity_at_distance(t_val - t_min, material->attenuation_);
+    scanline[bin] += segment_weight * scatter;
   }
 }
 
@@ -164,8 +170,22 @@ static __device__ float3 get_normal(float3 ray_orig, float3 ray_dir, float t_hit
   return normal;
 }
 
+// -----------------------------------------------------------------------------
+// Surface interaction (reflection / refraction) — physics summary
+// -----------------------------------------------------------------------------
+// • Reflection direction: law of reflection (θ_r = θ_i), implemented as
+//   r = d - 2(d·n)n with n pointing against d. Theoretically exact.
+// • Refraction direction: Snell's law n1 sin(θ_i) = n2 sin(θ_t) with n = c/v;
+//   sin_t = (v1/v2)*sin_i, refracted vector in plane of incidence. Theoretically exact.
+// • Total internal reflection: when sin_t >= 1, no transmitted ray; R = 1.
+// • Intensity R: oblique acoustic formula R_p = (Z2/cos(θ_t)-Z1/cos(θ_i))/(Z2/cos(θ_t)+Z1/cos(θ_i)),
+//   R_I = R_p^2 (pressure continuity + normal velocity continuity at interface).
+// • Intensity split: reflected = I*R, transmitted = I*(1-R); power-conserving.
+// • Specular term: empirical (Mattausch2016); directivity-like cos^n; not from wave equation.
+// -----------------------------------------------------------------------------
+
 /**
- * Calculate reflected direction vector
+ * Calculate reflected direction vector (law of reflection)
  */
 static __device__ float3 calc_reflected_dir(float3 incident_dir, float3 normal) {
   // Ensure normal points against incident direction
@@ -174,16 +194,27 @@ static __device__ float3 calc_reflected_dir(float3 incident_dir, float3 normal) 
 }
 
 /**
- * Calculate reflection coefficient using acoustic impedance
+ * Intensity reflection coefficient at an acoustic interface (oblique incidence).
+ *
+ * Physics: continuity of pressure and normal particle velocity at the interface gives
+ * pressure reflection coefficient R_p = (Z2/cos(θ_t) - Z1/cos(θ_i)) / (Z2/cos(θ_t) + Z1/cos(θ_i))
+ * (effective normal impedances Z/cos(θ)). Intensity R_I = R_p^2.
+ * Snell: sin(θ_t) = (c1/c2) sin(θ_i) => cos(θ_t) = sqrt(1 - sin²(θ_t)).
+ * Total internal reflection (sin(θ_t) >= 1) is handled by caller (no refracted ray).
+ *
+ * @param cos_theta_i cos(angle of incidence), in [0,1]
+ * @param cos_theta_t cos(angle of transmission), in [0,1] (from Snell)
+ * @param material1 incident medium (Z1)
+ * @param material2 transmitted medium (Z2)
  */
-static __device__ float calculate_reflection_coefficient(float incident_angle,
+static __device__ float calculate_reflection_coefficient(float cos_theta_i, float cos_theta_t,
                                                          const Material* material1,
                                                          const Material* material2) {
   float Z1 = material1->impedance_;
   float Z2 = material2->impedance_;
-  float cos_theta = fabsf(__cosf(incident_angle));
-  float R = ((Z2 * cos_theta - Z1) / (Z2 * cos_theta + Z1));
-  return R * R;
+  if (cos_theta_i <= 1e-6f || cos_theta_t <= 1e-6f) { return 1.f; }  // grazing or TIR
+  float R_p = (Z2 / cos_theta_t - Z1 / cos_theta_i) / (Z2 / cos_theta_t + Z1 / cos_theta_i);
+  return R_p * R_p;
 }
 
 /**
@@ -396,6 +427,7 @@ extern "C" __global__ void __raygen__rg() {
   Payload ray{};
   ray.intensity = 1.f;
   ray.depth = 0;
+  ray.t_ancestors = 0.f;  // Required: miss shader uses this for depth bins; unset = wrong scatter
   ray.current_material_id = params.background_material_id;
   ray.outter_material_id = 0;
   ray.current_obj_id = static_cast<uint16_t>(-1);
@@ -488,24 +520,30 @@ static __device__ void closest_hit() {
   const float final_intensity =
       ray.intensity * get_intensity_at_distance(t - t_min, current_material->attenuation_);
 
-  // Add hit reflection contribution
+  // Add hit reflection contribution (oblique incidence: need cos(θ_i), cos(θ_t) for R)
   const Material* next_material = &params.materials[next_material_id];
   const float3 normal = get_normal<PRIM_TYPE>(ray_orig, ray_dir, t, hit_id, hit_group_data);
-  const float incident_angle = acosf(fabsf(dot(ray_dir, normal)));
-  const float R = calculate_reflection_coefficient(incident_angle, current_material, next_material);
+  const float cos_i = fabsf(dot(ray_dir, normal));  // cos(angle of incidence)
+  const float sin_i = sqrtf(1.f - cos_i * cos_i);
+  const float v1 = current_material->speed_of_sound_;
+  const float v2 = next_material->speed_of_sound_;
+  const float sin_t = (v1 / v2) * sin_i;
+  const float cos_t = (sin_t < 1.f) ? sqrtf(1.f - sin_t * sin_t) : 0.f;  // 0 if TIR
+  const float R = calculate_reflection_coefficient(cos_i, cos_t, current_material, next_material);
 
   float3 refracted_dir;
   const bool total_internal_reflection = calc_refracted_dir(ray_dir,
                                                             normal,
-                                                            current_material->speed_of_sound_,
-                                                            next_material->speed_of_sound_,
+                                                            v1,
+                                                            v2,
                                                             &refracted_dir);
   const float3 reflected_dir = calc_reflected_dir(ray_dir, normal);
   const float reflected_intensity = final_intensity * R;
-  const float refracted_intensity = final_intensity * (1 - R);
+  const float refracted_intensity = final_intensity * (1.f - R);
 
-  // Add hit echo: impedance-based backscatter (so point reflectors / interfaces are visible)
-  // plus specular term from transmitted energy (nonzero only for off-normal viewing).
+  // Echo at interface: (1) Intensity R from acoustic oblique formula (first-principles).
+  // (2) Specular term: empirical (Mattausch et al. Monte Carlo); cos^n toward transducer
+  // approximates directivity; not derivable from wave equation alone.
   const uint32_t hit_bin = get_intensity_offset(ray.t_ancestors + t);
   scanline[hit_bin] += reflected_intensity;
 
@@ -574,13 +612,14 @@ static __device__ void closest_hit() {
     refracted_ray.current_obj_id = next_obj_id;
     refracted_ray.outter_obj_id = ray.current_obj_id;
 
-    // Secondary rays along the surface normal should use the generated front point as origin, while
-    // rays pointing away from the normal should use the back point as origin.
-    const float3 start = (dot(refracted_dir, wld_norm) > 0.f) ? front_start : back_start;
+    // Refracted ray: start just past the hit surface (back_start) so we are in the new material.
+    // Use tmin > 0 to avoid re-hitting the same surface (vessel inner wall, mesh self-hit).
+    const float t_min_refract = 1e-3f;  // mm; skip hits at same surface
+    const float3 start = back_start;
     optixTrace(params.handle,
                start,
                refracted_dir,
-               0.f,                                       // tmin
+               t_min_refract,                             // tmin: avoid self-intersection
                params.t_far - refracted_ray.t_ancestors,  // tmax
                0.f,                                       // rayTime
                OptixVisibilityMask(1),

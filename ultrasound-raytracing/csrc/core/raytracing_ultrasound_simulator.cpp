@@ -426,8 +426,10 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     params.source_frequency = probe->get_frequency();
     params.contact_epsilon = sim_params.contact_epsilon;
     params.disable_scatter = 0;  // Scatter re-enabled; correct depth-bin indexing avoids streaks
-    params.use_point_scatterer_model =
-        (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) ? 1 : 0;
+    params.use_point_scatterer_model = 0;
+    // Scale scatter integral so vascular/cystic phantoms have visible background; wire phantom
+    // remains valid (reflections dominate). 0 = strict integral (dark); ~40 gives usable range.
+    params.scatter_integral_scale = 40.f;
 
     pipeline_params_.upload(&params, sim_params.stream);
 
@@ -504,9 +506,10 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     if (!tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
       std::vector<ControlPoint> control_points;
       if (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) {
-        // IVUS: short depth range (0–10 mm). Use mild TGC so far field does not become
-        // brighter than near field (ray tracer already applies material attenuation).
-        control_points = {{0.f, 0.f}, {1.f, 6.f}};  // (depth [cm], gain [dB])
+        // IVUS: TGC ~ compensates for tissue (α≈1 dB/(cm·MHz)); avoid over-compensation so
+        // wire phantom (lumen) and cystic phantom (tissue) both show correct depth dependence.
+        const float tgc_dB_per_cm = 2.f;  // ~α*f for typical IVUS tissue
+        control_points = {{0.f, 0.f}, {1.f, tgc_dB_per_cm}};  // (depth [cm], gain [dB])
       } else {
         // Abdominal / general: 0–40 cm
         control_points = {{0.f, 0.f}, {40.f, 28.f}};
