@@ -35,13 +35,9 @@ struct Params {
   Material* materials;
   uint32_t background_material_id;
   cudaTextureObject_t scattering_texture;
-  float scattering_resolution_mm;  ///< Voxel scale for scattering texture [mm]; use smaller value for IVUS
   OptixTraversableHandle handle;
   float source_frequency;
   float contact_epsilon;
-  int disable_scatter;  ///< If non-zero, skip scatter accumulation
-  int use_point_scatterer_model;  ///< If non-zero (e.g. IVUS), use sparse point-like scatter per segment (Field II style)
-  float scatter_integral_scale;   ///< Scale for scatter integral (>=1); 0 = strict integral (can be too dark)
 };
 
 struct RayGenData {
@@ -66,7 +62,7 @@ struct Payload {
   float intensity;
   uint32_t depth;
   float t_ancestors;
-  // use 16 bit for object and material ID to safe space
+  // use 16 bit for object and material ID to save space
   uint16_t current_obj_id;
   uint16_t outter_obj_id;
   uint16_t current_material_id;
