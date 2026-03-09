@@ -1,0 +1,446 @@
+# IVUS Probe Implementation in ultrasound-raytracing
+
+This document describes the work done to add **Intravascular Ultrasound (IVUS)** probe support to the ultrasound-raytracing package. It is based on a diff of the package against the `main` branch and focuses on changes to the **core ultrasound implementation** (C++/CUDA, materials, probes, pipeline). Example scripts and evaluation workflows are not covered in detail.
+
+Implementation references link to the code at commit `3a00920723c7821b83b3fb6b400b006dbbc84e96` on [i4h-sensor-simulation](https://github.com/mosaicintelligence/i4h-sensor-simulation). When a function is **modified** (not added new), a short **Diff (vs main)** summarizes the changes.
+
+---
+
+## 1. High-level overview
+
+### 1.1 Original ultrasound-raytracing package (main branch)
+
+The package is a **GPU-accelerated ultrasound simulation** that uses **NVIDIA OptiX** for raytracing and CUDA for signal processing and image formation.
+
+- **Probes**: Three probe types are supported—**curvilinear**, **linear array**, and **phased array**. Each has a distinct ray layout (element positions and directions) and scan geometry (sector or rectangular).
+- **Acoustic model**: Rays are cast from the probe; they interact with the scene via **reflection** and **refraction** at interfaces (meshes, spheres). **Volumetric scattering** is accumulated along each ray in depth bins. Materials define impedance, attenuation, and scattering.
+- **Materials**: A fixed set of tissue materials: water, blood, fat, liver, muscle, bone (impedance, attenuation in dB/(cm·MHz), speed of sound, scattering).
+- **Pipeline**: After raytracing, scanlines are processed by **axial** and **lateral PSF convolution** (Gaussian kernels, depth-invariant lateral), **TGC**, **Hilbert envelope**, **log compression**, and **scan conversion** to a 2D B-mode image. Scan conversion is probe-specific (curvilinear sector, linear, phased sector).
+- **Display**: The simulator reports coordinate bounds (min/max x, z) for the B-mode image so the client can label axes (e.g. depth, lateral).
+
+The design is **probe-agnostic** in the sense that ray generation and scan conversion are driven by a `ProbeType` enum and virtual methods on `BaseProbe` (element position, direction, sector angle, etc.).
+
+### 1.2 Modifications for IVUS
+
+IVUS is **intravascular** imaging: a small rotating transducer at the center of a vessel acquires a **360° radial cross-section**. Depth is radial (lumen → wall → perivascular); the “lateral” dimension is **angle**. The implementation adds:
+
+1. **New probe type and class**: `ProbeType::PROBE_TYPE_IVUS` and an **`IVUSProbe`** class—single point source at the catheter center, rays emitted radially over 360° in the imaging plane, with optional **element radius** and **focal length** for beam modeling.
+2. **Ray generation**: In OptiX, a dedicated **IVUS ray generator** produces one ray per angular sample from a common origin, with direction sweeping 0→2π in the probe’s xz-plane.
+3. **Materials**: **Blood** is updated to literature values; three **IVUS/vascular** materials are added: **lumen**, **vessel_wall**, and **extravascular** (with cited attenuation and impedance).
+4. **PSF and TGC**:  
+   - **Axial**: IVUS uses a **causal, Hanning-windowed axial PSF** so the strong wall echo does not smear backward into the lumen.  
+   - **Lateral**: For IVUS, **depth-dependent lateral PSF** is introduced (Gaussian beam model: beam waist at focus, Rayleigh length, σ(depth)); when element radius and focal length are set, a 2D kernel (depth × angle) is built and applied via a new **depth-dependent column convolution**. For point-source probes, element spacing is 0; a safe fallback lateral width is used.  
+   - **TGC** is made **probe-type-specific** (IVUS: short depth range, moderate gain per cm) and cached per probe type.
+5. **Scan conversion and display**: A new **IVUS scan conversion** path produces an **unwrapped** display: horizontal = angle (0–360°), vertical = depth (mm). The simulator’s coordinate bounds for IVUS are set to (0–360°, 0–t_far mm).
+6. **Pipeline and scattering**: Pipeline parameters are extended with **scattering resolution** (finer for IVUS), **scatter integral scale**, and a **disable_scatter** flag. Scattering logic is corrected so **depth-bin indexing** uses the true ray depth and avoids streaks.
+7. **Physics**: **Oblique incidence** reflection (acoustic impedance formula with cos θ_i, cos θ_t from Snell’s law) and **refraction** with a small **t_min** for the refracted ray to avoid self-intersection at the vessel wall.
+8. **Utilities and Python**: **Cylinder mesh generation** (single and thick-walled) for vessel phantoms; **Python bindings** for `IVUSProbe` and updated material/SimParams docs; **raysim** package exports `IVUSProbe`.
+
+The following sections walk through these changes by component (probes, materials, raytracing, PSF/TGC, scan conversion, pipeline/scattering, Python/utils), without detailing example or evaluation scripts.
+
+---
+
+## 2. Probe type and IVUS probe class
+
+**Implementation (probe types):** [probe_types.hpp#L28](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe_types.hpp#L28), [probe.hpp#L258-L268](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe.hpp#L258-L268), [ivus_probe.hpp#L1-L107](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/ivus_probe.hpp#L1-L107).
+
+### 2.1 ProbeType enum
+
+- **Implementation:** [probe_types.hpp#L28](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe_types.hpp#L28).
+- New value: `PROBE_TYPE_IVUS = 3` (in addition to curvilinear, linear array, phased array).
+
+**Justification:** The pipeline (ray gen, PSF choice, TGC, scan conversion, display bounds) is driven by **probe type**. Adding a distinct **PROBE_TYPE_IVUS** allows the simulator to branch on IVUS-specific physics (causal axial PSF, depth-dependent lateral PSF, IVUS TGC, unwrapped scan conversion) without affecting existing probes.
+
+### 2.2 BaseProbe extensions
+
+- **Implementation:** [probe.hpp#L258-L268](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe.hpp#L258-L268).
+- New virtual accessors (default 0 for non-IVUS probes):
+  - `get_element_radius_mm()` — element radius in mm (for focused single-element probes).
+  - `get_focal_length_mm()` — focal length in mm.
+
+These are used by the simulator to build the depth-dependent lateral PSF when both are positive (IVUS with focused element model).
+
+**Justification:** IVUS uses a single small transducer (often ~0.6 mm radius, ~4 mm focal length) at the catheter center. Exposing **element_radius_mm** and **focal_length_mm** on the base probe allows the simulator to apply a **depth-dependent lateral beam model** (Gaussian beam: waist at focus, Rayleigh length) so the effective lateral resolution varies with depth as in real IVUS, instead of treating the probe as a pure point source with no aperture.
+
+### 2.3 IVUSProbe class
+
+- **Implementation:** [ivus_probe.hpp#L1-L107](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/ivus_probe.hpp#L1-L107) — **new file**.
+- **IVUSProbe** extends `BaseProbe` with:
+  - **Single origin**: `get_local_element_position()` always returns the origin (0,0,0) in local coordinates (catheter center).
+  - **Radial directions**: `get_local_element_direction()` returns a unit vector in the xz-plane; angle = 2π × element_idx / num_elements, with +z as reference (consistent with OptiX IVUS ray gen).
+  - **Sector angle**: 360°.
+  - **Radius / width**: 0 (point source).
+  - **Probe type**: `PROBE_TYPE_IVUS`.
+  - **Parameters**: `num_angular_rays` (stored as `num_elements_x_`), frequency (e.g. 40 MHz), elevational_height (often 0), `element_radius_mm` (e.g. 0.6), `focal_length_mm` (e.g. 4). Constructor passes `width = 0` to the base.
+
+No separate `.cpp`; the class is header-only.
+
+**Justification:** **Single origin** and **360° radial directions** match the physical geometry of an IVUS catheter: the transducer sits at the center of the vessel and is rotated (or synthetically sampled) over 2π to form a cross-sectional image. **Width = 0** and **radius = 0** model a point-like source for ray casting; the finite aperture is represented later via the depth-dependent lateral PSF (element_radius_mm, focal_length_mm). **Sector angle 360°** ensures the scan-conversion and display bounds treat the image as a full circumferential sweep.
+
+---
+
+## 3. Materials
+
+**Implementation:** [material.cpp#L40-L56](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/material.cpp#L40-L56).
+
+- **Blood**: Updated to Z = 1.68 MRayl, α = 0.2 dB/(cm·MHz), c = 1584 m/s (literature: PMC3570716, PMC5126009).
+- **New IVUS/vascular materials** (with comments citing literature and attenuation in dB/(cm·MHz)):
+  - **lumen**: Same as updated blood (1.68, 0.2, 1584).
+  - **vessel_wall**: c = 1571 m/s, Z = 1.82 MRayl, α ≈ 1.0 (vascular/coronary 50 MHz regime).
+  - **extravascular**: Muscle-like c = 1547 m/s, Z = 1.62 MRayl, α = 0.7.
+
+References in comments: Goss et al. compilations, PMC3570716 (Ultrasound Med Biol 2013), PMC5126009 (J Ultrasound 2016), Lockwood et al. UMB 17(7) 1991.
+
+**Diff (vs main):** `Materials::Materials()` — blood entry and three new material entries added to `materials_` initializer; no signature change.
+
+**Justification:** **Blood** was updated to **literature values** (Z = 1.68 MRayl, c = 1584 m/s, α = 0.2 dB/(cm·MHz) from PMC3570716, PMC5126009) so that reflection and attenuation at blood–tissue interfaces match published data; the original values were less aligned with vascular ultrasound references. **Lumen**, **vessel_wall**, and **extravascular** were added because IVUS scenes explicitly model (1) the blood-filled lumen, (2) the vessel wall (intima/media with impedance and attenuation from coronary/vascular 50 MHz data), and (3) perivascular tissue. Using correct Z and α is necessary for **physically correct reflection coefficients** at interfaces (lumen–wall, wall–extravascular) and for **depth-dependent attenuation** along each ray (Beer–Lambert).
+
+---
+
+## 4. OptiX raytracing (IVUS rays and physics)
+
+**Implementation:** [optix_trace.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu) (see subsections for line ranges).
+
+### 4.1 Ray generation for IVUS
+
+- **Implementation:** [optix_trace.cu#L342-L356](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L342-L356) (`generate_ivus_probe_ray_local`), [optix_trace.cu#L358-L390](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L358-L390) (raygen switch).
+- New device function **`generate_ivus_probe_ray_local`**:
+  - Maps launch dimension `d_x` to angle in [0, 2π].
+  - **Origin**: (0, 0, 0) in local coordinates.
+  - **Direction**: radial in xz-plane, `(sin(angle), 0, cos(angle))`, normalized; +z at angle 0 to match `IVUSProbe::get_local_element_direction`.
+
+- In the **raygen** `__raygen__rg`, the switch on `probe_type` is extended with `PROBE_TYPE_IVUS` calling this function. Payload `ray.t_ancestors` is set to 0 (line 406). Elevation is applied afterward as for other probes.
+
+**Justification:** IVUS rays must **emanate from a single point** (catheter center) and **sweep 360° in the imaging plane** (xz with +z as reference). This matches the physical acquisition: one transducer at the center, with A-lines acquired at evenly spaced angles. Mapping the launch dimension to angle in [0, 2π] and using a common origin is the minimal change to the raygen to support this geometry; elevation is kept for consistency with the shared pipeline but is typically zero for 2D IVUS.
+
+### 4.2 Payload and scattering
+
+- **Implementation:** [optix_trace.cu#L406](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L406) (payload), [optix_trace.cu#L44-L55](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L44-L55) (`get_scattering_value`), [optix_trace.cu#L89-L119](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L89-L119) (`sample_intensities`), [optix_trace.cu#L438-L450](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L438-L450) (miss), [optix_trace.cu#L468-L476](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L468-L476) (closest_hit).
+- **Payload**: `ray.t_ancestors` is explicitly set to 0 in the raygen (needed for correct depth-bin indexing in scatter and hit).
+- **Scattering**:
+  - **`get_scattering_value`** (modified): No longer takes a fixed `resolution_mm` parameter; it uses **`params.scattering_resolution_mm`** so the pipeline can set a finer scale for IVUS (e.g. 10 mm vs 50 mm).
+  - **`sample_intensities`** (modified): Now takes **scanline pointer and ray_index**; early-out if `params.disable_scatter`; depth-bin indexing via `get_intensity_offset(t_ancestors + t_val)` with bounds check; integral scaling via `scatter_integral_scale`; contributions written to `scanline[bin]` with `segment_weight`.
+
+**Justification:**  
+- **`ray.t_ancestors` initialized to 0:** Depth along the ray must include the full path from the probe (origin). If `t_ancestors` were left uninitialized, scatter and hit contributions would use wrong depths for binning, producing **streaks** or misplacement. Explicitly setting it to 0 in the raygen ensures every ray starts with correct cumulative path length.  
+- **`get_scattering_value` using `params.scattering_resolution_mm`:** The scattering texture is sampled in world space divided by a resolution (voxel size). IVUS operates at **much smaller spatial scale** (mm, 1–10 mm depth) than abdominal imaging (cm). Using a **finer resolution** (e.g. 10 mm vs 50 mm) for IVUS gives **speckle at the appropriate scale** (smaller correlation length) so tissue texture looks plausible.  
+- **Depth-bin indexing in `sample_intensities`:** The original code used `intensities += get_intensity_offset(t_ancestors + t_min)` and then wrote to `intensities[step]` with a **step index**, not a **depth-derived bin**. That decouples the write index from true propagation depth and causes **axial streaks**. Writing to `scanline[bin]` with `bin = get_intensity_offset(t_ancestors + t_val)` ensures scatter is placed at the **correct depth bin** for the round-trip time.  
+- **`scatter_integral_scale`:** The line integral of scatter has no natural scale that matches display (0–1 or dB). Empirically, **strict integration** gives very dark tissue in vascular/cystic phantoms while wire phantoms (reflection-dominated) are fine. A scale factor (~40) brings the scatter contribution into a **displayable range** so both reflection-dominated (wire) and scatter-dominated (tissue) phantoms are usable without changing the underlying physics of the integral.  
+  **Tuning:** Set in `raytracing_ultrasound_simulator.cpp` when filling `params.scatter_integral_scale`. **Increase** (e.g. 60–80) if tissue background remains too dark in vascular/cystic phantoms; **decrease** (e.g. 20–30) if tissue is too bright or reflections (e.g. wire targets) are drowned out. Use **0** for strict physics (no scaling); compare wire phantom (reflections should dominate) and cystic/tissue phantom (scatter visible) to balance. Probe-type-specific values could be used (e.g. one scale for IVUS, another for abdominal) if needed.
+
+**Diff (vs main) — `get_scattering_value`:**
+```diff
+- static __device__ float get_scattering_value(float3 pos, const Material* material,
+-                                              float resolution_mm = 50.f) {
+-   // Convert point to texture coordinates
++ static __device__ float get_scattering_value(float3 pos, const Material* material) {
++   const float resolution_mm = params.scattering_resolution_mm;
+    pos /= resolution_mm;
+```
+
+**Diff (vs main) — `sample_intensities`:**
+```diff
+  static __device__ void sample_intensities(float3 origin, float3 dir, float t_ancestors, float t_min,
+                                            float t_max, float intensity, const Material* material,
+-                                           float* intensities) {
+-   // Early out for materials with zero scattering density or coefficient
++                                           float* scanline, uint32_t ray_index) {
++   if (params.disable_scatter) { return; }
+    if ((material->mu0_ <= 0.f) || (material->sigma_ == 0.f)) { return; }
+-
+-   const uint32_t steps = ((t_max - t_min) / params.t_far) * params.buffer_size + 0.5f;
+-   const float t_step = (t_max - t_min) / steps;
+-   const float3 start = origin + t_min * dir;
+-   intensities += get_intensity_offset(t_ancestors + t_min);
+-   for (uint32_t step = 0; step < steps; ++step) {
+-     const float distance = (step * t_step);
+-     const float3 pos = start + distance * dir;
+-     intensities[step] += get_scattering_value(pos, material) * intensity *
+-                          get_intensity_at_distance(distance, material->attenuation_);
+-   }
++   const float range = t_max - t_min;
++   ...
++   const float integral_weight = (params.scatter_integral_scale > 0.f) ? (range * params.scatter_integral_scale) : range;
++   const uint32_t steps = (range / params.t_far) * params.buffer_size + 0.5f;
++   ... (per-step: t_val, depth, bin = get_intensity_offset(depth), scanline[bin] += segment_weight * scatter);
+  }
+```
+
+### 4.3 Reflection and refraction (oblique incidence)
+
+- **Implementation:** [optix_trace.cu#L186-L194](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L186-L194) (`calculate_reflection_coefficient`), [optix_trace.cu#L455-L620](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L455-L620) (`closest_hit`), [optix_trace.cu#L588-L619](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L588-L619) (refracted ray t_min).
+- **Reflection coefficient** (modified): Replaced normal-incidence formula by **oblique incidence**: `R_p = (Z2/cos(θ_t) - Z1/cos(θ_i)) / (Z2/cos(θ_t) + Z1/cos(θ_i))`, with `R_I = R_p²`. Angles come from Snell’s law: `sin(θ_t) = (v1/v2)*sin(θ_i)`, then `cos(θ_t)`. Grazing and total internal reflection (cos ≤ 0) yield R = 1.
+- **Hit contribution**: Both the **acoustic reflection** and the **specular term** (Mattausch-style) are **added** into the same depth bin (`hit_bin`), instead of overwriting.
+- **Refracted ray**: Origin is **back_start** (just inside the second medium); **t_min** for the refracted ray is set to a small constant (e.g. 1e-3 mm) to avoid self-intersection at the same interface.
+
+**Justification:**  
+- **Oblique-incidence reflection coefficient:** At an interface, **pressure and normal particle velocity** are continuous. For oblique incidence the effective impedances are **Z/cos(θ)** (normal component). The pressure reflection coefficient is then R_p = (Z2/cos(θ_t) − Z1/cos(θ_i)) / (Z2/cos(θ_t) + Z1/cos(θ_i)), with intensity R_I = R_p². The original formula used only **normal incidence** (single cos(θ)), which is incorrect when the ray is not perpendicular to the surface (e.g. IVUS rays hitting the vessel wall at various angles). Using **Snell’s law** to get θ_t from θ_i and the two cosines yields the **correct acoustic reflection** from first principles.  
+- **Adding reflection and specular to the same bin:** The interface echo has two contributions: (1) the **acoustic reflection** (R × intensity) and (2) an **empirical specular term** (Mattausch-style, directivity-like). Both should contribute to the **same depth** (the interface). The original code **overwrote** the bin with only the specular term; now both are **added** so the total echo at the interface is physically consistent (reflected energy) plus the empirical term. The specular term is weighted by **2.f** in `closest_hit` (e.g. `scanline[hit_bin] += 2.f * specular_reflection`).  
+  **Tuning:** The factor **2.f** is empirical. To tune: in `optix_trace.cu` search for `2.f * specular_reflection`; **increase** for stronger interface highlights (more “specular” appearance), **decrease** (or 1.f) for a more diffuse interface. Compare to real IVUS or reference sims if available.  
+- **Refracted ray: back_start and t_min_refract:** Physically the refracted ray propagates **in the second medium**, so its origin must be **just inside** that medium (back_start). Using **front_start** when the refracted direction pointed away from the normal was a heuristic that could place the origin in the wrong medium. Always using **back_start** ensures we are in the transmitted medium. **t_min_refract = 1e-3 mm** avoids the refracted ray **immediately re-hitting the same surface** (e.g. inner vessel wall or mesh self-intersection), which is a **numerical robustness** fix rather than a change in physics.
+
+**Diff (vs main) — `calculate_reflection_coefficient`:**
+```diff
+- static __device__ float calculate_reflection_coefficient(float incident_angle,
++ static __device__ float calculate_reflection_coefficient(float cos_theta_i, float cos_theta_t,
+                                                           const Material* material1,
+                                                           const Material* material2) {
+    float Z1 = material1->impedance_;
+    float Z2 = material2->impedance_;
+-   float cos_theta = fabsf(__cosf(incident_angle));
+-   float R = ((Z2 * cos_theta - Z1) / (Z2 * cos_theta + Z1));
+-   return R * R;
++   if (cos_theta_i <= 1e-6f || cos_theta_t <= 1e-6f) { return 1.f; }
++   float R_p = (Z2 / cos_theta_t - Z1 / cos_theta_i) / (Z2 / cos_theta_t + Z1 / cos_theta_i);
++   return R_p * R_p;
+  }
+```
+
+**Diff (vs main) — `closest_hit` (reflection + refracted ray):**
+```diff
+- const float incident_angle = acosf(fabsf(dot(ray_dir, normal)));
+- const float R = calculate_reflection_coefficient(incident_angle, current_material, next_material);
++ const float cos_i = fabsf(dot(ray_dir, normal));
++ const float sin_i = sqrtf(1.f - cos_i * cos_i);
++ const float v1 = current_material->speed_of_sound_;  const float v2 = next_material->speed_of_sound_;
++ const float sin_t = (v1 / v2) * sin_i;
++ const float cos_t = (sin_t < 1.f) ? sqrtf(1.f - sin_t * sin_t) : 0.f;
++ const float R = calculate_reflection_coefficient(cos_i, cos_t, current_material, next_material);
+  ...
+- scanline[get_intensity_offset(ray.t_ancestors + t)] = 2.f * specular_reflection;
++ const uint32_t hit_bin = get_intensity_offset(ray.t_ancestors + t);
++ scanline[hit_bin] += reflected_intensity;
++ scanline[hit_bin] += 2.f * specular_reflection;
+  ...
+- const float3 start = (dot(refracted_dir, wld_norm) > 0.f) ? front_start : back_start;
++ const float t_min_refract = 1e-3f;
++ const float3 start = back_start;
+  optixTrace(params.handle, start, refracted_dir,
+-            0.f,   // tmin
++            t_min_refract,   // tmin: avoid self-intersection
+             params.t_far - refracted_ray.t_ancestors, ...);
+```
+
+### 4.4 Pipeline parameters (OptiX)
+
+- **Implementation:** [optix_trace.hpp#L29-L45](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/optix_trace.hpp#L29-L45) (struct `Params`).
+- **Params** struct extended with:
+  - `scattering_resolution_mm` — voxel scale for scattering texture (IVUS uses smaller value).
+  - `disable_scatter` — if non-zero, scatter accumulation is skipped.
+  - `scatter_integral_scale` — scale factor for the scatter integral (0 = strict; ~40 used for visible tissue background).
+
+**Justification:** These pipeline parameters allow the **same raytracing kernel** to be used for both abdominal and IVUS without recompilation. **scattering_resolution_mm** is set per run (10 for IVUS, 50 for abdominal) so speckle scale matches the imaging geometry. **disable_scatter** is a switch for debugging or comparison. **scatter_integral_scale** is the empirical scale discussed in §4.2 so scatter contributes in a displayable range.  
+**Tuning:** **scattering_resolution_mm:** Set in `raytracing_ultrasound_simulator.cpp` (e.g. 10 for IVUS, 50 for abdominal). **Smaller** values give **finer speckle** (smaller correlation length); **larger** values give **coarser speckle**. Tune to match target speckle size (e.g. from literature or reference images) or to desired texture. **scatter_integral_scale:** See §4.2; same tuning as above (set in same place).
+
+---
+
+## 5. Simulator: PSF and TGC
+
+**Implementation:** [raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp), [raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (see subsections).
+
+### 5.1 Axial PSF
+
+- **Implementation:** [raytracing_ultrasound_simulator.cpp#L89-L136](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L89-L136) (`create_ivus_axial_psf_causal`), [raytracing_ultrasound_simulator.cpp#L337-L351](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L337-L351) (axial PSF branch in `update_psfs`). Header: [raytracing_ultrasound_simulator.hpp#L135](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp#L135) (`psf_ax_probe_type_`).
+- **IVUS**: New helper **`create_ivus_axial_psf_causal`** builds a causal, Hanning-windowed one-sided kernel (extent from pulse duration and wavelength). Used when `probe->get_probe_type() == PROBE_TYPE_IVUS`.
+- **Other probes**: Unchanged Gaussian axial PSF via `create_gaussian_psf`.
+- **Caching**: Axial PSF is invalidated when **probe type** or frequency changes (`psf_ax_probe_type_` in header).
+
+**Justification:** A **symmetric** (two-sided) axial kernel smears energy both **shallower and deeper** than the true interface. For IVUS, the **vessel wall** is a strong reflector; convolution with a symmetric kernel would **smear the wall echo backward into the lumen**, making the lumen appear bright and destroying the anechoic blood appearance. A **causal** kernel (energy only at and “deeper” in index space, i.e. no right half) ensures that the wall echo **only smears deeper**, preserving a **dark lumen** and a single peak at the true wall depth. The **Hanning window** shapes the pulse to reduce sidelobes while keeping the causal constraint. This is a **physics-based** choice: causality in time (echo arrives after transmission) maps to one-sided convolution in depth.
+
+### 5.2 Lateral PSF
+
+- **Implementation:** [raytracing_ultrasound_simulator.cpp#L282-L368](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L282-L368) (depth-dependent 2D kernel build and fallback lateral in `update_psfs`); header [raytracing_ultrasound_simulator.hpp#L143-L150](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp#L143-L150) (`psf_lat_2d_` and related members).
+- **Depth-dependent lateral (IVUS)**: When probe type is IVUS and `element_radius_mm` and `focal_length_mm` are both > 0, the simulator builds a **2D lateral kernel** (depth_bins × kernel_len) using Gaussian beam model (w0, z_R, w(z)). Stored in **`psf_lat_2d_`**; dimensions and parameters cached.
+- **Convolution**: If `psf_lat_2d_` is present, **`convolve_columns_depth_dependent`** is called; otherwise **`convolve_columns`** with 1D lateral kernel.
+- **Fallback for point-source**: When `element_spacing == 0` (IVUS), lateral resolution and inverse spacing set to safe defaults to avoid division by zero.
+
+**Justification:** For a **focused circular aperture**, the **Gaussian beam model** (Siegman, Goodman) gives: beam waist at focus w0 = λF/(2a), Rayleigh length z_R = πw0²/λ, and beam radius w(z) = w0√(1 + (z/z_R)²) with z = depth − focal_length. Using a **depth-invariant** lateral kernel (as for linear arrays) would be wrong for IVUS, where the beam **narrows near the focus** and **widens** elsewhere. The **depth-dependent lateral PSF** applies the correct σ(depth) in angle-bin space so lateral blur matches the physical beam. **Fallback** when element_spacing is 0: the original code used 1/element_spacing for the lateral kernel; IVUS has no element array, so element_spacing is 0. Using a **finite lateral width** derived from typical depth and aperture (λ·depth/aperture) and inv_spacing = 1 avoids division by zero and gives a reasonable kernel when the full 2D depth-dependent kernel is not built (e.g. focal_length_mm or element_radius_mm not set).
+
+### 5.3 update_psfs signature and TGC
+
+- **Implementation:** [raytracing_ultrasound_simulator.cpp#L260-L376](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L260-L376) (`update_psfs`), [raytracing_ultrasound_simulator.cpp#L500-L520](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L500-L520) (TGC). Header: [raytracing_ultrasound_simulator.hpp#L154-L155](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp#L154-L155) (`update_psfs` declaration, `tgc_probe_type_`).
+
+**Diff (vs main) — `update_psfs`:**
+```diff
+- void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStream_t stream) {
++ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStream_t stream,
++                                                 uint32_t buffer_size, float t_far) {
+    if (probe_frequency_ != probe->get_frequency()) {
+      ...
++     psf_lat_2d_.reset();
+    }
++   const ProbeType pt = probe->get_probe_type();
++   if (psf_ax_probe_type_ != pt) { psf_ax_probe_type_ = pt; psf_ax_.reset(); }
+    ...
++   // Build psf_lat_2d_ for IVUS when element_radius_mm and focal_length_mm > 0 (Gaussian beam model)
++   // Axial: IVUS branch uses create_ivus_axial_psf_causal; else create_gaussian_psf
++   // Lateral: IVUS fallback lat_width and inv_spacing when element_spacing == 0
+  }
+```
+
+**Diff (vs main) — TGC:**
+```diff
+-   if (!tgc_curve_ || (tgc_curve_->get_size() / sizeof(float) != sim_params.buffer_size)) {
+-     std::vector<ControlPoint> control_points{{0.f, 0.f}, {40.f, 28.f}};
++   const bool tgc_size_ok = ...;
++   const bool tgc_probe_match = tgc_probe_type_.has_value() && (*tgc_probe_type_ == probe->get_probe_type());
++   if (!tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
++     std::vector<ControlPoint> control_points;
++     if (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) {
++       control_points = {{0.f, 0.f}, {1.f, tgc_dB_per_cm}};
++     } else {
++       control_points = {{0.f, 0.f}, {40.f, 28.f}};
++     }
+      tgc_curve_ = create_piece_wise_tgc(...);
++     tgc_probe_type_ = probe->get_probe_type();
+    }
+```
+
+**Justification:** **update_psfs(buffer_size, t_far):** The IVUS **depth-dependent lateral** kernel depends on the depth range (t_far) and the number of depth samples (buffer_size) to build the 2D kernel (depth_bins × kernel_len). Passing these in allows the simulator to build the correct kernel without assuming global state. **TGC probe-type-specific:** **Time-gain compensation** compensates for **attenuation with depth** (and sometimes diffraction). Abdominal imaging uses depths of order **tens of cm** and a TGC curve (e.g. 0–40 cm, ~28 dB at 40 cm). IVUS imaging depth is **millimeters** (e.g. 0–10 mm), and tissue attenuation at 40 MHz is ~α·f per cm. Using the **same** TGC curve for IVUS would over-compensate (huge gain at 1 cm) and distort depth dependence. A **separate** TGC for IVUS (e.g. 0–1 cm, ~2 dB/cm) matches the physical depth range and attenuation scale. **Caching by probe type** ensures switching between IVUS and another probe type rebuilds the TGC curve appropriately.  
+**Tuning (IVUS TGC):** In `raytracing_ultrasound_simulator.cpp`, the IVUS TGC uses control points `{{0.f, 0.f}, {1.f, tgc_dB_per_cm}}` with **tgc_dB_per_cm = 2.f**. Approximate gain per cm from tissue attenuation is **α × f_MHz** (α in dB/(cm·MHz)). For vessel_wall α ≈ 1, 40 MHz → ~40 dB/m = **4 dB/cm**; 2 dB/cm is deliberately moderate so wire phantoms (lumen) and cystic phantoms (tissue) both show plausible depth dependence. **Increase** tgc_dB_per_cm if deeper tissue is too dark; **decrease** if near-field is over-gained or depth gradient looks wrong. Extend the control-point depth (e.g. 1.5 or 2 cm) if imaging beyond 1 cm. Adjust so that (1) wire echoes do not get over-amplified with depth and (2) tissue at 5–10 mm is visible without clipping.
+
+---
+
+## 6. CUDA algorithms: depth-dependent convolution and IVUS scan conversion
+
+**Implementation:** [cuda_algorithms.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu), [cuda_algorithms.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp).
+
+### 6.1 Depth-dependent column convolution
+
+- **Implementation:** [cuda_algorithms.cu#L86-L118](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu#L86-L118) (kernel), [cuda_algorithms.cu#L564-L577](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu#L564-L577) (host). Header: [cuda_algorithms.hpp#L68-L72](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp#L68-L72), [cuda_algorithms.hpp#L219](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp#L219).
+- New kernel **`convolve_columns_depth_dependent_kernel`**: For each (depth, angle, plane) sample, depth index maps to a **depth_bin**; 1D kernel from **kernel_2d** (row-major). Convolution along columns (angle dimension).
+- **`convolve_columns_depth_dependent`** host method launches this kernel; used by the simulator when `psf_lat_2d_` is set.
+
+**Justification:** The **lateral** dimension in IVUS is **angle** (columns are angular samples). The beam width **varies with depth**, so a single 1D lateral kernel is incorrect. The depth-dependent kernel implements the **Gaussian beam** lateral PSF: at each depth bin we apply the kernel that corresponds to w(z) at that depth, so the convolution is **physically consistent** with the beam model.
+
+### 6.2 IVUS scan conversion
+
+- **Implementation:** [cuda_algorithms.cu#L477-L494](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu#L477-L494) (kernel), [cuda_algorithms.cu#L805-L831](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu#L805-L831) (host). Header: [cuda_algorithms.hpp#L205-L207](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp#L205-L207), [cuda_algorithms.hpp#L224](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp#L224).
+- New kernel **`scan_convert_ivus_kernel`**: Input texture (depth_norm, angle_norm); output 2D buffer (angle pixels × depth pixels). Unwrapped IVUS display: angle horizontal, depth vertical (probe at top).
+- **`scan_convert_ivus`**: Manages CudaArray/CudaTexture for scanlines, uploads, launches kernel, returns B-mode buffer. Caching invalidated when input size changes.
+
+**Justification:** IVUS is conventionally displayed in **unwrapped** form: **horizontal = angle** (0–360°) and **vertical = depth** (probe at top). This matches clinical and research viewers and preserves the one-to-one mapping from (angle, depth) to (x, y) pixel. The kernel is a direct resample from polar (depth_norm, angle_norm) to this Cartesian layout; no sector geometry or masking is needed.
+
+---
+
+## 7. Simulator: pipeline wiring and display bounds
+
+**Implementation:** [raytracing_ultrasound_simulator.cpp#L418-L433](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L418-L433) (pipeline params), [raytracing_ultrasound_simulator.cpp#L464-L477](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L464-L477) (PSF step), [raytracing_ultrasound_simulator.cpp#L591-L611](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L591-L611) (scan conversion switch), [raytracing_ultrasound_simulator.cpp#L625-L638](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L625-L638) (display bounds). Header: [raytracing_ultrasound_simulator.hpp#L83-L104](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp#L83-L104) (`get_min_x` / `get_max_x` / `get_min_z` / `get_max_z`).
+
+- **Pipeline params**: **scattering_resolution_mm** = 10 for IVUS else 50; **disable_scatter** = 0; **scatter_integral_scale** = 40.
+- **PSF step**: Calls **`update_psfs(probe, stream, buffer_size, t_far)`**; then either **convolve_columns_depth_dependent** (if `psf_lat_2d_`) or **convolve_columns**.
+- **Scan conversion**: Switch on probe type; **`PROBE_TYPE_IVUS`** calls **`scan_convert_ivus`** (plane size and b_mode_size only).
+- **Display bounds**: For **PROBE_TYPE_IVUS**, **get_min_x/get_max_x/get_min_z/get_max_z** return (0, 360, 0, t_far). Implementation: `simulate()` sets `min_x_`, `max_x_`, `min_z_`, `max_z_` in the switch (lines 631–638).
+
+**Justification:** **Pipeline params:** Setting **scattering_resolution_mm** to 10 for IVUS (vs 50 for abdominal) matches the finer spatial scale of IVUS so the scattering texture is sampled at an appropriate voxel size (§4.2). **scatter_integral_scale = 40** is the empirical scale for displayable scatter. **PSF step:** Calling **update_psfs** with buffer_size and t_far is required to build the IVUS depth-dependent lateral kernel; choosing **convolve_columns_depth_dependent** when the 2D kernel exists applies the correct beam model. **Display bounds (0, 360, 0, t_far):** The unwrapped IVUS image has **angle in degrees** on the horizontal axis (0–360°) and **depth in mm** on the vertical axis (0 to t_far). Exposing these bounds lets the client (e.g. Python or C++) label axes correctly and set aspect ratio so the image is not stretched incorrectly.  
+**Tuning:** Empirical pipeline values are set in `raytracing_ultrasound_simulator.cpp` (params block before `pipeline_params_.upload`). **scattering_resolution_mm:** 10 for IVUS, 50 for abdominal; tune as in §4.4 (finer → finer speckle). **scatter_integral_scale:** 40 by default; tune as in §4.2 (higher → brighter tissue, lower → darker tissue; 0 = strict).
+
+---
+
+## 8. Python bindings and package exports
+
+**Implementation:** [raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/python/raysim_bindings.cpp) (IVUSProbe class and SimParams/Materials docs); [raysim/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/__init__.py), [raysim/cuda/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/cuda/__init__.py) (exports).
+
+- **IVUSProbe** bound as pybind11 class (constructors, readonly **element_radius_mm**, **focal_length_mm**). Defaults: num_angular_rays=256, frequency=40, element_radius_mm=0.6, focal_length_mm=4, etc.
+- **Materials**: Docstring for `get_index` updated to list **lumen**, **vessel_wall**, **extravascular**.
+- **SimParams**: Docstrings for **t_far**, **buffer_size**, **b_mode_size** clarified (mm, samples per ray, IVUS unwrapped angle×depth).
+- **IVUSProbe** added to exports and `__all__` in `raysim/__init__.py` and `raysim/cuda/__init__.py`.
+
+**Justification:** These are **API and usability** changes, not physics. Exposing **IVUSProbe** and the new materials (**lumen**, **vessel_wall**, **extravascular**) in Python allows users to build IVUS scenes and run simulations without touching C++. Documenting **t_far** (mm), **buffer_size** (samples per ray), and **b_mode_size** (angle × depth for IVUS) in SimParams reduces misuse (e.g. wrong units or expecting sector geometry for IVUS).
+
+---
+
+## 9. Utilities: vessel phantom meshes
+
+**Implementation:** [phantom_maker.py#L327-L394](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py#L327-L394) (`generate_cylinder_mesh`), [phantom_maker.py#L396-L458](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py#L396-L458) (`generate_cylinder_thick_mesh`), [phantom_maker.py#L489-L541](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py#L489-L541) (CLI cylinder).
+
+- **`generate_cylinder_mesh`**: Writes an open cylinder OBJ (no caps), axis along Y, cross-section in xz; optional **inward normals** so rays from the lumen hit the front face. Default 129 segments to avoid alignment with 256 IVUS rays.
+- **`generate_cylinder_thick_mesh`**: Writes **Cylinder_inner.obj** and **Cylinder_outer.obj** for a thick vessel wall (inner/outer radius, same segment count and inward normals).
+- **CLI**: New phantom type **cylinder** with options **--cylinder-radius**, **--cylinder-length**, **--cylinder-segments**, **--cylinder-thick**, **--cylinder-inner-radius**, **--cylinder-outer-radius**.
+
+**Justification:** IVUS validates against **vessel phantoms**: a lumen (blood) surrounded by a **cylindrical wall**. The cylinder axis is along **Y** (vessel axis); the **cross-section in xz** is the IVUS imaging plane. **Inward normals** ensure that rays cast **from the center** (probe) hit the **front face** of the mesh (OptiX back-face culling would otherwise hide the wall). **129 segments** avoids aligning mesh edges with 256 angular rays, which would cause **periodic intensity bands** (aliasing). The **thick-walled** variant (inner + outer cylinder) models a wall with finite thickness and two interfaces (lumen–wall, wall–extravascular) for attenuation and two-layer validation.
+
+---
+
+## 10. Evaluation (vessel, wire phantom, cystic phantom)
+
+A separate document **[ivus_evaluation_writeup.md](ivus_evaluation_writeup.md)** describes the three evaluation setups used to validate the IVUS implementation:
+
+- **IVUS vessel example** (`ivus_example.py`): thick-walled cylinder phantom; tests geometry, interface echoes, and attenuation; expected unwrapped image shows two concentric bright rings at ~3.5 and ~4 mm depth.
+- **Wire phantom** (`wire_phantom_evaluation.py`): point targets (bone spheres) at 1–5 mm in a spiral; tests resolution and geometric accuracy; expected unwrapped image shows five bright spots in a spiral pattern.
+- **Cystic-resolution phantom** (`cystic_resolution_phantom_evaluation.py`): tissue background with fluid cysts; tests contrast and scatter/TGC; expected unwrapped image shows speckled tissue with five darker cyst regions.
+
+That writeup includes the **unwrapped B-mode images** from each simulation for review and the commands to regenerate them.
+
+---
+
+## 12. Potential next steps and modeling gaps
+
+The following are **missing elements** that could explain mismatches between simulation and real IVUS, plus **suggested next steps** to enhance the model.
+
+### 12.1 Frequency dependence of scattering
+
+Scattering strength is modulated by material σ and attenuation along the path, but there is **no explicit frequency dependence** (e.g. f⁴ for Rayleigh). Changing center frequency changes attenuation and beam width but not the inherent scattering strength vs frequency. That can distort relative speckle vs frequency when comparing 20 vs 40 MHz or when matching to real IVUS.
+
+**Next step:** Add a frequency-dependent scattering term (e.g. σ(f) ∝ f⁴ for Rayleigh, or a material-level exponent) so that scatter contribution scales correctly with probe frequency.
+
+### 12.2 Catheter / ring-down
+
+There is **no model of the catheter or sheath**: no near-field ring-down, guided waves, or fixed echo from the housing. Real IVUS has a dead zone and strong echo from the catheter; its absence can make the simulated lumen look “too clean” near the probe.
+
+**Next step:** Introduce a simple catheter model (e.g. fixed echo at small depth, or a thin cylindrical shell with ring-down decay) and optionally a dead-zone mask so that the first 1–2 mm are not over-interpreted as lumen.
+
+### 12.3 Element directivity at transmit
+
+Ray intensity starts at 1.0; **element directivity is only applied in the lateral PSF** (receive-side blur). Transmit directivity (e.g. angular sensitivity of the single element) is not applied to the ray weights. For a rotating single element this can affect angular uniformity of sensitivity.
+
+**Next step:** Apply an angular weighting (e.g. from element size and frequency) to the **transmit** ray contribution (e.g. in the raytracing or in the RF accumulation) so that both transmit and receive directivity are represented.
+
+### 12.4 Electronic / thermal noise
+
+There is **no noise model**. For SNR, contrast resolution, or detector-limited studies, at least a simple noise model is needed (e.g. additive Gaussian, or noise figure).
+
+**Next step:** Add an optional noise stage (e.g. post–log-compression Gaussian, or pre-compression with a simple noise figure) and expose a parameter (e.g. SNR or noise std) for reproducibility.
+
+### 12.5 Rotation and motion
+
+The simulation is **“all angles at once”** (full 360° in one frame). Real IVUS uses a rotating element; rotation blur and motion artifacts are not represented. Acceptable for static phantoms; relevant for moving vessels or pullback validation.
+
+**Next step:** Optionally model a finite rotation window per frame (e.g. angular sector and integration time) or add a simple motion-blur kernel for pullback studies.
+
+### 12.6 Speed-of-sound heterogeneity and refraction
+
+Refraction at **interfaces** is correct, but the ray is **straight between interfaces**. In reality, smooth variations in c would bend rays. For small vessels and relatively uniform lumen/wall, this is often a second-order effect.
+
+**Next step:** For tissue with spatially varying c, consider ray bending (e.g. ray tracing in a graded index or layered c) if validation targets require it.
+
+### 12.7 Multiple scattering
+
+Only **single scattering** is modeled in the scatter integral. In dense, heterogeneous tissue, multiple scattering can affect speckle and attenuation; that’s a known limitation of ray-based methods.
+
+**Next step:** Document as a known limitation; if needed for specific studies, consider hybrid or post-hoc corrections (e.g. extra attenuation term) rather than full multi-scatter raytracing.
+
+### 12.8 Additional gaps (summary)
+
+- **Near-field / beam formation:** The beam is represented via the lateral PSF and t_far; explicit near-field (Fresnel) beam evolution is not modeled. Fine for many validation cases; relevant if focal behavior or very short ranges are critical.
+- **Angle-dependent reflection:** Reflection uses an intensity coefficient; full angular dependence (e.g. obliquity factor, mode conversion) is not included. Can matter for steep angles and shear waves.
+- **System transfer function / calibration:** Real systems have gain curves, digitization, and bandpass; the sim assumes an ideal chain. For pixel-level matching to a specific scanner, a system TF or calibration step would help.
+- **Reverberation and multipath:** Ringing in layers (e.g. wall–catheter–wall) and multipath are not modeled; they can add clutter in real IVUS.
+
+Incorporating the items in §12.1–12.4 would address the most visible gaps (frequency scaling, catheter clutter, transmit directivity, noise); §12.5–12.8 are secondary for static phantom validation but matter for realism and clinical comparison.
+
+---
+
+## 11. Summary of main implementation files changed/added
+
+| Area              | Files (core implementation) |
+|-------------------|-----------------------------|
+| Probe type        | [probe_types.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe_types.hpp), [probe.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe.hpp), [ivus_probe.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/ivus_probe.hpp) (new) |
+| Materials         | [material.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/material.cpp) |
+| Ray / scattering  | [optix_trace.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu), [optix_trace.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/optix_trace.hpp) |
+| Simulator / PSF   | [raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp), [raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) |
+| CUDA algorithms   | [cuda_algorithms.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu), [cuda_algorithms.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp) |
+| Python            | [raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/python/raysim_bindings.cpp), [raysim/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/__init__.py), [raysim/cuda/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/cuda/__init__.py) |
+| Utils             | [phantom_maker.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py) |
+
+Example and evaluation scripts (e.g. `ivus_example.py`, `ivus_evaluation.py`, `wire_phantom_evaluation.py`, `cystic_resolution_phantom_evaluation.py`) and the comparison doc **`docs/ivus_rotating_single_element_psf_comparison.md`** are not described step-by-step here, as requested.
