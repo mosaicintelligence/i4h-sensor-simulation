@@ -219,7 +219,7 @@ def main():
     parser.add_argument(
         "--background",
         type=str,
-        default="vessel_wall",
+        default="liver",
         choices=("vessel_wall", "liver", "extravascular"),
         help="Background (tissue) material (default: vessel_wall).",
     )
