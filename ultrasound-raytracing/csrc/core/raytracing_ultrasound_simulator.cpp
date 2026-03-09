@@ -426,7 +426,6 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     params.source_frequency = probe->get_frequency();
     params.contact_epsilon = sim_params.contact_epsilon;
     params.disable_scatter = 0;  // Scatter re-enabled; correct depth-bin indexing avoids streaks
-    params.use_point_scatterer_model = 0;
     // Scale scatter integral so vascular/cystic phantoms have visible background; wire phantom
     // remains valid (reflections dominate). 0 = strict integral (dark); ~40 gives usable range.
     params.scatter_integral_scale = 40.f;
