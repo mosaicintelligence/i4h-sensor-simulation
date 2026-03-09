@@ -70,7 +70,7 @@ def build_vessel_world(materials, use_cylinder=True, use_thick_cylinder=True):
     """
     world = rs.World("water")
     wall_material = materials.get_index("vessel_wall")
-    water_material = materials.get_index("vessel_wall")
+    water_material = materials.get_index("extravascular")
 
     if use_cylinder:
         if use_thick_cylinder:
