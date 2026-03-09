@@ -86,13 +86,6 @@ static __device__ float get_intensity_at_distance(float distance, float medium_a
  * @param material
  * @param intensities
  */
-// Pseudo-random in [0,1) from unsigned seed (repeatable, no RNG state)
-static __device__ float hash_float(uint32_t seed) {
-  const uint32_t k = 1103515245u;
-  const uint32_t b = 12345u;
-  return __uint2float_rn((k * seed + b) % (1u << 31)) / __uint2float_rn(1u << 31);
-}
-
 static __device__ void sample_intensities(float3 origin, float3 dir, float t_ancestors, float t_min,
                                           float t_max, float intensity, const Material* material,
                                           float* scanline, uint32_t ray_index) {
@@ -108,23 +101,6 @@ static __device__ void sample_intensities(float3 origin, float3 dir, float t_anc
   const float integral_weight = (params.scatter_integral_scale > 0.f)
                                     ? (range * params.scatter_integral_scale)
                                     : range;
-  if (params.use_point_scatterer_model) {
-    constexpr uint32_t N_POINTS = 40u;
-    const float segment_weight = integral_weight / static_cast<float>(N_POINTS);
-    const uint32_t segment_seed = ray_index * 7919u + static_cast<uint32_t>(t_ancestors * 1000.f);
-    for (uint32_t i = 0; i < N_POINTS; ++i) {
-      const float u = hash_float(segment_seed + i * 31u);
-      const float t_val = t_min + u * range;
-      const float depth = t_ancestors + t_val;
-      const uint32_t bin = get_intensity_offset(depth);
-      if (bin >= params.buffer_size) { continue; }
-      const float3 pos_world = origin + (t_ancestors + t_val) * dir;
-      const float scatter = get_scattering_value(pos_world, material) * intensity *
-                            get_intensity_at_distance(t_val - t_min, material->attenuation_);
-      scanline[bin] += segment_weight * scatter;
-    }
-    return;
-  }
 
   // Dense integration: one sample per depth bin
   const uint32_t steps = (range / params.t_far) * params.buffer_size + 0.5f;

@@ -46,8 +46,8 @@ This document compares the current raytracing IVUS implementation to the **rotat
 | Aspect              | Current raytracing IVUS                                                                                                                                         |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Transducer**      | **Point source** at catheter center (no aperture, no focal length). All rays share one origin; direction sweeps 360°.                                           |
-| **Acoustic engine** | **OptiX raytracing**: rays hit meshes/spheres; specular (+ optional refraction); volumetric scatter along ray (and optional point-scatterer model per segment). |
-| **Tissue**          | **Meshes (e.g. cylinder)** + **volumetric scatter** (3D texture + material). Optional point scatterers **along the ray** only.                                  |
+| **Acoustic engine** | **OptiX raytracing**: rays hit meshes/spheres; specular (+ optional refraction); volumetric scatter along ray. |
+| **Tissue**          | **Meshes (e.g. cylinder)** + **volumetric scatter** (3D texture + material). |
 | **Rotation**        | **No explicit rotation**: all angles launched in one frame; no “current angle” or mechanical rotation.                                                          |
 | **Axial PSF**       | **Causal Hanning** (IVUS) applied by 1D convolution along depth after raytracing.                                                                               |
 | **Lateral**         | Single **depth-invariant** Gaussian lateral kernel (width from “typical” depth and aperture 0.5 mm).                                                            |
@@ -65,7 +65,7 @@ This document compares the current raytracing IVUS implementation to the **rotat
 | **Element geometry** | **Focused circular** (0.6 mm radius, 4 mm focal length)             | **Point source** (no size, no focus)                                                                  |
 | **Beam shape**       | Focused (narrower near 4 mm); given by Field II                     | Diverging from point; lateral width ~ λ·r/a with fixed “typical” a                                    |
 | **RF / PSF**         | **Field II** `calc_scat` (full Green’s function / impulse response) | Ray hits + scatter → scanline → **axial** (causal Hanning) + **lateral** (fixed Gaussian) convolution |
-| **Tissue**           | **Point scatterers only** (list of positions + reflectivities)      | **Geometry (meshes)** + **volumetric scatter** (+ optional point scatterers along ray)                |
+| **Tissue**           | **Point scatterers only** (list of positions + reflectivities)      | **Geometry (meshes)** + **volumetric scatter**                |
 | **Rotation**         | **Explicit**: loop over θ, rotate scatterers, one A-line per angle  | **Implicit**: one launch, one ray per angle                                                           |
 | **Dead zone**        | **dead_r = 0.5 mm** (no image shallower)                            | None (causal PSF only)                                                                                |
 | **Slice**            | Slice thickness = 2× element radius; visibility mask                | 2D cross-section (no slice thickness)                                                                 |
@@ -95,7 +95,7 @@ This document compares the current raytracing IVUS implementation to the **rotat
 ### 4.3 Point-scatterer-only mode
 
 - **Notebook**: Only point scatterers; no surfaces.
-- **Current**: Meshes + scatter.
+- **Current**: Meshes + volumetric scatter (dense integration per depth bin along each ray). No point-scatterer path in the implementation.
 - **Change**: Either (a) add a **mode** that disables specular echoes and uses only scatter (tissue represented as scatter only), or (b) add a **separate path** that takes a list of point scatterers and uses an analytic or Field II–style model (no OptiX geometry). For (a): e.g. probe type or sim flag to skip writing specular in `closest_hit`; feed scatter from texture or from a point list.
 
 ### 4.4 Explicit rotation and visibility
