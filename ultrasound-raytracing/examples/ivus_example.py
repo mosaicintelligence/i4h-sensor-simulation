@@ -69,8 +69,8 @@ def build_vessel_world(materials, use_cylinder=True, use_thick_cylinder=True):
     Generate cylinder meshes with default 129 segments so vertices do not align with 256 rays.
     """
     world = rs.World("water")
-    wall_material = materials.get_index("liver")
-    water_material = materials.get_index("water")
+    wall_material = materials.get_index("vessel_wall")
+    water_material = materials.get_index("vessel_wall")
 
     if use_cylinder:
         if use_thick_cylinder:
@@ -174,8 +174,35 @@ def save_unwrapped_frame(b_mode_image, simulator, path, title="IVUS cross-sectio
     plt.savefig(path, bbox_inches="tight")
     plt.close()
 
+def save_polar_frame(b_mode_image, simulator, path, title="IVUS cross-section (polar)"):
+    """
+    Plot and save the same frame in polar format (standard ultrasound view):
+    center = probe, radius = depth, angle = azimuth. 0° at top (12 o'clock).
+    """
+    min_x = simulator.get_min_x()
+    max_x = simulator.get_max_x()
+    min_z = simulator.get_min_z()
+    max_z = simulator.get_max_z()
+    n_depth, n_angle = b_mode_image.shape
+    normalized = np.clip((b_mode_image - MIN_VAL) / (MAX_VAL - MIN_VAL), 0, 1)
 
-def run_single_frame(output_dir, use_cylinder=True, use_thick_cylinder=False):
+    # Edges for pcolormesh: angle in radians; 0° at top via set_theta_zero_location("N")
+    theta_deg = np.linspace(min_x, max_x, n_angle + 1)
+    theta_rad = np.radians(theta_deg)
+    r_edges = np.linspace(min_z, max_z, n_depth + 1)
+    Theta, R = np.meshgrid(theta_rad, r_edges)
+
+    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(projection="polar"))
+    ax.pcolormesh(Theta, R, normalized, cmap="gray", shading="flat")
+    ax.set_theta_zero_location("N")
+    ax.set_theta_direction(-1)
+    ax.set_ylim(min_z, max_z)
+    ax.set_title(title)
+    plt.colorbar(ax.collections[0], ax=ax, label="Intensity (normalized)", shrink=0.7)
+    plt.savefig(path, bbox_inches="tight")
+    plt.close()
+
+def run_single_frame(output_dir, use_cylinder=True, use_thick_cylinder=True):
     """Run one IVUS frame at the vessel center (origin)."""
     materials = rs.Materials()
     world = build_vessel_world(
@@ -190,13 +217,15 @@ def run_single_frame(output_dir, use_cylinder=True, use_thick_cylinder=False):
 
     os.makedirs(output_dir, exist_ok=True)
     path = os.path.join(output_dir, "ivus_frame.png")
+    path_polar = os.path.join(output_dir, "ivus_frame_polar.png")
     save_unwrapped_frame(b_mode_image, simulator, path)
+    save_polar_frame(b_mode_image, simulator, path_polar)
     print(f"Single frame saved to {path}")
     return path
 
 
 def run_pullback(
-    output_dir, n_frames=10, z_start=-1.5, z_end=1.5, use_cylinder=True, use_thick_cylinder=False
+    output_dir, n_frames=10, z_start=-1.5, z_end=1.5, use_cylinder=True, use_thick_cylinder=True
 ):
     """
     Run an IVUS pullback along the vessel: move the probe along z and

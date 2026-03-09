@@ -38,12 +38,23 @@ float Material::density() const {
 }
 
 Materials::Materials() {
+  // Standard materials (Goss et al. compilations, tissue phantoms). Attenuation in dB/(cm·MHz).
   materials_ = {{"water", Material(1.48f, 0.0022f, 1480.f, 0.f)},
-                {"blood", Material(1.61f, 0.18f, 1570.f, 0.1f, 0.1f, 0.1f)},
+                {"blood", Material(1.68f, 0.2f, 1584.f, 0.1f, 0.1f, 0.1f)},  // PMC3570716 T1, PMC5126009 T1
                 {"fat", Material(1.38f, 0.63f, 1450.f, 1.f, 0.f, 1.f, 0.f)},
                 {"liver", Material(1.65f, 0.7f, 1550.f, 0.7f, 0.f, 0.3f, 1e-5f)},
                 {"muscle", Material(1.70f, 1.09f, 1580.f, 0.5f, 0.8f, 0.4f)},
-                {"bone", Material(7.80f, 5.f, 4080.f, 0.8f, 0.9f, 0.5f)}};
+                {"bone", Material(7.80f, 5.f, 4080.f, 0.8f, 0.9f, 0.5f)},
+                /*
+                 * IVUS / vascular materials (literature; attenuation in dB/(cm·MHz)):
+                 * - lumen: blood at 1 MHz — c 1584 m/s, Z 1.68 MRayl, α 0.2 (PMC3570716 Table 1; PMC5126009 Table 1).
+                 * - vessel_wall: blood vessel c 1571 m/s, Z 1.82 MRayl (PMC5126009); α ~1 from 50 MHz coronary data (e.g. 4.99 dB/mm @ 50 MHz).
+                 * - extravascular: muscle-like c 1547 m/s, Z 1.62 MRayl (PMC5126009); α 0.7.
+                 * Refs: Goss et al. JASA compilations; PMC3570716 (Ultrasound Med Biol 2013); PMC5126009 (J Ultrasound 2016); Lockwood et al. UMB 17(7) 1991 (35–65 MHz vascular).
+                 */
+                {"lumen", Material(1.68f, 0.2f, 1584.f, 0.1f, 0.1f, 0.1f)},
+                {"vessel_wall", Material(1.82f, 1.0f, 1571.f, 0.5f, 0.6f, 0.35f, 1e-5f)},
+                {"extravascular", Material(1.62f, 0.7f, 1547.f, 0.5f, 0.4f, 0.3f)}};
 
   // Upload materials to device
   std::vector<Material> material_data;
