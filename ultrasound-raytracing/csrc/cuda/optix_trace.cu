@@ -74,6 +74,62 @@ static __device__ float get_intensity_at_distance(float distance, float medium_a
   return __powf(10.f, -attenuation_db * 0.05f);
 }
 
+// ---------------------------------------------------------------------------
+// Channel-capture splat (per-element RF deposition)
+// ---------------------------------------------------------------------------
+// Convert a deposition event at world point `p` with intensity `intensity_at_p`
+// into a per-receive-element atomic add into params.channel_rf at the time
+// bin corresponding to t_total = t_tx_path + |p - rx[e]|.
+//
+// `t_tx_path` is the cumulative one-way path traveled by the firing TX ray to
+// reach `p` (in mm; same units as t_far). The receive leg `t_rx = |p - rx[e]|`
+// is added analogously — the storage convention is path length, identical to
+// the legacy scanline path so no time-vs-distance conversion is needed here.
+//
+// `current_material` is used to apply a per-receive Beer–Lambert attenuation on
+// the receive leg `t_rx` (the TX-leg attenuation has already been folded into
+// `intensity_at_p` by the caller).
+//
+// rx_normals provide a simple back-face cull / cos directivity gate so that a
+// scatter point behind the array surface does not deposit echo into elements.
+// ---------------------------------------------------------------------------
+static __device__ void splat_to_channels(float3 p, float intensity_at_p, float t_tx_path,
+                                         const Material* current_material) {
+  if (!params.channel_rf || params.num_rx == 0u) { return; }
+
+  const uint32_t tx = params.tx_index;
+  const uint32_t buf = params.buffer_size;
+  const uint32_t num_rx = params.num_rx;
+
+  for (uint32_t e = 0; e < num_rx; ++e) {
+    const float3 rx_pos = params.rx_positions[e];
+    const float3 to_rx = rx_pos - p;
+    const float t_rx = sqrtf(dot(to_rx, to_rx));
+    const float t_total = t_tx_path + t_rx;
+    if (t_total >= params.t_far) { continue; }
+
+    // Cos directivity gate: receive element with outward normal `n_e` should
+    // only register echoes coming from the half-space it faces. The vector
+    // from element to scatter point is `-to_rx`; the cosine of the receive
+    // angle is dot(-to_rx_hat, n_e).
+    const float inv_t_rx = (t_rx > 1e-6f) ? (1.f / t_rx) : 0.f;
+    const float3 to_rx_hat = make_float3(to_rx.x * inv_t_rx, to_rx.y * inv_t_rx, to_rx.z * inv_t_rx);
+    const float3 n_e = params.rx_normals[e];
+    const float cos_g = -dot(to_rx_hat, n_e);
+    if (cos_g <= 0.f) { continue; }
+
+    const uint32_t bin = uint32_t((t_total / params.t_far) * (buf - 1) + 0.5f);
+    if (bin >= buf) { continue; }
+
+    const float att = get_intensity_at_distance(t_rx, current_material->attenuation_);
+    const float val = intensity_at_p * cos_g * att;
+
+    const uint64_t out_idx =
+        (static_cast<uint64_t>(tx) * num_rx + e) * static_cast<uint64_t>(buf) + bin;
+    atomicAdd(&params.channel_rf[out_idx], val);
+  }
+}
+
 /**
  * Sample intensities
  *
@@ -114,7 +170,12 @@ static __device__ void sample_intensities(float3 origin, float3 dir, float t_anc
     const float3 pos_world = origin + (t_ancestors + t_val) * dir;
     const float scatter = get_scattering_value(pos_world, material) * intensity *
                          get_intensity_at_distance(t_val - t_min, material->attenuation_);
-    scanline[bin] += segment_weight * scatter;
+    const float contribution = segment_weight * scatter;
+    if (scanline) { scanline[bin] += contribution; }
+    // Channel-capture: splat to all RX elements at depth `t_ancestors + t_val`.
+    // The TX-leg attenuation up to this sample is already folded into `scatter`;
+    // splat_to_channels adds the per-element receive-leg attenuation.
+    splat_to_channels(pos_world, contribution, depth, material);
   }
 }
 
@@ -394,6 +455,13 @@ extern "C" __global__ void __raygen__rg() {
   const float elevation = ray_gen_data->elevational_height * d_y;
   origin.y = elevation;
 
+  // Channel-capture: shift the ray origin to the firing TX element's local
+  // position. In legacy scanline mode this offset is zero so the ray gen is
+  // unchanged.
+  origin.x += ray_gen_data->tx_origin_local.x;
+  origin.y += ray_gen_data->tx_origin_local.y;
+  origin.z += ray_gen_data->tx_origin_local.z;
+
   // Transform from probe's local coordinate system to global coordinate system
   origin = ray_gen_data->rotation_matrix * origin;
   origin += ray_gen_data->position;
@@ -439,6 +507,10 @@ extern "C" __global__ void __miss__ms() {
 
   // no hits, just do scattering up to t_far
   const uint32_t ray_index = idx.y * optixGetLaunchDimensions().x + idx.x;
+  // sample_intensities tolerates a null `scanline` pointer; channel-capture mode
+  // skips the per-ray scanline buffer entirely.
+  float* const scanline =
+      params.scanlines ? &params.scanlines[ray_index * params.buffer_size] : nullptr;
   sample_intensities(
       optixGetWorldRayOrigin(),
       optixGetWorldRayDirection(),
@@ -447,7 +519,7 @@ extern "C" __global__ void __miss__ms() {
       optixGetRayTmax(),
       ray.intensity,
       &params.materials[ray.current_material_id],
-      &params.scanlines[ray_index * params.buffer_size],
+      scanline,
       ray_index);
 }
 
@@ -469,7 +541,10 @@ static __device__ void closest_hit() {
   const Material* current_material = &params.materials[current_material_id];
   const uint3 idx = optixGetLaunchIndex();
   const uint32_t ray_index = idx.y * optixGetLaunchDimensions().x + idx.x;
-  float* const scanline = &params.scanlines[ray_index * params.buffer_size];
+  // Null scanline => channel-capture-only run; sample_intensities and the
+  // specular writes below are gated accordingly.
+  float* const scanline =
+      params.scanlines ? &params.scanlines[ray_index * params.buffer_size] : nullptr;
 
   // add scattering contribution up to hit
   sample_intensities(
@@ -521,7 +596,7 @@ static __device__ void closest_hit() {
   // (2) Specular term: empirical (Mattausch et al. Monte Carlo); cos^n toward transducer
   // approximates directivity; not derivable from wave equation alone.
   const uint32_t hit_bin = get_intensity_offset(ray.t_ancestors + t);
-  scanline[hit_bin] += reflected_intensity;
+  if (scanline) { scanline[hit_bin] += reflected_intensity; }
 
   const float ray_coherence_attenuation = __powf(0.3f, ray.depth);
   const float specular_reflection = calculate_specular_intensity(reflected_dir,
@@ -530,7 +605,17 @@ static __device__ void closest_hit() {
                                                                  ray_dir,
                                                                  next_material->specularity_) *
                                     ray_coherence_attenuation;
-  scanline[hit_bin] += 2.f * specular_reflection;
+  if (scanline) { scanline[hit_bin] += 2.f * specular_reflection; }
+
+  // Channel-capture: splat both echo terms to all RX elements.
+  // The reflection / specular contributions are deposited at the same world
+  // point (the geometry hit) and the same TX path (`ray.t_ancestors + t`).
+  if (params.channel_rf) {
+    const float3 hit_pos = ray_orig + t * ray_dir;
+    splat_to_channels(
+        hit_pos, reflected_intensity + 2.f * specular_reflection, ray.t_ancestors + t,
+        current_material);
+  }
 
   // Self-intersection avoidance
   float3 front_start, back_start, wld_norm;

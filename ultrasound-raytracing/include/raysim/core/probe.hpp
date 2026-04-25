@@ -138,6 +138,33 @@ class BaseProbe {
     direction = pose_.local_to_world_direction(direction);
   }
 
+  /**
+   * Fill `out` with this probe's element positions in **world** coordinates.
+   * Used by the channel-capture path to upload an `[N]` array of receive
+   * element positions to the GPU.
+   *
+   * @param out Output vector, resized to `get_num_elements()`.
+   */
+  void get_world_element_positions(std::vector<float3>& out) const {
+    out.resize(num_elements_x_);
+    for (uint32_t i = 0; i < num_elements_x_; ++i) {
+      get_element_position(i, out[i]);
+    }
+  }
+
+  /**
+   * Fill `out` with this probe's element outward normals in **world** coordinates.
+   * Used by the channel-capture path for back-face culling / directivity gating.
+   *
+   * @param out Output vector, resized to `get_num_elements()`.
+   */
+  void get_world_element_normals(std::vector<float3>& out) const {
+    out.resize(num_elements_x_);
+    for (uint32_t i = 0; i < num_elements_x_; ++i) {
+      get_element_direction(i, out[i]);
+    }
+  }
+
   /// Update probe pose (orientation in radians)
   void set_pose(const Pose& new_pose) { pose_ = new_pose; }
 

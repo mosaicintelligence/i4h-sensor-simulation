@@ -16,6 +16,7 @@
 """Explicitly import CUDA implementations from ray_sim_python"""
 
 from raysim.ray_sim_python import (
+    ChannelCaptureParams,
     CurvilinearProbe,
     Hitable,
     IVUSProbe,
@@ -32,6 +33,7 @@ from raysim.ray_sim_python import (
 )
 
 __all__ = [
+    "ChannelCaptureParams",
     "CurvilinearProbe",
     "Hitable",
     "IVUSProbe",

@@ -572,7 +572,134 @@ rays emanate radially over 360° for a cross-sectional vessel image.
 
         Returns:
             np.ndarray: B-mode ultrasound image
+      )pbdoc")
+      .def(
+          "simulate_channel_capture",
+          [](raysim::RaytracingUltrasoundSimulator& self,
+             const raysim::BaseProbe* probe,
+             const raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams& cc_params) {
+            try {
+              spdlog::info("Starting channel-capture simulation");
+              auto result = self.simulate_channel_capture(probe, cc_params);
+
+              if (!result.channel_rf) {
+                spdlog::error("Channel-capture returned null buffer");
+                throw std::runtime_error("Channel-capture returned null buffer");
+              }
+
+              const size_t element_count =
+                  static_cast<size_t>(result.num_tx) * result.num_rx * result.buffer_size;
+              auto host_data = std::unique_ptr<float[]>(new float[element_count]);
+              result.channel_rf->download(host_data.get(), cudaStreamDefault);
+
+              std::vector<ssize_t> shape = {static_cast<ssize_t>(result.num_tx),
+                                            static_cast<ssize_t>(result.num_rx),
+                                            static_cast<ssize_t>(result.buffer_size)};
+              auto rf_array = py::array_t<float>(shape, host_data.get());
+
+              // Pack element positions as (N, 3) float32 numpy arrays.
+              auto float3_vec_to_numpy = [](const std::vector<float3>& v) {
+                std::vector<ssize_t> shape = {static_cast<ssize_t>(v.size()),
+                                              static_cast<ssize_t>(3)};
+                py::array_t<float> arr(shape);
+                auto buf = arr.request();
+                float* p = static_cast<float*>(buf.ptr);
+                for (size_t i = 0; i < v.size(); ++i) {
+                  p[i * 3 + 0] = v[i].x;
+                  p[i * 3 + 1] = v[i].y;
+                  p[i * 3 + 2] = v[i].z;
+                }
+                return arr;
+              };
+
+              py::dict out;
+              out["rf"] = rf_array;
+              out["tx_positions"] = float3_vec_to_numpy(result.tx_positions);
+              out["rx_positions"] = float3_vec_to_numpy(result.rx_positions);
+              out["speed_of_sound"] = result.speed_of_sound;
+              out["t_far"] = result.t_far;
+              out["num_tx"] = result.num_tx;
+              out["num_rx"] = result.num_rx;
+              out["buffer_size"] = result.buffer_size;
+              spdlog::info("Channel-capture completed successfully");
+              return out;
+            } catch (const std::exception& e) {
+              spdlog::error("Exception in simulate_channel_capture: {}", e.what());
+              throw;
+            }
+          },
+          py::arg("probe"),
+          py::arg("params"),
+          R"pbdoc(
+        Run a single full-matrix-capture (FMC) per-element RF acquisition.
+
+        Each element of `probe` transmits in turn; every element receives in
+        parallel. The result is a raw RF tensor shaped (N_TX, N_RX, N_samples)
+        suitable for offline beamforming. See CHANNEL_CAPTURE.md at the repo
+        root for the full design discussion and a worked example.
+
+        Args:
+            probe: BaseProbe instance (v1: phased array). Element positions are
+                taken from probe.get_local_element_position().
+            params: ChannelCaptureParams instance with capture settings.
+
+        Returns:
+            dict with keys:
+                rf            (N_TX, N_RX, N_samples) float32 numpy array
+                tx_positions  (N_TX, 3) world-space TX element positions [mm]
+                rx_positions  (N_RX, 3) world-space RX element positions [mm]
+                speed_of_sound  scalar [mm/us]
+                t_far           scalar [mm] (max one-way path stored at last bin)
+                num_tx, num_rx, buffer_size
       )pbdoc");
+
+  // ------------------------------------------------------------------------
+  // ChannelCaptureParams
+  // ------------------------------------------------------------------------
+  py::class_<raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams>(
+      m,
+      "ChannelCaptureParams",
+      R"pbdoc(
+        Parameters for `RaytracingUltrasoundSimulator.simulate_channel_capture`.
+
+        Fields:
+            t_far          Max one-way path corresponding to the last sample bin [mm].
+            buffer_size    Number of time samples per channel.
+            max_depth      Max recursive ray-tracing depth (reflections / refractions).
+            min_intensity  Termination threshold on carried ray intensity.
+            num_tx_rays    Number of rays fired per TX event (lateral sampling density).
+            num_tx         Number of TX events to fire (0 = probe.num_elements).
+            enable_cuda_timing  Print per-stage CUDA timings.
+      )pbdoc")
+      .def(py::init<>())
+      .def_readwrite(
+          "t_far",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::t_far,
+          "Max one-way path corresponding to the last sample bin [mm]")
+      .def_readwrite(
+          "buffer_size",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::buffer_size,
+          "Number of time samples per channel")
+      .def_readwrite(
+          "max_depth",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::max_depth,
+          "Max recursive ray-tracing depth")
+      .def_readwrite(
+          "min_intensity",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::min_intensity,
+          "Termination threshold on carried ray intensity")
+      .def_readwrite(
+          "num_tx_rays",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::num_tx_rays,
+          "Number of rays fired per TX event")
+      .def_readwrite(
+          "num_tx",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::num_tx,
+          "Number of TX events to fire (0 = probe.num_elements)")
+      .def_readwrite(
+          "enable_cuda_timing",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::enable_cuda_timing,
+          "Print per-stage CUDA timings");
 
   // Bind Hitable base class
   py::class_<raysim::Hitable>(m, "Hitable", R"pbdoc(

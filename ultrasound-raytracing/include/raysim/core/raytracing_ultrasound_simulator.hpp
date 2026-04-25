@@ -20,6 +20,9 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
+
+#include <vector_types.h>
 
 #include "raysim/core/probe_types.hpp"
 #include "raysim/cuda/cuda_helper.hpp"
@@ -66,6 +69,57 @@ class RaytracingUltrasoundSimulator {
   };
 
   /**
+   * Channel-capture (per-element RF) simulation parameters.
+   *
+   * See CHANNEL_CAPTURE.md for the conceptual mapping. The OptiX scene, materials
+   * and ray physics are reused from the legacy `simulate` path; only the deposition
+   * rule changes: every scatter sample / specular hit is splat to all receive
+   * elements at their respective times of flight.
+   *
+   * v1 only supports the phased-array probe (linear element layout). For other
+   * probe types this method will fall back to the same layout as a phased array
+   * and a warning will be logged.
+   */
+  struct ChannelCaptureParams {
+    /// Maximum total (TX + RX) ray distance corresponding to the last sample bin [mm].
+    float t_far = 180.f;
+    /// Number of time samples per channel.
+    uint32_t buffer_size = 4096;
+    /// Maximum recursive ray-tracing depth (reflections / refractions).
+    uint32_t max_depth = 4;
+    /// Rays terminate when their carried intensity falls below this threshold.
+    float min_intensity = 1e-3f;
+    /// Number of rays per TX event in the lateral (azimuthal) direction.
+    /// Larger values give denser angular sampling of the medium per TX.
+    uint32_t num_tx_rays = 256;
+    /// Number of TX events to fire (usually equals number of receive elements
+    /// for a full matrix capture). Must satisfy `num_tx <= probe.num_elements`.
+    /// 0 means "use probe.num_elements".
+    uint32_t num_tx = 0;
+    /// CUDA stream.
+    cudaStream_t stream = cudaStreamPerThread;
+    /// Print timing of CUDA operations.
+    bool enable_cuda_timing = false;
+  };
+
+  /// Channel-capture simulation result.
+  struct ChannelCaptureResult {
+    /// [num_tx * num_rx * buffer_size] floats, row-major as above.
+    std::unique_ptr<CudaMemory> channel_rf;
+    uint32_t num_tx = 0;
+    uint32_t num_rx = 0;
+    uint32_t buffer_size = 0;
+    /// World-space TX element positions used for this capture (length num_tx).
+    std::vector<float3> tx_positions;
+    /// World-space RX element positions used for this capture (length num_rx).
+    std::vector<float3> rx_positions;
+    /// Speed of sound used to convert sample bins -> time / depth (mm/us).
+    float speed_of_sound = 0.f;
+    /// Maximum total path corresponding to the last sample bin (mm).
+    float t_far = 0.f;
+  };
+
+  /**
    * Generate a single B-mode ultrasound frame
    *
    * @param probe BaseProbe object
@@ -74,6 +128,22 @@ class RaytracingUltrasoundSimulator {
    * @returns Dictionary containing simulation results
    */
   SimResult simulate(const BaseProbe* probe, const SimParams& sim_params);
+
+  /**
+   * Generate per-element RF (channel-capture) for a single matrix-capture event.
+   *
+   * Each element of the probe transmits in turn (FMC) and every element receives
+   * in parallel; the result is a `(num_tx, num_rx, buffer_size)` tensor of raw
+   * RF samples that downstream code can beamform offline.
+   *
+   * @param probe Phased-array probe describing the receive aperture geometry.
+   *              Element positions are obtained via `probe->get_local_element_position`.
+   * @param params Channel-capture parameters.
+   *
+   * @returns ChannelCaptureResult holding the RF cube and metadata.
+   */
+  ChannelCaptureResult simulate_channel_capture(const BaseProbe* probe,
+                                                const ChannelCaptureParams& params);
 
   /**
    * Get the minimum x value of the simulated region

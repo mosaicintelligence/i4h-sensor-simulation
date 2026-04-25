@@ -18,8 +18,10 @@
 #include "raysim/core/raytracing_ultrasound_simulator.hpp"
 
 #include <spdlog/fmt/fmt.h>
+#include <spdlog/spdlog.h>
 #include <cmath>
 #include <filesystem>
+#include <vector>
 
 #include "raysim/core/probe.hpp"
 #include "raysim/core/world.hpp"
@@ -391,6 +393,8 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     rg_sbt.data.width = probe->get_width();
     rg_sbt.data.position = probe->get_pose().position_;
     rg_sbt.data.rotation_matrix = probe->get_pose().rotation_matrix_;
+    // Legacy scanline mode: rays originate at the array center.
+    rg_sbt.data.tx_origin_local = make_float3(0.f, 0.f, 0.f);
 
     OPTIX_CHECK(optixSbtRecordPackHeader(raygen_prog_group_.get(), &rg_sbt));
     raygen_record_.upload(&rg_sbt, sim_params.stream);
@@ -429,6 +433,12 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     // Scale scatter integral so vascular/cystic phantoms have visible background; wire phantom
     // remains valid (reflections dominate). 0 = strict integral (dark); ~40 gives usable range.
     params.scatter_integral_scale = 40.f;
+    // Channel-capture disabled in the legacy scanline path; explicit null/zero.
+    params.channel_rf = nullptr;
+    params.rx_positions = nullptr;
+    params.rx_normals = nullptr;
+    params.num_rx = 0u;
+    params.tx_index = 0u;
 
     pipeline_params_.upload(&params, sim_params.stream);
 
@@ -660,6 +670,146 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   result.b_mode = std::move(b_mode);
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Channel-capture (per-element RF) entry point.
+//
+// See CHANNEL_CAPTURE.md (repo root) for the full design discussion. This
+// implementation:
+//   1. Allocates a [num_tx, num_rx, buffer_size] float buffer on the GPU and
+//      zeros it.
+//   2. Uploads the receive-aperture geometry (positions + outward normals) in
+//      world coordinates.
+//   3. For each TX element, repacks the SBT raygen record so the ray origin
+//      shifts to that element's local position, and launches OptiX once with
+//      a (num_tx_rays, num_el_samples) grid.
+//   4. Returns the device buffer (callers download it to host as needed).
+//
+// The scanlines pointer is left null in `Params`, so the kernel skips all
+// per-ray scanline writes. The same OptiX pipeline binary is reused.
+// ---------------------------------------------------------------------------
+RaytracingUltrasoundSimulator::ChannelCaptureResult
+RaytracingUltrasoundSimulator::simulate_channel_capture(const BaseProbe* probe,
+                                                        const ChannelCaptureParams& cc_params) {
+  CudaTiming cuda_timing(cc_params.enable_cuda_timing, "ChannelCapture", cc_params.stream);
+
+  if (probe == nullptr) {
+    throw std::runtime_error("simulate_channel_capture: probe is null");
+  }
+  if (probe->get_probe_type() != ProbeType::PROBE_TYPE_PHASED_ARRAY) {
+    spdlog::warn(
+        "simulate_channel_capture: only PROBE_TYPE_PHASED_ARRAY is supported in v1; "
+        "treating probe as a linear phased aperture along its width.");
+  }
+
+  const uint32_t num_rx = probe->get_num_elements();
+  const uint32_t num_tx =
+      (cc_params.num_tx == 0u) ? num_rx : std::min(cc_params.num_tx, num_rx);
+  if (num_rx == 0u) {
+    throw std::runtime_error("simulate_channel_capture: probe has zero elements");
+  }
+  if (cc_params.buffer_size == 0u) {
+    throw std::runtime_error("simulate_channel_capture: buffer_size must be > 0");
+  }
+
+  // ---- Receive aperture geometry --------------------------------------
+  std::vector<float3> rx_positions_world;
+  std::vector<float3> rx_normals_world;
+  probe->get_world_element_positions(rx_positions_world);
+  probe->get_world_element_normals(rx_normals_world);
+
+  CudaMemory d_rx_positions(rx_positions_world.size() * sizeof(float3), cc_params.stream);
+  d_rx_positions.upload(rx_positions_world.data(), cc_params.stream);
+  CudaMemory d_rx_normals(rx_normals_world.size() * sizeof(float3), cc_params.stream);
+  d_rx_normals.upload(rx_normals_world.data(), cc_params.stream);
+
+  // Local (probe-frame) positions are needed to offset the ray origin per TX.
+  std::vector<float3> rx_positions_local(num_rx);
+  for (uint32_t i = 0; i < num_rx; ++i) {
+    probe->get_local_element_position(i, rx_positions_local[i]);
+  }
+
+  // ---- Channel RF buffer ----------------------------------------------
+  const size_t channel_count =
+      static_cast<size_t>(num_tx) * num_rx * cc_params.buffer_size;
+  auto d_channel_rf =
+      std::make_unique<CudaMemory>(channel_count * sizeof(float), cc_params.stream);
+  CUDA_CHECK(cudaMemsetAsync(d_channel_rf->get_ptr(cc_params.stream),
+                             0,
+                             d_channel_rf->get_size(),
+                             cc_params.stream));
+
+  // ---- Common Params ---------------------------------------------------
+  Params params{};
+  params.scanlines = nullptr;  // channel-capture only
+  params.buffer_size = cc_params.buffer_size;
+  params.t_far = cc_params.t_far;
+  params.min_intensity = cc_params.min_intensity;
+  params.max_depth = cc_params.max_depth;
+  params.materials =
+      reinterpret_cast<Material*>(materials_->get_material_data()->get_ptr(cc_params.stream));
+  params.background_material_id = materials_->get_index(world_->get_background_material());
+  params.scattering_texture = world_->get_scattering_texture();
+  // Use the same scale the legacy `simulate` uses for non-IVUS probes.
+  params.scattering_resolution_mm = 50.f;
+  params.handle = world_->get_gas_handle();
+  params.source_frequency = probe->get_frequency();
+  params.contact_epsilon = 0.0f;
+  params.disable_scatter = 0;
+  params.scatter_integral_scale = 40.f;
+
+  params.channel_rf = reinterpret_cast<float*>(d_channel_rf->get_ptr(cc_params.stream));
+  params.rx_positions = reinterpret_cast<const float3*>(d_rx_positions.get_ptr(cc_params.stream));
+  params.rx_normals = reinterpret_cast<const float3*>(d_rx_normals.get_ptr(cc_params.stream));
+  params.num_rx = num_rx;
+
+  // ---- TX loop ---------------------------------------------------------
+  const uint32_t num_el_samples =
+      probe->get_num_el_samples() ? probe->get_num_el_samples() : 1u;
+
+  for (uint32_t tx = 0; tx < num_tx; ++tx) {
+    // Repack the raygen SBT record with the TX element's local origin.
+    {
+      RayGenSbtRecord rg_sbt{};
+      rg_sbt.data.probe_type = static_cast<int>(probe->get_probe_type());
+      rg_sbt.data.sector_angle = probe->get_sector_angle();
+      rg_sbt.data.elevational_height =
+          probe->get_num_el_samples() ? probe->get_elevational_height() : 0.f;
+      rg_sbt.data.radius = probe->get_radius();
+      rg_sbt.data.width = probe->get_width();
+      rg_sbt.data.position = probe->get_pose().position_;
+      rg_sbt.data.rotation_matrix = probe->get_pose().rotation_matrix_;
+      rg_sbt.data.tx_origin_local = rx_positions_local[tx];
+
+      OPTIX_CHECK(optixSbtRecordPackHeader(raygen_prog_group_.get(), &rg_sbt));
+      raygen_record_.upload(&rg_sbt, cc_params.stream);
+    }
+
+    params.tx_index = tx;
+    pipeline_params_.upload(&params, cc_params.stream);
+
+    OPTIX_CHECK(optixLaunch(pipeline_.get(),
+                            cc_params.stream,
+                            pipeline_params_.get_device_ptr(cc_params.stream),
+                            pipeline_params_.get_size(),
+                            &shader_binding_table_,
+                            cc_params.num_tx_rays,
+                            num_el_samples,
+                            /*depth=*/1));
+    CUDA_CHECK(cudaPeekAtLastError());
+  }
+
+  ChannelCaptureResult out;
+  out.channel_rf = std::move(d_channel_rf);
+  out.num_tx = num_tx;
+  out.num_rx = num_rx;
+  out.buffer_size = cc_params.buffer_size;
+  out.tx_positions.assign(rx_positions_world.begin(), rx_positions_world.begin() + num_tx);
+  out.rx_positions = std::move(rx_positions_world);
+  out.speed_of_sound = probe->get_speed_of_sound();
+  out.t_far = cc_params.t_far;
+  return out;
 }
 
 }  // namespace raysim
