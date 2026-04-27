@@ -19,6 +19,7 @@ Ray-Based Ultrasound Simulator
 A GPU-accelerated ultrasound simulation package that uses ray-tracing for realistic acoustic behavior.
 """
 
+from .config import IvusSimConfig
 from .ray_sim_python import (
     CurvilinearProbe,
     IVUSProbe,
@@ -36,6 +37,7 @@ __version__ = "0.1.0"
 __all__ = [
     "CurvilinearProbe",
     "IVUSProbe",
+    "IvusSimConfig",
     "LinearArrayProbe",
     "Materials",
     "PhasedArrayProbe",
