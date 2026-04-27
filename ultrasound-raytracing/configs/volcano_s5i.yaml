@@ -1,0 +1,92 @@
+# Volcano s5i IVUS imaging system — simulator config
+#
+# Values pre-populated from the s5i Service Manual (Eagle Eye Gold / Avanar 20 MHz
+# catheters). Fields marked "Future" are part of the schema but are not wired into
+# the simulator yet — the loader will warn and ignore them until they are.
+#
+# See `IVUS Simulation Parameters - Sheet1.csv` for provenance of every value.
+
+probe:
+  type: ivus                              # ivus | curvilinear | linear_array | phased_array
+  frequency_mhz: 20.0                     # Eagle Eye Gold / Avanar / Visions PV .018 (Manual p.165)
+  pulse_duration_cycles: 2                # cycles in excitation pulse — calibrate from -6 dB BW
+  num_scanlines: 256                      # SA reconstructs ~256 A-lines from 64 elements (Manual p.135)
+  element_radius_mm: 0.6                  # per-element effective radius (fit from wire phantom)
+  focal_length_mm: 4.0                    # depth of beam waist (fit from wire phantom)
+  elevational_height_mm: 0.0              # 0 = single 2D plane; transducer assembly is ~2.5 mm long
+  num_elevational_samples: 1
+  speed_of_sound_mm_per_us: 1.54          # 6.0 mm water target ±0.1 mm in calibration (Manual p.110)
+  f_num: 1.0                              # unused for IVUS (superseded by element_radius + focal_length)
+  width_mm: 0.0                           # IVUS = point source
+  pose:
+    position_mm: [0.0, 0.0, 0.0]
+    rotation_rad: [0.0, 0.0, 0.0]
+  # --- Future ---
+  impulse_response_path: null             # optional: measured A-line pulse waveform
+  synthetic_aperture: false               # Future: 64-element SA beamforming (device is SA)
+
+sim:
+  t_far_mm: 10.0                          # half of displayed diameter; 20 MHz cath: D ∈ {8..20} mm
+  buffer_size: 4096
+  b_mode_size: [256, 1024]                # (angle_pixels, depth_pixels) of unwrapped image
+  max_reflection_depth: 15
+  min_intensity: 1.0e-3
+  contact_epsilon_mm: 0.0
+  conv_psf: true
+  median_clip_filter: true
+  # --- Future ---
+  sampling_freq_mhz: 40.0                 # currently hard-coded SAMPLING_FREQ in C++
+
+processing:
+  scattering_resolution_mm: 10.0          # IVUS speckle correlation length (50 for abdominal)
+  scatter_integral_scale: 40.0
+  tgc_control_points: [[0.0, 0.0], [1.0, 2.0]]   # [(depth_cm, gain_dB), ...]
+  log_multiplier: 20.0
+  log_floor: 1.0e-19
+  median_clip:
+    size: 5
+    d_min_db: -60.0
+    d_max_db: 0.0
+  # --- Future ---
+  gain_db: 0.0                            # Manual p.110: device slider 0..68 (cal: 20 / 50 / 68)
+  dynamic_range_db: 60.0
+  reject_db: -80.0
+  compression_lut: null                   # Manual p.141: device uses 256-entry grayscale palette
+  noise:
+    type: gaussian                        # gaussian | rayleigh | none
+    sigma: 0.0
+  ring_down:                              # Manual p.190: caused by element crosstalk + crystal physics
+    amplitude: 0.0                        # peak bias (linear) on each A-line
+    extent_mm: 0.5                        # depth over which ring-down decays (~1–2 mm on device)
+    decay: exponential                    # exponential | hanning | measured
+    waveform_path: null                   # optional: measured 'Acoustic reference' template
+    subtract_reference: true              # device default — subtract Acoustic reference from A-lines
+
+# Material catalog. The simulator currently ships with these names hard-coded in
+# material.cpp (Materials::Materials()); values are listed here for reference and
+# for future per-config overrides.
+materials:
+  - name: lumen
+    impedance_mrayl: 1.68
+    speed_of_sound_m_per_s: 1584.0
+    attenuation_db_per_cm_mhz: 0.2
+    mu0: 0.1
+    mu1: 0.1
+    sigma: 0.1
+    specularity: 0.0
+  - name: vessel_wall
+    impedance_mrayl: 1.82
+    speed_of_sound_m_per_s: 1571.0
+    attenuation_db_per_cm_mhz: 1.0
+    mu0: 0.5
+    mu1: 0.6
+    sigma: 0.35
+    specularity: 1.0e-5
+  - name: extravascular
+    impedance_mrayl: 1.62
+    speed_of_sound_m_per_s: 1547.0
+    attenuation_db_per_cm_mhz: 0.7
+    mu0: 0.5
+    mu1: 0.4
+    sigma: 0.3
+    specularity: 0.0
