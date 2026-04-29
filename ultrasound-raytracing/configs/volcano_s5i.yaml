@@ -1,34 +1,78 @@
-# Volcano s5i IVUS imaging system — simulator config
+# Volcano s5 (s5i console) — Visions PV .035 IVUS catheter
 #
-# Values pre-populated from the s5i Service Manual (Eagle Eye Gold / Avanar 20 MHz
-# catheters). Fields marked "Future" are part of the schema but are not wired into
-# the simulator yet — the loader will warn and ignore them until they are.
+# This config targets the Visions PV .035 catheter (10 MHz, peripheral, 0.035"
+# guidewire-compatible) running on the s5/s5i console. The previous version of
+# this file targeted the Eagle Eye Gold 20 MHz catheter; PV .035 differs in
+# frequency, beam geometry, and supported imaging diameters, so several
+# probe/sim values have been re-baselined.
 #
-# See `IVUS Simulation Parameters - Sheet1.csv` for provenance of every value.
+# Provenance map for every value is in `IVUS Simulation Parameters - Sheet1.csv`.
+# Numbers tagged "E1"/"E2"/"E4"/"E5"/"E6"/"E7" are derived from the
+# P_035_PointScatter wire-phantom analysis -- see comments above each
+# section for the analysis methodology, uncertainty, and known caveats
+# (the dataset is a partial / improvised version of the proper protocol
+# in docs/ivus_calibration_protocol.md; a follow-up bench session running
+# E1+E2 with the calibrated reflector will tighten several of these
+# values).
+# Anything tagged "Manual" is from the s5i Service Manual and is not
+# expected to change. Fields tagged "Future" are part of the schema but
+# not yet wired into the simulator runtime.
 
 probe:
   type: ivus                              # ivus | curvilinear | linear_array | phased_array
-  frequency_mhz: 20.0                     # Eagle Eye Gold / Avanar / Visions PV .018 (Manual p.165)
-  pulse_duration_cycles: 2                # cycles in excitation pulse — calibrate from -6 dB BW
-  num_scanlines: 256                      # SA reconstructs ~256 A-lines from 64 elements (Manual p.135)
-  element_radius_mm: 0.6                  # per-element effective radius (fit from wire phantom)
-  focal_length_mm: 4.0                    # depth of beam waist (fit from wire phantom)
-  elevational_height_mm: 0.0              # 0 = single 2D plane; transducer assembly is ~2.5 mm long
+  frequency_mhz: 10.0                     # PV .035 catheter family (Manual p.165). Verify with E1 (FFT peak in ring-down).
+  # E2 results from P_035_PointScatter (per-wire 2D -6 dB FWHM in polar
+  # space, gains {44, 54}, D=60, n=18 wires; full table in
+  # derived/psf/per_wire_psf.csv):
+  #
+  # AXIAL PSF (radial direction, sets pulse_duration_cycles)
+  #   Median -6 dB FWHM = 95-154 um across clean wires (peak <= 230).
+  #   The displayed image's radial pixel pitch is 120 um (= 0.12 mm), so
+  #   the axial PSF is at the SAMPLING LIMIT -- the true pulse may be
+  #   narrower. Best lower bound: FWHM ~ lambda = 154 um => 2 cycles.
+  #   N_cycles = 2 * FWHM_axial / lambda, lambda = c/f = 1.54/10 = 0.154 mm.
+  #
+  # LATERAL PSF (angular direction, sets element_radius / focal_length)
+  #   The s5 uses synthetic-aperture beamforming with dynamic focusing,
+  #   so the device's lateral PSF is much flatter across depth than a
+  #   single-element Gaussian beam. Inner wires (r<10 mm) are also all
+  #   near saturation at the available gain settings, which clips the
+  #   PSF top and biases -6 dB FWHM low. Restricting to clean deep
+  #   wires (r>=10 mm, peak<=230, n=5) gives a Gaussian-beam fit:
+  #     w_0  = 0.32 +/- 0.07 mm   (FWHM at focus = 0.53 mm)
+  #     z_f  = 19.2 +/- 0.8  mm   (focal_length_mm)
+  #     a    = 4.6  mm            (element_radius_mm; mathematical
+  #                                effective SA aperture, NOT the
+  #                                physical 0.09 mm element)
+  #   The deep-wire data alone places the focus somewhere in 12-19 mm
+  #   with FWHM_focus ~ 0.5-1.0 mm. The values below are the strict-
+  #   filter Gaussian-beam fit; they reproduce the observed lateral
+  #   resolution in the simulator's single-element model. They do not
+  #   correspond to the physical element geometry of the catheter
+  #   (0.09 mm pitch, 64 elements on a 1.9 mm OD circumference).
+  pulse_duration_cycles: 2                # E2 — axial FWHM ~ 1 lambda; rounded up from sampling-limited measurement (range 1.1-2.0)
+  num_scanlines: 256                      # SA reconstructs ~256 A-lines from 64 elements (Manual p.135). Verify by counting unique angular samples in unwrap.
+  element_radius_mm: 4.6                  # E2 — effective SA aperture in single-element Gaussian-beam approximation (sigma ~ 1.5 mm fit uncertainty)
+  focal_length_mm: 19.2                   # E2 — depth of minimum lateral FWHM from clean deep wires (sigma = 0.8 mm)
+  elevational_height_mm: 0.0              # 0 = single 2D plane; PV .035 transducer assembly is ~2.5 mm long
   num_elevational_samples: 1
-  speed_of_sound_mm_per_us: 1.54          # 6.0 mm water target ±0.1 mm in calibration (Manual p.110)
+  speed_of_sound_mm_per_us: 1.54          # s5 calibrates assuming 1540 m/s tissue (Manual p.110). DO NOT change to in-water value — device convention.
   f_num: 1.0                              # unused for IVUS (superseded by element_radius + focal_length)
   width_mm: 0.0                           # IVUS = point source
   pose:
     position_mm: [0.0, 0.0, 0.0]
     rotation_rad: [0.0, 0.0, 0.0]
   # --- Future ---
-  impulse_response_path: null             # optional: measured A-line pulse waveform
+  impulse_response_path: null             # optional: measured A-line pulse waveform from E1 (we don't have raw RF in this dataset)
   synthetic_aperture: false               # Future: 64-element SA beamforming (device is SA)
 
 sim:
-  t_far_mm: 10.0                          # half of displayed diameter; 20 MHz cath: D ∈ {8..20} mm
+  # Imaging diameter in this dataset is one of {35, 40, 60} mm (private tag
+  # 0x00291003); t_far_mm = D/2. The yaml default is the largest seen so the
+  # render covers any frame; the loader can override per-frame from the DICOM.
+  t_far_mm: 30.0                          # 60 mm displayed diameter / 2; PV .035 supports up to ~24-30 mm radius
   buffer_size: 4096
-  b_mode_size: [256, 1024]                # (angle_pixels, depth_pixels) of unwrapped image
+  b_mode_size: [256, 1024]                # (angle pixels, depth pixels) of unwrapped polar image
   max_reflection_depth: 15
   min_intensity: 1.0e-3
   contact_epsilon_mm: 0.0
@@ -38,33 +82,129 @@ sim:
   sampling_freq_mhz: 40.0                 # currently hard-coded SAMPLING_FREQ in C++
 
 processing:
-  scattering_resolution_mm: 10.0          # IVUS speckle correlation length (50 for abdominal)
+  scattering_resolution_mm: 10.0          # IVUS speckle correlation length
   scatter_integral_scale: 40.0
-  tgc_control_points: [[0.0, 0.0], [1.0, 2.0]]   # [(depth_cm, gain_dB), ...]
-  log_multiplier: 20.0
-  log_floor: 1.0e-19
+  # E4 (in-water) results from P_035_PointScatter, gain 54 D=60 (canonical):
+  # the TGC is essentially flat from r=0 to r=15 mm (=1.5 cm), then ramps
+  # up at deeper depths. Cross-gain agreement (44/54/64) confirms the flat
+  # inner region and the existence of the deep ramp.
+  #
+  # IMPORTANT: original E4 fit assumed log_multiplier = 20 (1 palette ~ 1 dB)
+  # and gave dB values of [0, 0, 0, 5.5, 11.5] at depths [0, 7, 15, 22, 29] mm.
+  # E7 (below) measured log_multiplier = 112.3, so 1 palette ~ 0.178 dB and the
+  # true TGC dB values are 5.6x SMALLER. The operator was barely using TGC
+  # in water (which is correct -- water has negligible attenuation).
+  # Uncertainty: +/- 0.5 dB at each control point.
+  # Re-fit from a tissue-mimicking phantom for tissue-imaging deployments
+  # (E4 in tissue).
+  tgc_control_points: [[0.0, 0.0], [0.7, 0.0], [1.5, 0.0], [2.2, 0.98], [2.9, 2.05]]
+  # E7 (partial) results from P_035_PointScatter (cross-gain redundancy
+  # in the existing data; full E7 still wants a calibrated reflector at
+  # multiple gains -- see docs/ivus_calibration_protocol.md):
+  #
+  # log_multiplier ESTIMATORS (palette per log10(amplitude)):
+  #   ringdown peak  D=40  g44->g54 (dP=+55.4):  log_mult = 110.8  *primary*
+  #   ringdown peak  D=60  g44->g54 (dP=+56.9):  log_mult = 113.7  *primary*
+  #   noise std      g64                       :  log_mult = 125.8  (Rayleigh model)
+  #   noise std      g54  [clipped]            :  log_mult =  72.8
+  #   noise std      g44  [clipped]            :  log_mult =  29.1
+  #   mid-prof       g44->g54 (dP=+24.2)       :  log_mult =  48.5  *non-log*
+  #   mid-prof       g54->g64 (dP=+68.3)       :  log_mult = 136.6  *non-log*
+  #   mid-prof       g44->g64 (dP=+92.9)       :  log_mult =  92.9
+  #
+  # The ringdown-peak estimators are the cleanest (single physical signal
+  # imaged at two gains, no clipping at either gain, no scatter
+  # contribution) and agree to within 3 palette units. We adopt their
+  # mean (112.3) as the canonical value.
+  #
+  # The mid-range profile and speckle-floor estimators do NOT agree with
+  # each other across gain pairs (44->54 gives ~50; 54->64 gives ~140).
+  # This means the device's compression is either NON-PURE-LOG (sigmoidal
+  # / piecewise-linear, common in production ultrasound) OR the slider
+  # step is NOT exactly 1 dB (likely a bit less at low gain, more at high
+  # gain). With 3 gain points we can't disentangle the two; the
+  # compression-curve hypothesis is more typical for IVUS.
+  #
+  # Practical impact: log_multiplier = 112 calibrates the simulator's
+  # HIGH-AMPLITUDE display (wires, vessel walls, calcium) accurately;
+  # tissue-speckle (mid amplitude) and noise floor (low amplitude) will
+  # be displayed at slightly the wrong palette level (~5-15 palette
+  # offset). Acceptable for visual / training use; refit log_multiplier
+  # after E1+E7 (calibrated reflector at multiple gains).
+  #
+  # Convention: pixel = log_multiplier * log10(envelope_amp), with
+  # log_floor = 1.0 (so amp=1 -> pixel=0). All amplitude values below
+  # (noise.sigma, ring_down.amplitude, scatter intensities) are at the
+  # SIMULATOR REFERENCE GAIN = slider 54. To produce a different gain,
+  # scale all amplitudes by 10^((g - 54) / 20).
+  log_multiplier: 112.3                   # E7 — palette per log10(envelope_amp). +/- 1.4 internal sigma; ~12% spread vs noise-std method
+  log_floor: 1.0                          # E7 — convention; amp=1 -> pixel=0. The device's reject palette (11) is reproduced by setting noise.sigma at the level below.
   median_clip:
     size: 5
     d_min_db: -60.0
     d_max_db: 0.0
   # --- Future ---
-  gain_db: 0.0                            # Manual p.110: device slider 0..68 (cal: 20 / 50 / 68)
-  dynamic_range_db: 60.0
-  reject_db: -80.0
-  compression_lut: null                   # Manual p.141: device uses 256-entry grayscale palette
+  # E7 (partial): with 3 gain points (44, 54, 64) and the working
+  # hypothesis that 1 slider step = 1 dB, the gain table is
+  #   slider 44 -> -10 dB
+  #   slider 54 ->   0 dB  (simulator reference)
+  #   slider 64 -> +10 dB
+  # Direct measurement on ringdown peaks confirms 44->54 = +10.0 dB to
+  # within 0.2 dB. The 54->64 step cannot be cross-checked on ringdown
+  # (saturated at gain 64); the mid-range and noise estimators suggest
+  # the slider step in the 54-64 range may actually be ~1.3 dB (so
+  # gain 64 is closer to +13 dB than +10 dB) -- but this depends on
+  # whether the compression curve is signal-level dependent (most
+  # likely it is). Re-fit after E7 with a calibrated reflector.
+  gain_db: 0.0                            # E7 — simulator reference = slider 54 (= 0 dB by convention); other amplitudes scale by 10^((g-54)/20)
+  dynamic_range_db: 40.6                  # E7 — (saturation_palette - reject_palette) * 20 / log_multiplier = (239-11)*20/112.3
+  reject_db: -40.6                        # E7 — palette 11 is the bottom of the displayed dynamic range
+  compression_lut: null                   # Manual p.141: device uses 256-entry grayscale palette; with only 3 gain points we can't reconstruct it (full E7 needs the calibrated-reflector amplitude sweep)
   noise:
-    type: gaussian                        # gaussian | rayleigh | none
-    sigma: 0.0
+    # E5 results from P_035_PointScatter (anechoic-ROI palette histograms,
+    # n=19 frames, 800k+ samples per gain group):
+    #   gain 44: palette mean=18.7  std=8.1   skew=2.2  kurt=9.8   (clipped against reject)
+    #   gain 54: palette mean=46.2  std=20.3  skew=1.6  kurt=7.1   (clean log-Rayleigh shape)
+    #   gain 64: palette mean=114.4 std=35.0  skew=0.2  kurt=-0.3  (nearly Gaussian on display)
+    # The displayed shape is post-log-of-envelope-of-complex-Gaussian-noise,
+    # so the underlying RF noise IS Gaussian (this is what the simulator's
+    # `noise.type` parameter refers to -- additive RF noise *before* envelope
+    # detection).
+    type: gaussian
+    # E7 conversion: at gain 64 (cleanest, no reject clipping):
+    #   envelope_mean_palette = 114.4
+    #   envelope_mean_amp     = 10^(114.4/112.3) = 10.6  (in log_floor=1 units)
+    #   sigma_complex(g64)    = 10.6 / sqrt(pi/2) = 8.46
+    #   sigma_complex(g54)    = 8.46 / 10^(10/20)  = 2.67  (gain reference)
+    sigma: 2.6347                         # E7 — RF noise std at gain-54 reference; std of complex Gaussian per quadrature
   ring_down:                              # Manual p.190: caused by element crosstalk + crystal physics
-    amplitude: 0.0                        # peak bias (linear) on each A-line
-    extent_mm: 0.5                        # depth over which ring-down decays (~1–2 mm on device)
-    decay: exponential                    # exponential | hanning | measured
-    waveform_path: null                   # optional: measured 'Acoustic reference' template
-    subtract_reference: true              # device default — subtract Acoustic reference from A-lines
+    # E6 results from P_035_PointScatter (median-over-theta radial profile,
+    # n=19 frames split across gain {44,54,64} x diameter {35,40,60} mm):
+    #   peak depth        = 1.80 mm (just inside catheter OD = 1.905 mm) — gain-independent
+    #   extent_mm         = 3.0  mm (5% of peak excess) — gain-independent
+    #   decay shape       = LINEAR in palette = EXPONENTIAL in RF amplitude (R^2 = 0.94-0.96)
+    #   palette slope     = 88-180 palette/mm post-peak (gain-dependent; full table in derived/ringdown/ringdown_fit.json)
+    #   speckle floor     = 14 / 45 / 119 palette at gain {44,54,64} (gain 44 reject-clipped; cross-gain delta gives effective log_multiplier ~ 60-130)
+    #   peak saturates    at gain 64 (palette ceiling 239) — drop from amplitude calibration
+    # The s5 has Acoustic-Reference subtraction ON in all frames (private tag
+    # 0x00291006 = 1) so what we measured is the AR RESIDUAL — exactly what
+    # the simulator should produce when subtract_reference: true.
+    # E7 conversion: at gain 54, D=60:
+    #   peak_palette_excess = 187.1 (above local speckle floor)
+    #   envelope_amp_excess = 10^(187.1/112.3) = 46.4  (at gain 54 ref)
+    # This is the envelope amplitude of the ringdown that the simulator
+    # adds on top of the in-water scatter response. Equivalent dB above
+    # noise: 187.1 * 20 / 112.3 = 33.3 dB above the speckle floor.
+    amplitude: 46.37                      # E7 — envelope amp at gain-54 reference; ~33 dB above noise (peak excess in palette / log_multiplier * 20)
+    extent_mm: 3.0                        # E6 — palette-excess drops below 5% of peak by r = 3 mm, all gains
+    decay: measured                       # exponential | hanning | measured — physics is exponential-in-RF; we have the measured template, prefer it
+    waveform_path: ../P_035_PointScatter/derived/ringdown/ringdown_template_g54_d60.npy  # canonical mean A-line at gain 54, D 60 mm, n=5; in PALETTE units, simulator should convert via amp = 10^(palette/log_multiplier) and subtract the local speckle floor (~45 palette at gain 54)
+    subtract_reference: true              # device default — confirmed from private tag 0x00291006 = 1 in all frames
 
 # Material catalog. The simulator currently ships with these names hard-coded in
 # material.cpp (Materials::Materials()); values are listed here for reference and
-# for future per-config overrides.
+# for future per-config overrides. None of these are calibrated by the wire-
+# phantom dataset — they need E5 (cyst phantom) + E8 (tissue fit).
 materials:
   - name: lumen
     impedance_mrayl: 1.68
