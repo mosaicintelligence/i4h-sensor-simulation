@@ -41,8 +41,12 @@ def _render_disc_combo(out_path: Path) -> None:
     from gen_phantom_stl import (
         _wire_positions, DISC_OD, DISC_THICK, DISC_CENTER_HOLE,
         WIRE_HOLE_DIA, STANDOFF_HOLE_DIA, STANDOFF_BCD,
-        STANDOFF_ANGLES_DEG, R_MIN, DR, N_WIRES, DTHETA_DEG,
+        STANDOFF_ANGLES_DEG, N_WIRES, WIRE_LAYOUT_MM,
     )
+    wire_radii = [r for r, _ in WIRE_LAYOUT_MM]
+    wire_thetas_deg = [th for _, th in WIRE_LAYOUT_MM]
+    R_MIN_MM = min(wire_radii)
+    R_MAX_MM = max(wire_radii)
     fig = plt.figure(figsize=(11, 5.0), dpi=170)
 
     ax1 = fig.add_subplot(121)
@@ -77,7 +81,7 @@ def _render_disc_combo(out_path: Path) -> None:
     ax1.set_axis_off()
     ax1.set_title("Top view (printed disc, full scale)", fontsize=10)
 
-    rect_extent = R_MIN + (N_WIRES - 1) * DR + 1.0
+    rect_extent = R_MAX_MM + 1.0
     ax1.add_patch(plt.Rectangle((-rect_extent, -rect_extent),
                                  2 * rect_extent, 2 * rect_extent,
                                  fill=False, edgecolor="#cc4444",
@@ -89,12 +93,14 @@ def _render_disc_combo(out_path: Path) -> None:
 
     ax2 = fig.add_subplot(122)
     ax2.set_aspect("equal")
-    spiral_th_dense = np.deg2rad(np.linspace(0, (N_WIRES - 1) * DTHETA_DEG, 400))
-    spiral_r_dense = np.linspace(R_MIN, R_MIN + (N_WIRES - 1) * DR, 400)
+    spiral_th_dense = np.deg2rad(np.linspace(wire_thetas_deg[0],
+                                             wire_thetas_deg[-1], 400))
+    spiral_r_dense = np.linspace(R_MIN_MM, R_MAX_MM, 400)
     ax2.plot(spiral_r_dense * np.cos(spiral_th_dense),
              spiral_r_dense * np.sin(spiral_th_dense),
              color="#1f77b4", lw=1.5, ls="--", alpha=0.6, zorder=2,
-             label=f"Archimedean spiral\nr = {R_MIN}+n·{DR} mm, θ = n·{DTHETA_DEG:g}°")
+             label=f"Spiral pattern\nr ∈ [{R_MIN_MM:g}, {R_MAX_MM:g}] mm, "
+                   f"θ-step 30°")
     th2 = np.linspace(0, 2 * np.pi, 200)
     ax2.fill((DISC_CENTER_HOLE / 2) * np.cos(th2),
              (DISC_CENTER_HOLE / 2) * np.sin(th2),
@@ -114,7 +120,8 @@ def _render_disc_combo(out_path: Path) -> None:
     ax2.legend(loc="lower center", fontsize=7, frameon=False,
                bbox_to_anchor=(0.5, -0.06))
 
-    fig.suptitle("Wire-spiral disc — 12 holes on a 1-turn Archimedean spiral",
+    fig.suptitle("Wire-spiral disc — 12 holes, 1-turn spiral, "
+                 f"r ∈ [{R_MIN_MM:g}, {R_MAX_MM:g}] mm",
                  fontsize=12, y=0.99)
     fig.tight_layout(pad=0.4)
     fig.savefig(out_path, dpi=170, bbox_inches="tight")
