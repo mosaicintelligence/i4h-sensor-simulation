@@ -168,18 +168,21 @@ azimuthal-uniformity QC.
 
 | Item | Spec | Tolerance |
 |------|------|-----------|
-| Tungsten wires (12 ×) | 25 µm diameter | ≤ λ/3 in water at 20 MHz (λ_water ≈ 75 µm) — acceptable, document as a known limitation |
+| Wires (12 ×) | Sub-wavelength filament. **Primary spec:** nylon monofilament, ⌀ 70–100 µm (e.g. 4-0 polyamide surgical suture, or 1-2 lb-test clear fishing line). **Alternates:** 36 AWG (~0.127 mm) enamel-coated copper magnet wire, OR 25–50 µm tungsten wire. See Appendix A.1 for trade-offs. | Diameter ≤ λ/3 in water at the operating frequency (λ_water ≈ 154 µm at 10 MHz, ≈ 75 µm at 20 MHz). Nylon at 75 µm meets this at 10 MHz; copper at 127 µm is borderline (~0.85 λ) and slightly broadens the axial PSF; tungsten at 25 µm is well inside the limit at any IVUS frequency. Echo strength must be ≥ 30 dB above noise but ≤ 95 % saturation at the working gain (this is **the** dominant criterion at 10 MHz — the higher-impedance metallic wires will saturate the displayed B-mode at modest gains). |
 | Wire frame | rigid frame holding 12 wires in an Archimedean spiral pattern, all wires parallel and tensioned | wire-position accuracy ≤ 50 µm radial, ≤ 1° azimuthal; tension ≥ 1 N, sag ≤ 50 µm over the 50 mm wire length; frame opaque to ultrasound only outside the imaging plane |
-| Spiral parameters | r_n = r_0 + n · Δr, θ_n = n · Δθ; r_0 = 1.75 mm, Δr = 0.18 mm, Δθ = 30° (gives 12 wires from r = 1.75 to 3.73 mm in one full turn — uniform 30° azimuthal spacing matches the ±15° PSF analysis window) | r and θ tolerances above |
+| Spiral parameters | 12 wires on a 1-turn spiral with explicit `(r, θ)` layout: `(4, 0°), (6, 30°), (8, 60°), (10, 90°), (12, 120°), (14, 150°), (16, 180°), (18, 210°), (20, 240°), (22, 270°), (24, 300°), (26, 330°)`. Radii are denser around the focal zone (12–20 mm) where the lateral PSF is most informative; 30° azimuthal step gives ≥ 2 mm arc separation even at the innermost wire (r = 4 mm) so PSFs do not overlap. | r and θ tolerances above |
 | Catheter mount | rigid clamp coaxial with the spiral frame | catheter axis must coincide with the spiral center within ±0.1 mm |
 | 3-axis micrometer stage (frame) | optional, for fine centering of the spiral on the catheter | step ≤ 25 µm |
 
 > **Building the spiral fixture.** A 3D-printable design is provided —
 > see [Appendix A — Phantom & Fixture Construction](#appendix-a--phantom--fixture-construction).
-> Briefly: print 2 × `hardware/wire_spiral_disc.stl` (50 mm OD × 5 mm),
-> connect them with 3 × M3 × 50 mm threaded standoffs, thread 25 µm tungsten
-> wire through each pair of corresponding holes, tension by hand and lock
-> with cyanoacrylate or set-screws.
+> Briefly: print 2 × `hardware/wire_spiral_disc.stl` (80 mm OD × 5 mm) and
+> 3 × `hardware/wire_spiral_standoff.stl` (or substitute commercial M3-F/M3-F
+> threaded standoffs with M3 × 6 mm screws), thread the chosen filament
+> through each pair of corresponding holes, tension by hand, and lock at
+> each disc face — small bead of cyanoacrylate in the disc-top counterbore
+> for any material; nylon can additionally be heat-melted into a ball
+> against the disc face for a CA-free reversible lock.
 
 ### Console settings
 
@@ -668,50 +671,81 @@ edit dimensions there and rerun to regenerate the STLs.
 
 **STL files:**
 - `hardware/wire_spiral_disc.stl` — print **2 ×**.
+- `hardware/wire_spiral_standoff.stl` — print **3 ×** (or substitute commercial M3 standoffs, see BoM option B).
 - `hardware/wire_spiral_assembly.stl` — visual reference only (do not print).
 
 **Disc geometry (matches the protocol's spiral parameters):**
 
 | Feature | Value |
 |---------|-------|
-| Outer diameter | 50.0 mm |
+| Outer diameter | 80.0 mm |
 | Thickness | 5.0 mm |
-| Center catheter hole | ⌀2.5 mm (clearance + centering for the ⌀1.17 mm Eagle Eye Gold catheter) |
-| Wire holes | ⌀0.5 mm × 12, on `r_n = 1.75 + n·0.18 mm`, `θ_n = n·30°` (n = 0…11) |
-| Standoff holes | ⌀3.2 mm × 3, on a ⌀40 mm BCD at 60° / 180° / 300° |
+| Center catheter hole | ⌀2.0 mm (slip-fit for the ⌀1.9 mm Visions PV .035 catheter — measure your actual catheter OD with calipers and ream out to fit if necessary) |
+| Wire holes | ⌀0.5 mm × 12 through-holes, with a ⌀1.0 mm × 0.4 mm CA-cup counterbore on the top face for the cyanoacrylate lock-bead. Layout: explicit `(r mm, θ°)` tuples `(4,0), (6,30), (8,60), (10,90), (12,120), (14,150), (16,180), (18,210), (20,240), (22,270), (24,300), (26,330)`. |
+| Standoff holes | ⌀3.2 mm × 3, on a ⌀70 mm BCD at 60° / 180° / 300° (clearance for either the printable shouldered standoff's 3.1 mm tip pin or an M3 screw thread) |
 
 **Bill of materials:**
 
 | Item | Spec | Qty |
 |------|------|-----|
-| Printed disc (`wire_spiral_disc.stl`) | PETG, ≥ 30 % infill | 2 |
-| M3 × 50 mm threaded standoffs (M3-F/M3-F) | stainless steel, hex flat-to-flat ≤ 5 mm | 3 |
-| M3 × 6 mm pan-head screws | stainless | 6 |
-| Tungsten wire | ⌀25 µm, ≥ 250 mm uncut length | 12 |
-| Cyanoacrylate adhesive | thin-CA (e.g. Loctite 416) | 1 vial |
-| (optional) M3 nylon nuts | for fine wire-tension trim | 12 |
+| Printed disc (`wire_spiral_disc.stl`) | PETG, ≥ 30 % infill, ≥ 3 perimeters | 2 |
+| Standoffs (option A — printable) `wire_spiral_standoff.stl` | PETG, ≥ 40 % infill, ≥ 4 perimeters; printed vertically (long axis along Z) for concentric pin tips | 3 |
+| Standoffs (option B — commercial) M3-F/M3-F threaded standoff | stainless steel, hex flat-to-flat ≤ 5 mm, length 50 mm | 3 |
+| M3 × 6 mm pan-head screws (option B only) | stainless | 6 |
+| Wire — pick **one** material from this menu (all 12 wires same material) | See "Wire material trade-offs" below | 12 × ≥ 250 mm |
+| Cyanoacrylate adhesive | thin-CA (e.g. Loctite 416) — locks any wire in the disc-top counterbore | 1 vial |
+| Split pin / safety wire / zip-tie (option A only) | ⌀1.0 mm — passes through the standoff's tip cross-bore to lock the disc | 6 |
+
+**Wire material trade-offs (pick one):**
+
+| Material | ⌀ | Size vs λ at 10 MHz | Echo strength | Saturation risk on PV .035 | Handling | Cost | When to choose |
+|----------|---|---------------------|---------------|-----------------------------|----------|------|----------------|
+| Nylon monofilament (4-0 polyamide suture, or 1-2 lb-test clear nylon fishing line) | 70–100 µm | 0.5–0.7 λ | moderate (~6 dB single-surface reflection) | **low** — stays within the displayed dynamic range across a wide gain sweep | easy: pre-tensioned, doesn't sag, doesn't kink, can be heat-melted into a retaining ball at each disc face if you want a CA-free lock | low (~$5/spool) | **Default choice** for the PV .035 (10 MHz) — gives the cleanest PSF data because it doesn't saturate, doesn't ring, and is sub-λ axially |
+| 36 AWG enamel-coated copper magnet wire | 127 µm | ~0.85 λ | high | high — saturates by gain ≈ 50 in the existing P_035 captures | soft copper can yield under tension; permanent kinks if mishandled | low (~$5/spool) | If nylon is unavailable AND your captures will use low gain (≤ 40) AND axial PSF broadening from the ~λ-size diameter is acceptable |
+| Tungsten wire | 25–50 µm | 0.17–0.34 λ | very high (specular metallic reflection) | very high — saturates at any reasonable gain on the PV .035 | brittle; awkward to thread; requires fine drill for a tight hole | medium ($30–80/spool, small min orders) | Only if you have a 20 MHz catheter (where 25 µm = λ/3 fits the canonical AIUM spec); not recommended for the PV .035 |
+| Stainless steel / piano wire | 50–100 µm | 0.34–0.68 λ | high | medium-high | stiff, holds tension well | low–medium | If nylon is unavailable and you need the wire to stay perfectly straight under load with no creep |
 
 **Assembly:**
 
-1. Inspect both printed discs; deburr the wire-hole exits with a 0.6 mm
-   drill bit (twist by hand, do not power-drill).
+1. Inspect both printed discs; clear each ⌀0.5 mm wire hole with a 0.5 mm
+   drill bit (twist by hand, do not power-drill). The CA-cup counterbore
+   should sit cleanly on the **top** face of each disc.
 2. Stack the discs flat, hole-pattern aligned. Insert the 3 standoffs
-   through the 3.2 mm BCD holes and screw both ends with M3 × 6 screws so
-   the discs are parallel and 50 mm apart. Verify with calipers that the
-   disc-to-disc spacing is **50 ± 0.2 mm** at all 3 standoff positions.
-3. **Wire stringing.** Working from the outside (n = 12, r = 3.73 mm) to
-   the inside (n = 1, r = 1.75 mm):
-   - Cut a 250 mm length of 25 µm tungsten wire.
+   through the 3.2 mm BCD holes:
+   - **Option A (printable standoffs):** the ⌀3.1 mm tip pin slides
+     through the disc; the ⌀7 mm middle shaft acts as a shoulder against
+     the disc face. After both discs are seated, lock each pin with a
+     split pin or zip-tie through the ⌀1.5 mm cross-bore at the pin tip.
+   - **Option B (commercial M3 standoffs):** screw both ends with
+     M3 × 6 screws so the discs are parallel and 50 mm apart.
+
+   Verify with calipers that the disc-to-disc spacing is **50 ± 0.2 mm** at
+   all 3 standoff positions.
+3. **Wire stringing.** Working from the outside (n = 12, r = 26 mm) to the
+   inside (n = 1, r = 4 mm) so adjacent wires do not catch each other
+   during threading:
+   - Cut a 250 mm length of the chosen filament. (Magnet wire only:
+     lightly sand the last 5 mm at one end to remove the enamel
+     insulation if you plan to measure DC continuity for QC.)
    - Thread one end through the corresponding hole in the **bottom** disc
-     and tape it taut to the underside.
+     and secure it taut to the underside (tape, mass, or a heat-melt ball
+     for nylon).
    - Thread the other end through the matching hole in the **top** disc.
-   - Pull by hand to remove sag (target tension ≈ 1 N — judged by the
-     wire's first-mode vibration frequency `f₁ ≈ 220 Hz` for a 50 mm
-     span). Hold tension and apply a 1 mm bead of thin-CA at the top exit
-     to lock the wire. After cure (≈ 30 s) trim the bottom tape and CA
-     the bottom exit too.
-4. Repeat for all 12 wires. Take care to thread strictly inside-out so
-   adjacent wires do not catch each other during pulling.
+   - Pull by hand to remove sag — target tension ≈ 1 N. Tension can be
+     judged by the wire's first-mode vibration frequency `f₁` for a 50 mm
+     span (`f₁ ≈ 100 Hz` for 36 AWG copper, `≈ 70 Hz` for 75 µm nylon
+     monofilament, `≈ 250 Hz` for 25 µm tungsten).
+   - Lock the wire at the top face. Two options:
+     * **CA lock (works for any material):** hold tension and place a
+       small bead of thin-CA into the top counterbore. The cup contains
+       the bead and prevents it from running across the disc surface.
+       After cure (≈ 30 s) lock the bottom exit the same way.
+     * **Heat-melt ball (nylon only):** hold tension and quickly touch a
+       fine-tip soldering iron (≈ 250 °C) to the wire stub above the
+       counterbore — the nylon balls up and forms a retaining knot that
+       seats into the cup. Reversible (cut the ball off and re-thread).
+       Repeat at the bottom face.
+4. Repeat for all 12 wires.
 5. **QC.** Photograph the assembly down the catheter axis with a USB
    microscope and 0.1 mm graticule:
    - All 12 wires must lie within ±50 µm of the design `(r, θ)`.
@@ -721,8 +755,11 @@ edit dimensions there and rerun to regenerate the STLs.
 
 **Catheter mounting:** the catheter is fed up through the bottom disc's
 center hole, through the 50 mm wire span, and out the top disc. The disc
-holes are an interference-fit slip on the 1.17 mm Eagle Eye Gold catheter;
-the catheter is held coaxially by both end discs simultaneously.
+holes are a slip-fit on the 1.9 mm OD Visions PV .035 catheter (0.05 mm
+radial clearance per side); the catheter is held coaxially by both end
+discs simultaneously. If your catheter measures > 1.95 mm OD with calipers,
+ream out the ⌀2.0 mm hole with a 2.0 mm twist drill and verify slip-fit
+before proceeding.
 
 ### A.2 — Uniform tissue-mimicking phantom (E4)
 
