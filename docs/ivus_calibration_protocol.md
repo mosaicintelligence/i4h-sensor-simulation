@@ -1,8 +1,12 @@
 # IVUS Calibration & Characterization Protocol — Volcano s5i
 
-This document is the bench protocol for the experiments needed to populate the
-unspecified entries in `IVUS Simulation Parameters - Sheet1.csv` and to drive
-`ultrasound-raytracing/configs/volcano_s5i.yaml`.
+This document is the **instrument-agnostic** bench protocol for the experiments
+needed to populate the simulator's per-instrument YAML config. The protocol
+itself is owned by this simulator repo; the per-instrument fitting code that
+implements it (and the resulting calibrated YAML files) lives next to this
+repo at `../instrument-calibration/<instrument-id>/` — see e.g.
+`../instrument-calibration/p035_visions/` for the Visions PV .035 / Volcano s5i
+calibration that is the running example throughout this document.
 
 The protocol is organized as nine experiments, **E1–E9**. E1–E8 feed the
 per-frame raysim simulator; E9 feeds the deferred motion / acquisition layer.
