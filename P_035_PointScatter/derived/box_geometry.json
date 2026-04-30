@@ -1,0 +1,5 @@
+{
+  "outer_radius_mm": 50.0,
+  "catheter_radius_mm": 1.905,
+  "wire_design_radius_mm": 0.5
+}

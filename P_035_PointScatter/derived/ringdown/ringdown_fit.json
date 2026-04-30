@@ -1,0 +1,136 @@
+{
+  "method": "median-over-theta radial profile; speckle floor from r in [18, 25] mm; post-peak exponential fit; extent at 5% of peak excess",
+  "units": "palette (0..255); convert to RF amplitude after E7 log-compression fit",
+  "catheter_radius_mm": 1.905,
+  "n_frames_total": 19,
+  "groups": [
+    {
+      "gain_slider": 44.0,
+      "diameter_mm": 40.0,
+      "n_frames": 2,
+      "dr_mm": 0.08,
+      "speckle_floor_palette": 13.739700317382812,
+      "peak_palette": 179.16361236572266,
+      "peak_palette_excess": 165.42391204833984,
+      "peak_depth_mm": 1.84,
+      "extent_mm": 2.96,
+      "extent_palette_threshold": 8.271195602416993,
+      "palette_slope_per_mm": 171.6848298481532,
+      "palette_intercept_at_peak": 190.65411382402692,
+      "linear_fit_r2": 0.9591583117655679,
+      "linear_fit_window_mm": [
+        1.84,
+        2.88
+      ],
+      "saturated": false
+    },
+    {
+      "gain_slider": 44.0,
+      "diameter_mm": 60.0,
+      "n_frames": 5,
+      "dr_mm": 0.12,
+      "speckle_floor_palette": 15.53349256515503,
+      "peak_palette": 174.84882507324218,
+      "peak_palette_excess": 159.31533250808715,
+      "peak_depth_mm": 1.7999999999999998,
+      "extent_mm": 3.0,
+      "extent_palette_threshold": 7.965766625404358,
+      "palette_slope_per_mm": 163.8846664814034,
+      "palette_intercept_at_peak": 189.77189256841484,
+      "linear_fit_r2": 0.9563509539098428,
+      "linear_fit_window_mm": [
+        1.7999999999999998,
+        2.88
+      ],
+      "saturated": false
+    },
+    {
+      "gain_slider": 54.0,
+      "diameter_mm": 35.0,
+      "n_frames": 3,
+      "dr_mm": 0.07,
+      "speckle_floor_palette": 46.39425277709961,
+      "peak_palette": 160.12256368001303,
+      "peak_palette_excess": 113.72831090291342,
+      "peak_depth_mm": 1.8200000000000003,
+      "extent_mm": 2.9400000000000004,
+      "extent_palette_threshold": 5.686415545145671,
+      "palette_slope_per_mm": 113.39109807677855,
+      "palette_intercept_at_peak": 177.81829852060557,
+      "linear_fit_r2": 0.9395040952012541,
+      "linear_fit_window_mm": [
+        1.8200000000000003,
+        2.9400000000000004
+      ],
+      "saturated": false
+    },
+    {
+      "gain_slider": 54.0,
+      "diameter_mm": 40.0,
+      "n_frames": 1,
+      "dr_mm": 0.08,
+      "speckle_floor_palette": 46.550071716308594,
+      "peak_palette": 234.58697509765625,
+      "peak_palette_excess": 188.03690338134766,
+      "peak_depth_mm": 1.84,
+      "extent_mm": 3.04,
+      "extent_palette_threshold": 9.401845169067384,
+      "palette_slope_per_mm": 181.62930250167847,
+      "palette_intercept_at_peak": 260.7465611139933,
+      "linear_fit_r2": 0.9464174493718888,
+      "linear_fit_window_mm": [
+        1.84,
+        2.96
+      ],
+      "saturated": false
+    },
+    {
+      "gain_slider": 54.0,
+      "diameter_mm": 60.0,
+      "n_frames": 5,
+      "dr_mm": 0.12,
+      "speckle_floor_palette": 44.61449775695801,
+      "peak_palette": 231.70911865234376,
+      "peak_palette_excess": 187.09462089538576,
+      "peak_depth_mm": 1.7999999999999998,
+      "extent_mm": 3.84,
+      "extent_palette_threshold": 9.354731044769288,
+      "palette_slope_per_mm": 119.18619048027767,
+      "palette_intercept_at_peak": 245.02091980934148,
+      "linear_fit_r2": 0.9571438717951903,
+      "linear_fit_window_mm": [
+        1.7999999999999998,
+        3.48
+      ],
+      "saturated": false
+    },
+    {
+      "gain_slider": 64.0,
+      "diameter_mm": 60.0,
+      "n_frames": 3,
+      "dr_mm": 0.12,
+      "speckle_floor_palette": 118.596799214681,
+      "peak_palette": 239.0,
+      "peak_palette_excess": 120.403200785319,
+      "peak_depth_mm": 1.68,
+      "extent_mm": 3.0,
+      "extent_palette_threshold": 6.02016003926595,
+      "palette_slope_per_mm": 88.44005789234373,
+      "palette_intercept_at_peak": 265.17777226113867,
+      "linear_fit_r2": 0.8119614202923015,
+      "linear_fit_window_mm": [
+        1.68,
+        3.0
+      ],
+      "saturated": true
+    }
+  ],
+  "templates": {
+    "g44_d40": "ringdown_template_g44_d40.npy",
+    "g44_d60": "ringdown_template_g44_d60.npy",
+    "g54_d35": "ringdown_template_g54_d35.npy",
+    "g54_d40": "ringdown_template_g54_d40.npy",
+    "g54_d60": "ringdown_template_g54_d60.npy",
+    "g64_d60": "ringdown_template_g64_d60.npy"
+  }
+}

@@ -1,0 +1,161 @@
+{
+  "method_summary": "E7 (partial) -- Grayscale / log-compression / gain-LUT calibration.",
+  "calibration_convention": "pixel = log_multiplier * log10(envelope_amp); log_floor = 1.0; amp at reference gain (slider 54) is in arbitrary linear units; gain shift: pixel(g) = pixel(54) + log_multiplier * (g - 54) / 20.",
+  "constants": {
+    "rayleigh_log_std_db": 5.570043140052503,
+    "reject_palette": 11.0,
+    "saturation_palette": 239.0,
+    "slider_to_db_hypothesis": 1.0,
+    "reference_gain_slider": 54.0
+  },
+  "estimators": {
+    "ringdown_peak": [
+      {
+        "method": "ringdown_peak",
+        "diameter_mm": 40.0,
+        "g1": 44.0,
+        "g2": 54.0,
+        "palette_g1": 179.16361236572266,
+        "palette_g2": 234.58697509765625,
+        "delta_palette": 55.423362731933594,
+        "delta_db": 10.0,
+        "log_multiplier": 110.84672546386719
+      },
+      {
+        "method": "ringdown_peak",
+        "diameter_mm": 60.0,
+        "g1": 44.0,
+        "g2": 54.0,
+        "palette_g1": 174.84882507324218,
+        "palette_g2": 231.70911865234376,
+        "delta_palette": 56.86029357910158,
+        "delta_db": 10.0,
+        "log_multiplier": 113.72058715820317
+      }
+    ],
+    "noise_std": [
+      {
+        "method": "noise_std",
+        "gain_slider": 44.0,
+        "std_palette": 8.091173367630761,
+        "log_multiplier": 29.052462123496205,
+        "reject_clipped": true
+      },
+      {
+        "method": "noise_std",
+        "gain_slider": 54.0,
+        "std_palette": 20.269958717835966,
+        "log_multiplier": 72.78205287883965,
+        "reject_clipped": true
+      },
+      {
+        "method": "noise_std",
+        "gain_slider": 64.0,
+        "std_palette": 35.02231365002983,
+        "log_multiplier": 125.75239641572942,
+        "reject_clipped": true
+      }
+    ],
+    "mid_range_profile": [
+      {
+        "method": "mid_range_profile",
+        "g1": 44.0,
+        "g2": 54.0,
+        "n_radial_bins": 83,
+        "delta_palette_median": 24.239328384399414,
+        "delta_palette_iqr": 2.7555735111236572,
+        "log_multiplier": 48.47865676879883,
+        "log_multiplier_iqr": 5.5111470222473145
+      },
+      {
+        "method": "mid_range_profile",
+        "g1": 44.0,
+        "g2": 64.0,
+        "n_radial_bins": 83,
+        "delta_palette_median": 92.90235710144043,
+        "delta_palette_iqr": 9.61539101600647,
+        "log_multiplier": 92.90235710144043,
+        "log_multiplier_iqr": 9.61539101600647
+      },
+      {
+        "method": "mid_range_profile",
+        "g1": 54.0,
+        "g2": 64.0,
+        "n_radial_bins": 83,
+        "delta_palette_median": 68.31486892700195,
+        "delta_palette_iqr": 10.823501586914062,
+        "log_multiplier": 136.6297378540039,
+        "log_multiplier_iqr": 21.647003173828125
+      }
+    ],
+    "speckle_floor": [
+      {
+        "method": "speckle_floor",
+        "diameter_mm": 40.0,
+        "g1": 44.0,
+        "g2": 54.0,
+        "floor_g1": 13.739700317382812,
+        "floor_g2": 46.550071716308594,
+        "delta_palette": 32.81037139892578,
+        "delta_db": 10.0,
+        "log_multiplier": 65.62074279785156,
+        "reject_clipped": true
+      },
+      {
+        "method": "speckle_floor",
+        "diameter_mm": 60.0,
+        "g1": 44.0,
+        "g2": 54.0,
+        "floor_g1": 15.53349256515503,
+        "floor_g2": 44.61449775695801,
+        "delta_palette": 29.08100519180298,
+        "delta_db": 10.0,
+        "log_multiplier": 58.16201038360596,
+        "reject_clipped": true
+      },
+      {
+        "method": "speckle_floor",
+        "diameter_mm": 60.0,
+        "g1": 44.0,
+        "g2": 64.0,
+        "floor_g1": 15.53349256515503,
+        "floor_g2": 118.596799214681,
+        "delta_palette": 103.06330664952597,
+        "delta_db": 20.0,
+        "log_multiplier": 103.06330664952597,
+        "reject_clipped": true
+      },
+      {
+        "method": "speckle_floor",
+        "diameter_mm": 60.0,
+        "g1": 54.0,
+        "g2": 64.0,
+        "floor_g1": 44.61449775695801,
+        "floor_g2": 118.596799214681,
+        "delta_palette": 73.982301457723,
+        "delta_db": 10.0,
+        "log_multiplier": 147.964602915446,
+        "reject_clipped": false
+      }
+    ]
+  },
+  "canonical_log_multiplier": {
+    "value": 112.28365631103517,
+    "uncertainty_palette_per_log10amp": 1.436930847167993,
+    "source": "mean of ringdown_peak estimators"
+  },
+  "derived": {
+    "log_multiplier": 112.28365631103517,
+    "log_floor": 1.0,
+    "dynamic_range_db": 40.611431349976854,
+    "gain_db_table": {
+      "44.0": -10.0,
+      "54.0": 0.0,
+      "64.0": 10.0
+    },
+    "noise.sigma_at_gain_54": 2.634698052850029,
+    "ring_down.amplitude_at_gain_54": 46.37325932248768,
+    "noise.sigma_derivation": "envelope_mean_palette(g64)=114.4 -> envelope_mean_amp=10.442 -> sigma_complex(g64)=8.332 -> sigma_complex(g54)=2.6347",
+    "ring_down.amplitude_derivation": "peak_excess_palette(g54,D60)=187.1 -> envelope_amp=46.373 (at gain 54 reference)"
+  }
+}

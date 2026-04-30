@@ -1,0 +1,56 @@
+{
+  "method": "anechoic ROI per frame: r in [inner_radial_mm, depth - 1 mm], exclude +/- exclude_angle_deg around each wire's design theta, exclude palette <= 11 (device reject).",
+  "units": "palette (0..255); convert to RF sigma after E7 log-compression fit.",
+  "exclude_angle_deg": 15.0,
+  "inner_radial_mm": 5.0,
+  "per_gain": {
+    "44": {
+      "n": 266256,
+      "mean": 18.752479545274653,
+      "std": 8.091173367630761,
+      "skew": 2.189550652583589,
+      "kurt": 9.771687397020038,
+      "p05": 11.073648452758789,
+      "p50": 16.44386386871338,
+      "p95": 33.90803337097168,
+      "n_frames": 7,
+      "gauss_sigma": 8.091173367630761,
+      "gauss_nll_per_sample": 3.509712293020042,
+      "rayleigh_sigma_shifted": 8.42831455712517,
+      "rayleigh_nll_per_sample": 3.5120502529811377,
+      "preferred_distribution": "gaussian"
+    },
+    "54": {
+      "n": 396772,
+      "mean": 46.24573254734288,
+      "std": 20.269958717835966,
+      "skew": 1.5558974361327211,
+      "kurt": 7.1219639958680325,
+      "p05": 18.19167537689209,
+      "p50": 44.290117263793945,
+      "p95": 79.16501121520989,
+      "n_frames": 9,
+      "gauss_sigma": 20.269958717835966,
+      "gauss_nll_per_sample": 4.428078457052594,
+      "rayleigh_sigma_shifted": 29.36515238224403,
+      "rayleigh_nll_per_sample": 4.35169279931483,
+      "preferred_distribution": "rayleigh"
+    },
+    "64": {
+      "n": 145997,
+      "mean": 114.39355480439936,
+      "std": 35.02231365002983,
+      "skew": 0.21669903596176368,
+      "kurt": -0.2730797757770347,
+      "p05": 58.87968444824219,
+      "p50": 113.43434143066406,
+      "p95": 172.3467254638671,
+      "n_frames": 3,
+      "gauss_sigma": 35.02231365002983,
+      "gauss_nll_per_sample": 4.974923924414343,
+      "rayleigh_sigma_shifted": 77.79189971218214,
+      "rayleigh_nll_per_sample": 5.1244876153239485,
+      "preferred_distribution": "gaussian"
+    }
+  }
+}
