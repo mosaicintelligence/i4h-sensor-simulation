@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <optional>
+#include <vector>
 
 #include "raysim/core/probe_types.hpp"
 #include "raysim/cuda/cuda_helper.hpp"
@@ -31,6 +32,16 @@ class World;
 class Materials;
 class BaseProbe;
 class CUDAAlgorithms;
+
+/// Public-API control point for the piece-wise linear TGC curve. Mirrors the file-local
+/// `ControlPoint` used inside the simulator implementation, but lives in the public
+/// namespace so callers (Python bindings, host code) can build a TGC schedule from a
+/// config file. Empty `SimParams::tgc_control_points` => use the simulator's probe-type
+/// default (preserves backward compatibility).
+struct TgcControlPoint {
+  float depth_cm = 0.f;
+  float gain_db = 0.f;
+};
 
 class RaytracingUltrasoundSimulator {
  public:
@@ -57,6 +68,30 @@ class RaytracingUltrasoundSimulator {
     bool enable_cuda_timing = false;            // Print timing of CUDA operations
     bool write_debug_images = false;            // Write debug images to `debug_images` directory
     float contact_epsilon = 0.0f;               // Maximum distance for element activation [mm]
+
+    // -------------------------------------------------------------------------
+    // Processing parameters (Pass 1 plumbing). All defaults are chosen to
+    // exactly reproduce the previously hard-coded behavior in simulate():
+    //   * empty tgc_control_points => probe-type default schedule
+    //   * scattering_resolution_mm == 0 => probe-type default (10 IVUS / 50 other)
+    //   * remaining defaults match the literals previously baked into the kernels.
+    // -------------------------------------------------------------------------
+    std::vector<TgcControlPoint> tgc_control_points;  // (depth_cm, gain_db); empty = auto
+
+    // Log compression: out = log_multiplier * log10(max(in, log_floor))
+    float log_multiplier = 20.f;
+    float log_floor = 1e-19f;
+
+    // Median clip filter (only used when median_clip_filter == true)
+    uint32_t median_clip_size = 5;        // square kernel side
+    float median_clip_d_min_db = -60.f;   // clamp floor (post log compression)
+    float median_clip_d_max_db = 0.f;     // clamp ceiling
+
+    // Scatter pipeline params (mirrored into raysim::Params for the OptiX kernel).
+    // 0.f means "auto from probe type" so this knob is purely additive.
+    float scattering_resolution_mm = 0.f;
+    float scatter_integral_scale = 40.f;
+    bool disable_scatter = false;
   };
 
   /// Simulation results

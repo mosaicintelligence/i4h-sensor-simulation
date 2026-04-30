@@ -176,16 +176,12 @@ _FUTURE_PATHS: tuple[str, ...] = (
 
 # Likewise: Config rows that are in the schema but not yet exposed via SimParams
 # bindings. The loader will use whatever is configured but log a one-time notice.
-_PARTIALLY_WIRED_PATHS: tuple[str, ...] = (
-    "processing.scattering_resolution_mm",
-    "processing.scatter_integral_scale",
-    "processing.tgc_control_points",
-    "processing.log_multiplier",
-    "processing.log_floor",
-    "processing.median_clip.size",
-    "processing.median_clip.d_min_db",
-    "processing.median_clip.d_max_db",
-)
+# As of Pass 1 of the simulator wiring all of the previously partially-wired
+# processing parameters (TGC, log compression, median clip, scatter scale) are
+# now plumbed straight through to SimParams, so this list is empty. Add new
+# entries here whenever a Config-row knob lands in the YAML schema before its
+# C++ binding does.
+_PARTIALLY_WIRED_PATHS: tuple[str, ...] = ()
 
 
 # -----------------------------------------------------------------------------
@@ -306,14 +302,17 @@ class IvusSimConfig:
         raise ValueError(f"Unknown probe type: {self.probe.type!r}")
 
     def to_sim_params(self):
-        """Build SimParams using the fields currently exposed by the C++ bindings.
+        """Build SimParams from the YAML config.
 
-        Fields that are not yet exposed (TGC, log compression, scattering scale,
-        median-clip parameters, gain, ring-down, …) are tracked by `pending_fields()`
-        and `partially_wired_fields()` and surfaced via warnings.
+        Pass 1 of the simulator wiring exposes the bucket-B processing knobs
+        (TGC schedule, log compression, median clip filter, scatter scale) as
+        SimParams fields. Anything still missing from the C++ pipeline is tracked
+        by ``pending_fields()`` and surfaced via ``warn_about_unwired()``.
         """
         rs = _import_raysim()
         params = rs.SimParams()
+
+        # ---- sim block ------------------------------------------------------
         params.t_far = float(self.sim.t_far_mm)
         params.buffer_size = int(self.sim.buffer_size)
         params.b_mode_size = (int(self.sim.b_mode_size[0]), int(self.sim.b_mode_size[1]))
@@ -322,6 +321,32 @@ class IvusSimConfig:
         params.contact_epsilon = float(self.sim.contact_epsilon_mm)
         params.conv_psf = bool(self.sim.conv_psf)
         params.median_clip_filter = bool(self.sim.median_clip_filter)
+
+        # ---- processing block ----------------------------------------------
+        proc = self.processing
+
+        # TGC: convert the [(depth_cm, gain_db), ...] tuples into the bound
+        # TgcControlPoint type. An empty list keeps the simulator on its
+        # probe-type default schedule.
+        if proc.tgc_control_points:
+            params.tgc_control_points = [
+                rs.TgcControlPoint(float(d_cm), float(g_db))
+                for d_cm, g_db in proc.tgc_control_points
+            ]
+
+        params.log_multiplier = float(proc.log_multiplier)
+        params.log_floor = float(proc.log_floor)
+
+        params.median_clip_size = int(proc.median_clip.size)
+        params.median_clip_d_min_db = float(proc.median_clip.d_min_db)
+        params.median_clip_d_max_db = float(proc.median_clip.d_max_db)
+
+        # scattering_resolution_mm of 0 in SimParams means "auto from probe
+        # type"; YAML defaults to 10.0 (the historical IVUS value), so we just
+        # forward whatever the user asked for.
+        params.scattering_resolution_mm = float(proc.scattering_resolution_mm)
+        params.scatter_integral_scale = float(proc.scatter_integral_scale)
+
         return params
 
     # ---- Diagnostics -------------------------------------------------------
@@ -335,8 +360,12 @@ class IvusSimConfig:
         return [(p, _get_path(self, p)) for p in _FUTURE_PATHS if _get_path(self, p) != _get_path(defaults, p)]
 
     def partially_wired_fields(self) -> list[tuple[str, Any]]:
-        """Return Config fields that are valid in the schema but currently
-        hard-coded in the C++ pipeline (not yet exposed via SimParams)."""
+        """Return Config fields that exist in the schema but are still hard-coded
+        in the C++ pipeline (not yet exposed via SimParams).
+
+        After Pass 1 of the simulator wiring this list is empty; it remains here
+        so future schema additions can be flagged before their bindings land.
+        """
         defaults = IvusSimConfig()
         return [
             (p, _get_path(self, p))

@@ -420,15 +420,20 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
         reinterpret_cast<Material*>(materials_->get_material_data()->get_ptr(sim_params.stream));
     params.background_material_id = materials_->get_index(world_->get_background_material());
     params.scattering_texture = world_->get_scattering_texture();
+    // scattering_resolution_mm: 0.f in SimParams means "auto from probe type" (preserves the
+    // historical 10 mm IVUS / 50 mm general default). A positive override comes straight
+    // from the YAML config.
     params.scattering_resolution_mm =
-        (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) ? 10.f : 50.f;
+        (sim_params.scattering_resolution_mm > 0.f)
+            ? sim_params.scattering_resolution_mm
+            : ((probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) ? 10.f : 50.f);
     params.handle = world_->get_gas_handle();
     params.source_frequency = probe->get_frequency();
     params.contact_epsilon = sim_params.contact_epsilon;
-    params.disable_scatter = 0;  // Scatter re-enabled; correct depth-bin indexing avoids streaks
+    params.disable_scatter = sim_params.disable_scatter ? 1u : 0u;
     // Scale scatter integral so vascular/cystic phantoms have visible background; wire phantom
     // remains valid (reflections dominate). 0 = strict integral (dark); ~40 gives usable range.
-    params.scatter_integral_scale = 40.f;
+    params.scatter_integral_scale = sim_params.scatter_integral_scale;
 
     pipeline_params_.upload(&params, sim_params.stream);
 
@@ -502,9 +507,18 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
 
     const bool tgc_size_ok = tgc_curve_ && (tgc_curve_->get_size() / sizeof(float) == sim_params.buffer_size);
     const bool tgc_probe_match = tgc_probe_type_.has_value() && (*tgc_probe_type_ == probe->get_probe_type());
-    if (!tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
+    const bool user_tgc = !sim_params.tgc_control_points.empty();
+    // When the caller supplies their own control points we rebuild every frame (no caching),
+    // which is the simplest way to honor frame-to-frame changes without bookkeeping the last
+    // schedule. The probe-type fallback path keeps its existing cache.
+    if (user_tgc || !tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
       std::vector<ControlPoint> control_points;
-      if (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) {
+      if (user_tgc) {
+        control_points.reserve(sim_params.tgc_control_points.size());
+        for (const auto& cp : sim_params.tgc_control_points) {
+          control_points.push_back({cp.depth_cm, cp.gain_db});
+        }
+      } else if (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) {
         // IVUS: TGC ~ compensates for tissue (α≈1 dB/(cm·MHz)); avoid over-compensation so
         // wire phantom (lumen) and cystic phantom (tissue) both show correct depth dependence.
         const float tgc_dB_per_cm = 2.f;  // ~α*f for typical IVUS tissue
@@ -515,7 +529,10 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
       }
       tgc_curve_ = create_piece_wise_tgc(
           sim_params.stream, sim_params.buffer_size, control_points, 1540.f, SAMPLING_FREQ);
-      tgc_probe_type_ = probe->get_probe_type();
+      // Invalidate the probe-type cache when the curve was built from user control points so
+      // that switching back to the default path on a later frame triggers a rebuild.
+      tgc_probe_type_ = user_tgc ? std::nullopt
+                                 : std::optional<ProbeType>(probe->get_probe_type());
     }
     cuda_algorithms_->mul_row(d_scanlines.get(), plane_size, tgc_curve_.get(), sim_params.stream);
   }
@@ -538,7 +555,9 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Log compression", sim_params.stream);
 
     cuda_algorithms_->log_compression(
-        d_scanlines.get(), plane_size, 20.f, 1e-19f, sim_params.stream);
+        d_scanlines.get(), plane_size,
+        sim_params.log_multiplier, sim_params.log_floor,
+        sim_params.stream);
   }
   if (sim_params.write_debug_images) {
     write_image(d_scanlines.get(), plane_size, "debug_images/4_log_compression.png");
@@ -556,9 +575,14 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
       // Create temporary buffer for filter output
       auto d_filtered = std::make_unique<CudaMemory>(d_scanlines->get_size(), sim_params.stream);
 
-      // Apply median clip filter with 5x1 kernel, dMin=-60, dMax=0 (clamping)
+      // Median clip filter parameters are now sourced from SimParams; defaults match the
+      // previous literals (kernel=5, dMin=-60 dB, dMax=0 dB) so behavior is unchanged unless
+      // a YAML overrides them.
       cuda_algorithms_->median_clip_filter(
-          d_scanlines.get(), plane_size, d_filtered.get(), 5, -60.0f, 0.0f, sim_params.stream);
+          d_scanlines.get(), plane_size, d_filtered.get(),
+          sim_params.median_clip_size,
+          sim_params.median_clip_d_min_db, sim_params.median_clip_d_max_db,
+          sim_params.stream);
 
       // Replace original with filtered data
       d_scanlines = std::move(d_filtered);

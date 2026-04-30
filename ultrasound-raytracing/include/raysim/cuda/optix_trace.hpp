@@ -38,6 +38,10 @@ struct Params {
   OptixTraversableHandle handle;
   float source_frequency;
   float contact_epsilon;
+  // Pipeline parameters consumed by optix_trace.cu (also see ivus_implementation_writeup.md §4):
+  float scattering_resolution_mm;  // voxel size used to sample scattering texture
+  uint32_t disable_scatter;        // non-zero disables scatter accumulation
+  float scatter_integral_scale;    // multiplier on the scatter line integral (0 = strict)
 };
 
 struct RayGenData {
