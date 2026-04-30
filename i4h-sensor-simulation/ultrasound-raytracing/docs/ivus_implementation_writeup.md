@@ -232,6 +232,8 @@ References in comments: Goss et al. compilations, PMC3570716 (Ultrasound Med Bio
 **Justification:** These pipeline parameters allow the **same raytracing kernel** to be used for both abdominal and IVUS without recompilation. **scattering_resolution_mm** is set per run (10 for IVUS, 50 for abdominal) so speckle scale matches the imaging geometry. **disable_scatter** is a switch for debugging or comparison. **scatter_integral_scale** is the empirical scale discussed in §4.2 so scatter contributes in a displayable range.  
 **Tuning:** **scattering_resolution_mm:** Set in `raytracing_ultrasound_simulator.cpp` (e.g. 10 for IVUS, 50 for abdominal). **Smaller** values give **finer speckle** (smaller correlation length); **larger** values give **coarser speckle**. Tune to match target speckle size (e.g. from literature or reference images) or to desired texture. **scatter_integral_scale:** See §4.2; same tuning as above (set in same place).
 
+**Pass 1 update (configuration-driven):** As of the calibration-driven refactor (§11), the three `Params` fields above are populated from `SimParams::scattering_resolution_mm`, `SimParams::disable_scatter`, and `SimParams::scatter_integral_scale` rather than being hard-coded in `simulate()`. `scattering_resolution_mm == 0.f` in `SimParams` is treated as a sentinel meaning *"auto from probe type"* and falls back to the historical 10 mm (IVUS) / 50 mm (abdominal) defaults; any positive value overrides them. The header itself was previously missing these three fields even though `optix_trace.cu` and the simulator already referenced them — see §11.1 for the (latent) header fix.
+
 ---
 
 ## 5. Simulator: PSF and TGC
@@ -298,6 +300,13 @@ References in comments: Goss et al. compilations, PMC3570716 (Ultrasound Med Bio
 
 **Justification:** **update_psfs(buffer_size, t_far):** The IVUS **depth-dependent lateral** kernel depends on the depth range (t_far) and the number of depth samples (buffer_size) to build the 2D kernel (depth_bins × kernel_len). Passing these in allows the simulator to build the correct kernel without assuming global state. **TGC probe-type-specific:** **Time-gain compensation** compensates for **attenuation with depth** (and sometimes diffraction). Abdominal imaging uses depths of order **tens of cm** and a TGC curve (e.g. 0–40 cm, ~28 dB at 40 cm). IVUS imaging depth is **millimeters** (e.g. 0–10 mm), and tissue attenuation at 40 MHz is ~α·f per cm. Using the **same** TGC curve for IVUS would over-compensate (huge gain at 1 cm) and distort depth dependence. A **separate** TGC for IVUS (e.g. 0–1 cm, ~2 dB/cm) matches the physical depth range and attenuation scale. **Caching by probe type** ensures switching between IVUS and another probe type rebuilds the TGC curve appropriately.  
 **Tuning (IVUS TGC):** In `raytracing_ultrasound_simulator.cpp`, the IVUS TGC uses control points `{{0.f, 0.f}, {1.f, tgc_dB_per_cm}}` with **tgc_dB_per_cm = 2.f**. Approximate gain per cm from tissue attenuation is **α × f_MHz** (α in dB/(cm·MHz)). For vessel_wall α ≈ 1, 40 MHz → ~40 dB/m = **4 dB/cm**; 2 dB/cm is deliberately moderate so wire phantoms (lumen) and cystic phantoms (tissue) both show plausible depth dependence. **Increase** tgc_dB_per_cm if deeper tissue is too dark; **decrease** if near-field is over-gained or depth gradient looks wrong. Extend the control-point depth (e.g. 1.5 or 2 cm) if imaging beyond 1 cm. Adjust so that (1) wire echoes do not get over-amplified with depth and (2) tissue at 5–10 mm is visible without clipping.
+
+**Pass 1 update (user-supplied TGC schedule):** The TGC block now also accepts a caller-supplied schedule via `SimParams::tgc_control_points` (a list of `(depth_cm, gain_db)` pairs). Behavior:
+
+- **Empty list (default)** → preserves the legacy probe-type cached path (IVUS: `{0,0}, {1,2}`; abdominal: `{0,0}, {40,28}`) verbatim, so existing scripts that only set the previously exposed fields are byte-identical.
+- **Non-empty list** → the curve is rebuilt every frame (no caching) so frame-to-frame schedule changes are honored, and the probe-type cache is invalidated so a later frame that goes back to the empty path re-builds the default schedule. This is the path the YAML calibration takes for the PV .035 (5 control points spanning the 0–3 cm IVUS range, see `instrument-calibration/p035_visions/volcano_s5i.yaml`).
+
+The internal `ControlPoint` struct in the .cpp is unchanged; a new public `raysim::TgcControlPoint { depth_cm, gain_db }` lives in the simulator header so callers (Python bindings, host code) can build a schedule without touching simulator-private types. See §11.2 for the bindings.
 
 ---
 
@@ -374,6 +383,157 @@ That writeup includes the **unwrapped B-mode images** from each simulation for r
 
 ---
 
+## 11. Configuration-driven processing pipeline (Pass 1)
+
+This section describes the **Pass 1 plumbing** added to make the simulator dynamically configurable from a YAML config without recompiling. The motivating use case is the per-instrument calibration pipeline that lives in `instrument-calibration/p035_visions/` and emits a `volcano_s5i.yaml` consumed at runtime via `raysim.IvusSimConfig`.
+
+The design constraint throughout was **bit-identical default behavior**: every new field has a default value chosen so that any existing example/script that constructs `SimParams()` and only sets the previously exposed knobs produces an unchanged pipeline. Calibration data only takes effect when the YAML overrides those defaults.
+
+**Implementation pointers (Pass 1 surface area):**
+
+- C++ public API: [raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (new `TgcControlPoint`, extended `SimParams`).
+- C++ pipeline: [raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp) (`simulate()` reads the new `SimParams` fields).
+- OptiX header fix: [optix_trace.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/cuda/optix_trace.hpp) (added the three `Params` fields the .cu/.cpp already used).
+- Bindings: [raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/python/raysim_bindings.cpp) (new `TgcControlPoint`, extended `SimParams` `def_readwrite` set).
+- Python config: [raysim/config.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/raysim/config.py) (`IvusSimConfig.to_sim_params()` now sets every Pass 1 field; `_PARTIALLY_WIRED_PATHS` reduced to `()`).
+
+### 11.1 OptiX `Params` header fix (latent bug)
+
+`csrc/cuda/optix_trace.cu` and `csrc/core/raytracing_ultrasound_simulator.cpp` were both reading/writing `params.scattering_resolution_mm`, `params.disable_scatter`, and `params.scatter_integral_scale` (see §4.2 / §4.4 / §7), but the matching `struct Params` in `include/raysim/cuda/optix_trace.hpp` did not declare those fields. That is a **latent build bug**: the simulator could not have compiled against a strictly conforming `Params`. Pass 1 added the three fields at the end of the struct (preserves layout for fields that were already there).
+
+**Diff (vs main) — `Params`:**
+```diff
+  struct Params {
+    ...
+    float source_frequency;
+    float contact_epsilon;
++   // Pipeline parameters consumed by optix_trace.cu (also see §4):
++   float scattering_resolution_mm;  // voxel size used to sample scattering texture
++   uint32_t disable_scatter;        // non-zero disables scatter accumulation
++   float scatter_integral_scale;    // multiplier on the scatter line integral (0 = strict)
+  };
+```
+
+**Justification:** The kernels needed these fields and were already reading them; the header just had to declare them so that any future `static_assert`/sizeof check or fresh build environment works. Behavior is unchanged because the .cpp continues to write the same values into them.
+
+### 11.2 Public `TgcControlPoint` and extended `SimParams`
+
+A new public struct **`raysim::TgcControlPoint { float depth_cm; float gain_db; }`** was added to `raytracing_ultrasound_simulator.hpp` so callers can build a piece-wise-linear TGC schedule without touching the file-local `ControlPoint` used inside `simulate()`. `SimParams` then carries:
+
+| `SimParams` field | YAML path | Default | Behavior at default |
+|---|---|---|---|
+| `tgc_control_points` (`std::vector<TgcControlPoint>`) | `processing.tgc_control_points` | empty | use the existing probe-type schedule (IVUS: 2 dB/cm to 1 cm; abdo: 0–28 dB to 40 cm) and keep the per-probe-type cache |
+| `log_multiplier` | `processing.log_multiplier` | `20.f` | matches the prior literal in `cuda_algorithms_->log_compression(...)` |
+| `log_floor` | `processing.log_floor` | `1e-19f` | matches the prior literal |
+| `median_clip_size` | `processing.median_clip.size` | `5` | matches the prior 5×1 kernel |
+| `median_clip_d_min_db` | `processing.median_clip.d_min_db` | `-60.f` | matches the prior dMin |
+| `median_clip_d_max_db` | `processing.median_clip.d_max_db` | `0.f` | matches the prior dMax |
+| `scattering_resolution_mm` | `processing.scattering_resolution_mm` | `0.f` | sentinel ⇒ probe-type auto (10 IVUS / 50 other) |
+| `scatter_integral_scale` | `processing.scatter_integral_scale` | `40.f` | matches the prior literal |
+| `disable_scatter` | (not in YAML yet) | `false` | scatter on, as before |
+
+**Justification:** Pass 1 deliberately chose **knobs that were already hard-coded in `simulate()`** (bucket B in the calibration plan) rather than introducing any new physics. Each entry is therefore a one-line replacement of a literal with the corresponding `sim_params.X`, plus a default that reproduces the literal exactly. This minimizes risk and lets the calibration pipeline drive the simulator immediately for the parameters we already extracted (TGC, log compression, median clip, scatter scale).
+
+### 11.3 Pipeline wiring inside `simulate()`
+
+The `simulate()` body picks up the new fields at the same places §4.4, §5.3, §7 already documented:
+
+**Diff (vs main) — pipeline params before optixLaunch:**
+```diff
+- params.scattering_resolution_mm =
+-     (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) ? 10.f : 50.f;
++ params.scattering_resolution_mm =
++     (sim_params.scattering_resolution_mm > 0.f)
++         ? sim_params.scattering_resolution_mm
++         : ((probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) ? 10.f : 50.f);
+  ...
+- params.disable_scatter = 0;
++ params.disable_scatter = sim_params.disable_scatter ? 1u : 0u;
+- params.scatter_integral_scale = 40.f;
++ params.scatter_integral_scale = sim_params.scatter_integral_scale;
+```
+
+**Diff (vs main) — TGC block (extends the §5.3 caching to a user-supplied path):**
+```diff
++ const bool user_tgc = !sim_params.tgc_control_points.empty();
+- if (!tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
++ if (user_tgc || !tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
+    std::vector<ControlPoint> control_points;
++   if (user_tgc) {
++     control_points.reserve(sim_params.tgc_control_points.size());
++     for (const auto& cp : sim_params.tgc_control_points) {
++       control_points.push_back({cp.depth_cm, cp.gain_db});
++     }
++   } else if (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) {
+      control_points = {{0.f, 0.f}, {1.f, tgc_dB_per_cm}};
+    } else {
+      control_points = {{0.f, 0.f}, {40.f, 28.f}};
+    }
+    tgc_curve_ = create_piece_wise_tgc(...);
+-   tgc_probe_type_ = probe->get_probe_type();
++   // Invalidate the probe-type cache when the curve was built from user control
++   // points so that switching back to the default path on a later frame triggers a rebuild.
++   tgc_probe_type_ = user_tgc ? std::nullopt
++                              : std::optional<ProbeType>(probe->get_probe_type());
+  }
+```
+
+**Diff (vs main) — log compression and median clip:**
+```diff
+- cuda_algorithms_->log_compression(d_scanlines.get(), plane_size, 20.f, 1e-19f, sim_params.stream);
++ cuda_algorithms_->log_compression(
++     d_scanlines.get(), plane_size,
++     sim_params.log_multiplier, sim_params.log_floor,
++     sim_params.stream);
+  ...
+- cuda_algorithms_->median_clip_filter(
+-     d_scanlines.get(), plane_size, d_filtered.get(), 5, -60.0f, 0.0f, sim_params.stream);
++ cuda_algorithms_->median_clip_filter(
++     d_scanlines.get(), plane_size, d_filtered.get(),
++     sim_params.median_clip_size,
++     sim_params.median_clip_d_min_db, sim_params.median_clip_d_max_db,
++     sim_params.stream);
+```
+
+The CUDA kernel signatures (`log_compression`, `median_clip_filter`, `mul_row`) were already templated on the right scalar/integer types, so no kernel-side changes were needed for Pass 1.
+
+### 11.4 Python bindings and package exports
+
+`raysim_bindings.cpp` exposes:
+
+- **`TgcControlPoint`** as a class with the two-argument constructor `TgcControlPoint(depth_cm, gain_db)`, read/write properties for both fields, and a `__repr__` for debug printing.
+- All new `SimParams` fields via `def_readwrite` (`tgc_control_points`, `log_multiplier`, `log_floor`, `median_clip_size`, `median_clip_d_min_db`, `median_clip_d_max_db`, `scattering_resolution_mm`, `scatter_integral_scale`, `disable_scatter`).
+- The `SimParams` docstring was updated to document the new knobs.
+
+`raysim/__init__.py` re-exports `TgcControlPoint` so the canonical user-facing import is `from raysim import SimParams, TgcControlPoint, IvusSimConfig`.
+
+### 11.5 Python config layer (`IvusSimConfig.to_sim_params`)
+
+`raysim.config.IvusSimConfig.to_sim_params()` was extended to set every Pass 1 field. The TGC list of `(depth_cm, gain_db)` tuples in YAML is converted into a `list[rs.TgcControlPoint]` before assignment. An empty YAML list keeps the simulator on its probe-type default schedule (preserves backward compat for configs that omit `processing.tgc_control_points`). `scattering_resolution_mm` in YAML defaults to `10.0` (the historical IVUS value) and is forwarded as-is; setting it to `0.0` falls back to the C++ probe-type auto.
+
+The book-keeping registry `_PARTIALLY_WIRED_PATHS` — which previously listed every YAML path that was in the schema but still hard-coded in C++ — has been emptied since all bucket-B knobs are now plumbed. The list is kept (with a comment) so future schema additions can be flagged before their bindings land.
+
+Verified locally (without a CUDA build) by loading `instrument-calibration/p035_visions/volcano_s5i.yaml` through the schema and checking the diagnostic registries:
+
+```
+_PARTIALLY_WIRED_PATHS = ()
+partially_wired_fields() (should be empty after Pass 1):    <empty>
+pending_fields() (Future, not yet wired):
+  processing.dynamic_range_db = 40.6
+  processing.reject_db = -40.6
+  processing.noise.sigma = 2.6347
+  processing.ring_down.amplitude = 46.37
+  processing.ring_down.extent_mm = 3.0
+  processing.ring_down.decay = measured
+  processing.ring_down.waveform_path = P_035_PointScatter/derived/ringdown/...
+```
+
+### 11.6 What's still on the to-do list
+
+Pass 1 deliberately did not touch any new physics. The Pass 2 work item is the dynamic range / reject mapping in log compression and the **ring-down injection** model — see §12.2 (catheter / ring-down). Noise (§12.4) is captured in the YAML schema (`processing.noise.{type,sigma}`) but intentionally deferred until after ring-down so that we can measure noise on a ring-down-subtracted simulator. `_FUTURE_PATHS` in `raysim/config.py` is the live source of truth for what's still pending.
+
+---
+
 ## 12. Potential next steps and modeling gaps
 
 The following are **missing elements** that could explain mismatches between simulation and real IVUS, plus **suggested next steps** to enhance the model.
@@ -388,7 +548,9 @@ Scattering strength is modulated by material σ and attenuation along the path, 
 
 There is **no model of the catheter or sheath**: no near-field ring-down, guided waves, or fixed echo from the housing. Real IVUS has a dead zone and strong echo from the catheter; its absence can make the simulated lumen look “too clean” near the probe.
 
-**Next step:** Introduce a simple catheter model (e.g. fixed echo at small depth, or a thin cylindrical shell with ring-down decay) and optionally a dead-zone mask so that the first 1–2 mm are not over-interpreted as lumen.
+**Schema status (Pass 1):** The YAML schema already carries the parameters needed for a measured-template ring-down injection — `processing.ring_down.{amplitude, extent_mm, decay, waveform_path, subtract_reference}` — and the calibration pipeline emits a measured waveform template (`P_035_PointScatter/derived/ringdown/...`) for the PV .035 catheter. These appear in `pending_fields()` because the C++ side is not yet implemented.
+
+**Next step (Pass 2):** Introduce a configurable ring-down stage in `simulate()` that adds (or subtracts) the measured waveform template before envelope detection, with the on/off semantics agreed in the calibration plan: `enabled=false` ⇒ truly no ring-down signal, `enabled=true` ⇒ add the calibrated residual that survives the device's reference subtraction. A simple dead-zone mask for the inner few hundred microns should land alongside it.
 
 ### 12.3 Element directivity at transmit
 
@@ -400,7 +562,9 @@ Ray intensity starts at 1.0; **element directivity is only applied in the latera
 
 There is **no noise model**. For SNR, contrast resolution, or detector-limited studies, at least a simple noise model is needed (e.g. additive Gaussian, or noise figure).
 
-**Next step:** Add an optional noise stage (e.g. post–log-compression Gaussian, or pre-compression with a simple noise figure) and expose a parameter (e.g. SNR or noise std) for reproducibility.
+**Schema status (Pass 1):** The YAML schema carries `processing.noise.{type, sigma}` (Gaussian / Rayleigh / none) and the calibration pipeline measures a baseline σ in palette units from anechoic ROIs. These are listed in `pending_fields()` because the C++ side is not yet implemented; per the Pass-2 plan, noise is intentionally deferred until after ring-down so that we can measure noise on a ring-down-subtracted simulator output rather than fitting a number that conflates noise with residual catheter signal.
+
+**Next step (Pass 2 follow-up):** Add an optional noise stage (e.g. post–log-compression Gaussian, or pre-compression with a simple noise figure) honoring the YAML schema fields above.
 
 ### 12.5 Rotation and motion
 
@@ -431,16 +595,18 @@ Incorporating the items in §12.1–12.4 would address the most visible gaps (fr
 
 ---
 
-## 11. Summary of main implementation files changed/added
+## 13. Summary of main implementation files changed/added
 
-| Area              | Files (core implementation) |
-|-------------------|-----------------------------|
-| Probe type        | [probe_types.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe_types.hpp), [probe.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe.hpp), [ivus_probe.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/ivus_probe.hpp) (new) |
-| Materials         | [material.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/material.cpp) |
-| Ray / scattering  | [optix_trace.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu), [optix_trace.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/optix_trace.hpp) |
-| Simulator / PSF   | [raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp), [raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) |
-| CUDA algorithms   | [cuda_algorithms.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu), [cuda_algorithms.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp) |
-| Python            | [raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/python/raysim_bindings.cpp), [raysim/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/__init__.py), [raysim/cuda/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/cuda/__init__.py) |
-| Utils             | [phantom_maker.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py) |
+| Area                                  | Files (core implementation) |
+|---------------------------------------|-----------------------------|
+| Probe type                            | [probe_types.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe_types.hpp), [probe.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe.hpp), [ivus_probe.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/ivus_probe.hpp) (new) |
+| Materials                             | [material.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/material.cpp) |
+| Ray / scattering                      | [optix_trace.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu), [optix_trace.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/cuda/optix_trace.hpp) (Pass 1 header fix, §11.1) |
+| Simulator / PSF                       | [raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp), [raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (Pass 1 `TgcControlPoint`, extended `SimParams`, §11.2–11.3) |
+| CUDA algorithms                       | [cuda_algorithms.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu), [cuda_algorithms.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp) |
+| Python bindings & exports             | [raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/python/raysim_bindings.cpp), [raysim/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/raysim/__init__.py), [raysim/cuda/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/cuda/__init__.py) |
+| Python config schema (Pass 1, §11.5)  | [raysim/config.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/raysim/config.py) |
+| Utils                                 | [phantom_maker.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py) |
+| Per-instrument calibration (consumer) | [`instrument-calibration/p035_visions/volcano_s5i.yaml`](../../instrument-calibration/p035_visions/volcano_s5i.yaml) |
 
 Example and evaluation scripts (e.g. `ivus_example.py`, `ivus_evaluation.py`, `wire_phantom_evaluation.py`, `cystic_resolution_phantom_evaluation.py`) and the comparison doc **`docs/ivus_rotating_single_element_psf_comparison.md`** are not described step-by-step here, as requested.
