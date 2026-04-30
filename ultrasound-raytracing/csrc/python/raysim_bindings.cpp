@@ -393,6 +393,28 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_property_readonly("element_radius_mm", &raysim::IVUSProbe::get_element_radius_mm)
       .def_property_readonly("focal_length_mm", &raysim::IVUSProbe::get_focal_length_mm);
 
+  // Bind TgcControlPoint (depth_cm, gain_db) so Python callers can build a TGC schedule
+  // straight from a config file. A list/empty of these is exposed on SimParams.
+  py::class_<raysim::TgcControlPoint>(m, "TgcControlPoint", R"pbdoc(
+        Single piece-wise-linear TGC control point.
+
+        Attributes:
+            depth_cm: Depth of the control point [cm].
+            gain_db: Gain at this depth [dB].
+    )pbdoc")
+      .def(py::init<>())
+      .def(py::init([](float depth_cm, float gain_db) {
+             return raysim::TgcControlPoint{depth_cm, gain_db};
+           }),
+           py::arg("depth_cm"),
+           py::arg("gain_db"))
+      .def_readwrite("depth_cm", &raysim::TgcControlPoint::depth_cm)
+      .def_readwrite("gain_db", &raysim::TgcControlPoint::gain_db)
+      .def("__repr__", [](const raysim::TgcControlPoint& cp) {
+        return "TgcControlPoint(depth_cm=" + std::to_string(cp.depth_cm) +
+               ", gain_db=" + std::to_string(cp.gain_db) + ")";
+      });
+
   // Bind SimParams struct
   py::class_<raysim::RaytracingUltrasoundSimulator::SimParams>(m, "SimParams", R"pbdoc(
         Simulation parameters for ultrasound imaging.
@@ -408,6 +430,12 @@ rays emanate radially over 360° for a cross-sectional vessel image.
             - enable_cuda_timing: Enable CUDA timing measurements
             - write_debug_images: Enable debug image output
             - b_mode_size: B-mode image size (width, height). For IVUS unwrapped display: (angle pixels, depth pixels).
+            - tgc_control_points: List[TgcControlPoint]; empty => use built-in probe-type default.
+            - log_multiplier / log_floor: log_compression(out = mul * log10(max(in, floor))).
+            - median_clip_size / median_clip_d_min_db / median_clip_d_max_db: median clip filter knobs.
+            - scattering_resolution_mm: 0 => auto from probe type (10 mm IVUS / 50 mm general).
+            - scatter_integral_scale: scale on the scatter line integral (0 = strict).
+            - disable_scatter: skip scatter accumulation entirely.
     )pbdoc")
       .def(py::init<>())
       .def_readwrite("t_far",
@@ -440,6 +468,33 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite("contact_epsilon",
                      &raysim::RaytracingUltrasoundSimulator::SimParams::contact_epsilon,
                      "Maximum distance for element activation [mm]")
+      .def_readwrite("tgc_control_points",
+                     &raysim::RaytracingUltrasoundSimulator::SimParams::tgc_control_points,
+                     "List of TgcControlPoint(depth_cm, gain_db); empty => probe-type default")
+      .def_readwrite("log_multiplier",
+                     &raysim::RaytracingUltrasoundSimulator::SimParams::log_multiplier,
+                     "log_compression multiplier (default 20.0)")
+      .def_readwrite("log_floor",
+                     &raysim::RaytracingUltrasoundSimulator::SimParams::log_floor,
+                     "log_compression floor (default 1e-19)")
+      .def_readwrite("median_clip_size",
+                     &raysim::RaytracingUltrasoundSimulator::SimParams::median_clip_size,
+                     "Median clip filter kernel size (default 5)")
+      .def_readwrite("median_clip_d_min_db",
+                     &raysim::RaytracingUltrasoundSimulator::SimParams::median_clip_d_min_db,
+                     "Median clip filter floor in dB (default -60)")
+      .def_readwrite("median_clip_d_max_db",
+                     &raysim::RaytracingUltrasoundSimulator::SimParams::median_clip_d_max_db,
+                     "Median clip filter ceiling in dB (default 0)")
+      .def_readwrite("scattering_resolution_mm",
+                     &raysim::RaytracingUltrasoundSimulator::SimParams::scattering_resolution_mm,
+                     "Scattering texture voxel size [mm]; 0 => auto by probe type")
+      .def_readwrite("scatter_integral_scale",
+                     &raysim::RaytracingUltrasoundSimulator::SimParams::scatter_integral_scale,
+                     "Scale factor on scatter line integral (default 40; 0 = strict)")
+      .def_readwrite("disable_scatter",
+                     &raysim::RaytracingUltrasoundSimulator::SimParams::disable_scatter,
+                     "If true, skip scatter accumulation entirely")
       .def_property(
           "b_mode_size",
           [](raysim::RaytracingUltrasoundSimulator::SimParams& self) {
