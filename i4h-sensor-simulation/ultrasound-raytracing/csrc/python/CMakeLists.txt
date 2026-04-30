@@ -19,9 +19,21 @@
 
 if(BUILD_PYTHON_BINDINGS)
 
+    get_filename_component(_RAYSIM_PY_PKG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../raysim" ABSOLUTE)
+
     pybind11_add_module(ray_sim_python
         raysim_bindings.cpp
         )
+
+    add_custom_command(
+        TARGET ray_sim_python
+        PRE_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DRAYSIM_PY_DIR=${_RAYSIM_PY_PKG_DIR}
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/clean_stale_ray_sim_python.cmake
+        COMMENT "Clear stale ray_sim_python extensions from other Python ABIs"
+        VERBATIM
+    )
 
     target_include_directories(ray_sim_python
         PRIVATE
