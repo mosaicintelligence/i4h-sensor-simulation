@@ -1,0 +1,838 @@
+{
+  "schema_version": 1,
+  "wire_design": [
+    {
+      "wire_index": 1,
+      "r_mm": 5.000000000000001,
+      "theta_deg": 89.99999999999999
+    },
+    {
+      "wire_index": 2,
+      "r_mm": 9.999999999999998,
+      "theta_deg": 50.000000000000014
+    },
+    {
+      "wire_index": 3,
+      "r_mm": 14.972213068091971,
+      "theta_deg": 10.000000000000012
+    },
+    {
+      "wire_index": 4,
+      "r_mm": 19.999999999999996,
+      "theta_deg": 330.0
+    },
+    {
+      "wire_index": 5,
+      "r_mm": 25.0,
+      "theta_deg": 290.0
+    },
+    {
+      "wire_index": 6,
+      "r_mm": 30.000000000000007,
+      "theta_deg": 250.0
+    },
+    {
+      "wire_index": 7,
+      "r_mm": 35.0,
+      "theta_deg": 210.0
+    },
+    {
+      "wire_index": 8,
+      "r_mm": 40.00000000000001,
+      "theta_deg": 170.0
+    },
+    {
+      "wire_index": 9,
+      "r_mm": 45.0,
+      "theta_deg": 130.0
+    }
+  ],
+  "box_geometry": {
+    "outer_radius_mm": 50.0,
+    "catheter_radius_mm": 1.905
+  },
+  "frames": [
+    {
+      "file": "FILE0000",
+      "instance_number": 1,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        247.4156626506024,
+        255.789156626506
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 209.6736992770617,
+          "y_px": 246.657574679368
+        },
+        {
+          "wire_index": 3,
+          "x_px": 192.69192637997122,
+          "y_px": 190.05166502239985
+        },
+        {
+          "wire_index": 4,
+          "x_px": 250.91514774142422,
+          "y_px": 122.12457343403798
+        },
+        {
+          "wire_index": 5,
+          "x_px": 366.5529346120878,
+          "y_px": 115.65532661609876
+        },
+        {
+          "wire_index": 6,
+          "x_px": 466.8262602901458,
+          "y_px": 223.20655496433835
+        }
+      ]
+    },
+    {
+      "file": "FILE0001",
+      "instance_number": 2,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        247.3395061728395,
+        256.38271604938274
+      ],
+      "unreadable": false,
+      "excluded_user_wire_indices": [7],
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 212.90832268603128,
+          "y_px": 257.97875661076165
+        },
+        {
+          "wire_index": 3,
+          "x_px": 188.6486471187592,
+          "y_px": 203.79881451052069
+        },
+        {
+          "wire_index": 4,
+          "x_px": 241.21127751451536,
+          "y_px": 126.16785269525002
+        },
+        {
+          "wire_index": 5,
+          "x_px": 343.1019148970581,
+          "y_px": 95.4389303100387
+        },
+        {
+          "wire_index": 6,
+          "x_px": 459.5483576199641,
+          "y_px": 186.8170416134302
+        },
+        {
+          "wire_index": 7,
+          "x_px": 447.4185198363281,
+          "y_px": 376.8511668903949
+        }
+      ]
+    },
+    {
+      "file": "FILE0002",
+      "instance_number": 3,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        252.5327868852459,
+        254.13524590163934
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 239.59396581003057,
+          "y_px": 291.13364655270016
+        },
+        {
+          "wire_index": 3,
+          "x_px": 179.75343274409278,
+          "y_px": 304.0721401885786
+        },
+        {
+          "wire_index": 4,
+          "x_px": 116.67827626918533,
+          "y_px": 242.61429541815602
+        },
+        {
+          "wire_index": 5,
+          "x_px": 118.29558797367015,
+          "y_px": 132.63709951318924
+        },
+        {
+          "wire_index": 6,
+          "x_px": 221.8035370606977,
+          "y_px": 32.36377383513127
+        }
+      ]
+    },
+    {
+      "file": "FILE0003",
+      "instance_number": 4,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        248.715,
+        253.935
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 252.532459445909,
+          "y_px": 293.5596141094274
+        },
+        {
+          "wire_index": 3,
+          "x_px": 197.54386149342565,
+          "y_px": 321.0539130856691
+        },
+        {
+          "wire_index": 4,
+          "x_px": 120.72155553039737,
+          "y_px": 276.5778412123369
+        },
+        {
+          "wire_index": 5,
+          "x_px": 94.84456825864048,
+          "y_px": 169.02661286409733
+        },
+        {
+          "wire_index": 6,
+          "x_px": 168.43225081269912,
+          "y_px": 46.919579175494505
+        }
+      ]
+    },
+    {
+      "file": "FILE0004",
+      "instance_number": 5,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        247.35119047619048,
+        255.8154761904762
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 208.86504342481925,
+          "y_px": 248.27488638385285
+        },
+        {
+          "wire_index": 3,
+          "x_px": 203.20445245912242,
+          "y_px": 186.0083857611878
+        },
+        {
+          "wire_index": 4,
+          "x_px": 267.89692063851464,
+          "y_px": 124.55054099076523
+        },
+        {
+          "wire_index": 5,
+          "x_px": 377.8741165434815,
+          "y_px": 126.16785269525002
+        },
+        {
+          "wire_index": 6,
+          "x_px": 469.252227846873,
+          "y_px": 241.80563956591362
+        }
+      ]
+    },
+    {
+      "file": "FILE0005",
+      "instance_number": 6,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        237.16666666666666,
+        260.5
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 216.95160194724332,
+          "y_px": 247.46623053161045
+        },
+        {
+          "wire_index": 3,
+          "x_px": 182.98805615306236,
+          "y_px": 195.71225598809667
+        },
+        {
+          "wire_index": 4,
+          "x_px": 215.33429024275847,
+          "y_px": 114.03801491161397
+        },
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 6,
+          "x_px": 452.27045494978245,
+          "y_px": 139.91500218337086
+        }
+      ]
+    },
+    {
+      "file": "FILE0006",
+      "instance_number": 7,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        237.16666666666666,
+        260.5
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 210.4823551293041,
+          "y_px": 246.657574679368
+        },
+        {
+          "wire_index": 3,
+          "x_px": 197.54386149342565,
+          "y_px": 185.19972990894541
+        },
+        {
+          "wire_index": 4,
+          "x_px": 258.19305041160584,
+          "y_px": 119.6986058773108
+        },
+        {
+          "wire_index": 5,
+          "x_px": 373.83083728226944,
+          "y_px": 118.8899500250684
+        },
+        {
+          "wire_index": 6,
+          "x_px": 470.8695395513578,
+          "y_px": 224.82386666882314
+        }
+      ]
+    },
+    {
+      "file": "FILE0007",
+      "instance_number": 8,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        237.16666666666666,
+        260.5
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 291.34794035354435,
+          "y_px": 238.57101615694398
+        },
+        {
+          "wire_index": 3,
+          "x_px": 335.0153563746341,
+          "y_px": 277.3864970645793
+        },
+        {
+          "wire_index": 4,
+          "x_px": 326.1201419999677,
+          "y_px": 362.29536155003166
+        },
+        {
+          "wire_index": 5,
+          "x_px": 236.35934240106099,
+          "y_px": 431.83976484287825
+        },
+        {
+          "wire_index": 6,
+          "x_px": 100.50515922433728,
+          "y_px": 410.00605683233334
+        }
+      ]
+    },
+    {
+      "file": "FILE0008",
+      "instance_number": 9,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        276.25,
+        220.25
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 276.7921350131811,
+          "y_px": 216.73730814639913
+        },
+        {
+          "wire_index": 3,
+          "x_px": 338.2499797836037,
+          "y_px": 218.35461985088392
+        },
+        {
+          "wire_index": 4,
+          "x_px": 390.0039543271175,
+          "y_px": 287.8990231437306
+        },
+        {
+          "wire_index": 5,
+          "x_px": 368.978902168815,
+          "y_px": 401.9194983099094
+        },
+        {
+          "wire_index": 6,
+          "x_px": 254.1497711503938,
+          "y_px": 475.507180863968
+        }
+      ]
+    },
+    {
+      "file": "FILE0009",
+      "instance_number": 10,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        237.16666666666666,
+        260.5
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 252.532459445909,
+          "y_px": 217.54596399864153
+        },
+        {
+          "wire_index": 3,
+          "x_px": 309.1383691028772,
+          "y_px": 198.13822354482386
+        },
+        {
+          "wire_index": 4,
+          "x_px": 379.49142824796627,
+          "y_px": 255.55278905403446
+        },
+        {
+          "wire_index": 5,
+          "x_px": 392.4299218838447,
+          "y_px": 371.99923177694046
+        },
+        {
+          "wire_index": 6,
+          "x_px": 300.2431547282108,
+          "y_px": 472.2725574549984
+        }
+      ]
+    },
+    {
+      "file": "FILE0010",
+      "instance_number": 11,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        249.47092360319272,
+        250.48574686431016
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 206.43907586809206,
+          "y_px": 232.91042519124716
+        },
+        {
+          "wire_index": 3,
+          "x_px": 222.61219291294015,
+          "y_px": 174.68720382979416
+        },
+        {
+          "wire_index": 4,
+          "x_px": 301.0518105804532,
+          "y_px": 140.72365803561325
+        },
+        {
+          "wire_index": 5,
+          "x_px": 412.6463181899047,
+          "y_px": 194.90360013585422
+        },
+        {
+          "wire_index": 6,
+          "x_px": 453.07911080202496,
+          "y_px": 312.15869871100267
+        }
+      ]
+    },
+    {
+      "file": "FILE0011",
+      "instance_number": 12,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        250.45656779661016,
+        248.41737288135593
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 264.66229722954506,
+          "y_px": 222.39789911209596
+        },
+        {
+          "wire_index": 3,
+          "x_px": 324.50283029548285,
+          "y_px": 237.7623603047016
+        },
+        {
+          "wire_index": 4,
+          "x_px": 360.892343646391,
+          "y_px": 313.77601041548746
+        },
+        {
+          "wire_index": 5,
+          "x_px": 321.26820688651327,
+          "y_px": 421.327238763727
+        },
+        {
+          "wire_index": 6,
+          "x_px": 183.7967120053048,
+          "y_px": 469.0379340460288
+        }
+      ]
+    },
+    {
+      "file": "FILE0012",
+      "instance_number": 13,
+      "pixel_spacing_mm": 0.12,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        249.3584474885845,
+        250.49771689497717
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 289.73062864905955,
+          "y_px": 260.4047241674889
+        },
+        {
+          "wire_index": 3,
+          "x_px": 309.9470249551196,
+          "y_px": 317.81928967669944
+        },
+        {
+          "wire_index": 4,
+          "x_px": 253.3411152981514,
+          "y_px": 394.6415956397277
+        },
+        {
+          "wire_index": 5,
+          "x_px": 140.93795183645744,
+          "y_px": 410.8147126845758
+        },
+        {
+          "wire_index": 6,
+          "x_px": 35.00403519270266,
+          "y_px": 318.62794552894184
+        }
+      ]
+    },
+    {
+      "file": "FILE0013",
+      "instance_number": 14,
+      "pixel_spacing_mm": 0.07,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        250.0,
+        250.0
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 330.9720771134221,
+          "y_px": 248.27488638385285
+        },
+        {
+          "wire_index": 3,
+          "x_px": 380.30008410020866,
+          "y_px": 337.22703013051716
+        },
+        {
+          "wire_index": 4,
+          "x_px": 314.79896006857405,
+          "y_px": 473.88986915948317
+        }
+      ]
+    },
+    {
+      "file": "FILE0014",
+      "instance_number": 15,
+      "pixel_spacing_mm": 0.07,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        245.484076433121,
+        258.5987261146497
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 206.43907586809206,
+          "y_px": 199.75553524930865
+        },
+        {
+          "wire_index": 3,
+          "x_px": 246.0632126279698,
+          "y_px": 102.71683298022032
+        },
+        {
+          "wire_index": 4,
+          "x_px": 392.4299218838447,
+          "y_px": 59.04941695913055
+        }
+      ]
+    },
+    {
+      "file": "FILE0015",
+      "instance_number": 16,
+      "pixel_spacing_mm": 0.07,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        245.84434968017058,
+        258.25373134328356
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 225.03816046966733,
+          "y_px": 210.2680613284599
+        },
+        {
+          "wire_index": 3,
+          "x_px": 283.26138183112033,
+          "y_px": 124.55054099076523
+        },
+        {
+          "wire_index": 4,
+          "x_px": 439.3319613139041,
+          "y_px": 112.42070320712918
+        }
+      ]
+    },
+    {
+      "file": "FILE0016",
+      "instance_number": 17,
+      "pixel_spacing_mm": 0.08,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        246.04859335038364,
+        258.26342710997443
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 223.42084876518254,
+          "y_px": 303.2634843363362
+        },
+        {
+          "wire_index": 3,
+          "x_px": 136.086016723003,
+          "y_px": 290.32499070045776
+        },
+        {
+          "wire_index": 4,
+          "x_px": 81.09741877051961,
+          "y_px": 166.60064530737014
+        }
+      ]
+    },
+    {
+      "file": "FILE0017",
+      "instance_number": 18,
+      "pixel_spacing_mm": 0.08,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        232.0,
+        267.22222222222223
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 223.42084876518254,
+          "y_px": 326.7145040513659
+        },
+        {
+          "wire_index": 3,
+          "x_px": 133.66004916627583,
+          "y_px": 318.62794552894184
+        },
+        {
+          "wire_index": 4,
+          "x_px": 64.92430172567155,
+          "y_px": 198.13822354482386
+        }
+      ]
+    },
+    {
+      "file": "FILE0018",
+      "instance_number": 19,
+      "pixel_spacing_mm": 0.08,
+      "rows": 500,
+      "cols": 500,
+      "catheter_center_px": [
+        232.71428571428572,
+        267.42857142857144
+      ],
+      "unreadable": false,
+      "clicks": [
+        {
+          "wire_index": null,
+          "x_px": null,
+          "y_px": null
+        },
+        {
+          "wire_index": 2,
+          "x_px": 224.22950461742494,
+          "y_px": 319.43660138118423
+        },
+        {
+          "wire_index": 3,
+          "x_px": 132.85139331403343,
+          "y_px": 315.39332211997225
+        },
+        {
+          "wire_index": 4,
+          "x_px": 59.26371075997473,
+          "y_px": 198.13822354482386
+        }
+      ]
+    }
+  ]
+}
