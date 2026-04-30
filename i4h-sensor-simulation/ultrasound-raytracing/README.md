@@ -38,11 +38,14 @@ Instructions to build and run the examples in a docker environment can be found 
 
 ## Bare-Metal Installation
 
-1. Clone this repository:
+1. Clone this repository and open the **ultrasound-raytracing** package directory (the folder that contains this `README.md` and `pyproject.toml`):
+
    ```bash
    git clone https://github.com/isaac-for-healthcare/i4h-sensor-simulation.git
    cd i4h-sensor-simulation/ultrasound-raytracing
    ```
+
+   Some repository layouts nest that folder once more (e.g. `i4h-sensor-simulation/i4h-sensor-simulation/ultrasound-raytracing`); use the path where `pyproject.toml` is present.
 
 2. The required OptiX header files are fetched automatically by CMake from the
    open-source [optix-dev](https://github.com/NVIDIA/optix-dev) repository during the
@@ -74,6 +77,15 @@ Instructions to build and run the examples in a docker environment can be found 
    pip install -e .[all]
    ```
 
+   After installation, use the **same** `python` you used for `pip install -e` when running examples. Rebuilding with `pip install -e .` removes any leftover `raysim/ray_sim_python*.so` from another interpreter before linking, so editable installs stay aligned with your Python version.
+
+3b. **IVUS example meshes (included):** `examples/ivus_example.py` expects Wavefront meshes under `mesh/`. This repository ships `mesh/Cylinder.obj` plus `mesh/Cylinder_inner.obj` / `mesh/Cylinder_outer.obj` for the thick-wall option. To regenerate them (same defaults as the bundled files):
+
+   ```bash
+   python utils/phantom_maker.py cylinder --output mesh
+   python utils/phantom_maker.py cylinder --output mesh --cylinder-thick
+   ```
+
 4. Download mesh data:
    ```bash
    cd ultrasound-raytracing  # ensure you're in the correct directory
@@ -89,6 +101,10 @@ Instructions to build and run the examples in a docker environment can be found 
    > - In the [CMake setup file](./cmake/SetupCUDA.cmake), the default value for `CMAKE_CUDA_ARCHITECTURES` is set to `native`. This setting **may cause compilation failures** on systems with multiple NVIDIA GPUs that have different compute capabilities.
    >
    > - If you experience this issue, try specifying the GPU you want to use by setting the environment variable `export CUDA_VISIBLE_DEVICES=<selected device number>` before running `pip install`.
+   >
+   > - **CMake generator mismatch** (`Does not match the generator used previously`): remove the build directory and reinstall, e.g. `rm -rf build-release` then `pip install -e .` again (use the same generator / toolchain as your first successful configure, or delete `build-release` whenever you switch tools).
+   >
+   > - **`ImportError` / undefined Python symbols when importing `raysim`:** Usually a stale extension built for a different Python. Run `pip install -e .` again from this directory using the interpreter you run examples with; the build step clears old `ray_sim_python*.so` files before linking.
 
 5. Run examples
 
