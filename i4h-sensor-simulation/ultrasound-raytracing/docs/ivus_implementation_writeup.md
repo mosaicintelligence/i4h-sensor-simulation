@@ -620,6 +620,39 @@ buffer[offset] = fminf(fmaxf(buffer[offset], reject_palette), saturation_palette
 
 **Tier 1 acceptance after Pass 3b:** the Tier 1 evaluation script (`instrument-calibration/p035_visions/tier1_evaluation.py`) reports five PASSes (configuration round-trip A, configuration self-consistency B, log-compression mapping G with 0.0 palette error, TGC schedule H with 0.0 dB error, and the new gain-alignment diagnostic with bg landing at palette 47.3 vs the bench reference 46.2 — Δ = +0.19 dB). The remaining FAILs (axial PSF C, lateral PSF D, ring-down RMS E) are all attributable to the wire-vs-bg contrast gap: every wire saturates at `saturation_palette = 239`, so the −6 dB FWHM measurement is undefined and the PSF-ringdown shape RMS is dominated by saturation rather than ringdown shape. Test F (noise floor σ) remains N/A pending the additive-noise wiring deferred to Pass 4. The renderer-vs-bench wire-vs-bg contrast gap (~74 dB) is tracked separately in `instrument-calibration/p035_visions/calibration_delta.md` as the next blocking issue for closing C/D/E.
 
+### 11.10 Ring-down post-Hilbert + depth-uniformity test (Pass 4)
+
+Pass 3b shipped a calibrated PV .035 build that visually showed a "bright centre, dark middle, bright outer" radial pattern in anechoic regions. Pass 4 adds a quantitative diagnostic for that pattern (Tier 1 test I — depth uniformity in anechoic ROI) and uses it to root-cause two distinct effects:
+
+1. **Mysterious far-field rise (r ≈ 20 → 29 mm).** The simulator's anechoic mean palette grew by ~+50 from r ≈ 20 mm to the buffer edge at r ≈ 29 mm, with the rise correlated with `ring_down.enabled = true` even though `extent_mm = 3.0`. Diagnostic with shared scatter texture isolated it: cuFFTDx's Hilbert is a length-N (= 4096) cyclic FFT, so any inner-zone transient gets smeared across the entire buffer via spectral side lobes. Predicted leakage envelope at sample 4000 (computed offline by FFT-Hilberting a zero-padded copy of the ring-down template): ~4.1 envelope-amp, equivalent to ~+68 palette at the calibrated `log_multiplier = 112.3`. Observed in-pipeline excess matched within a few palette.
+
+   **Fix.** Move the ring-down add stage to **post-Hilbert** (`raytracing_ultrasound_simulator.cpp` §2.5, between envelope detection and log compression). The bench template is already in envelope-amp units (the YAML loader applies `amp = 10^(palette/log_mult) - 1` with the speckle-floor subtraction), so adding it to the envelope buffer is the literal mathematical operation we want — "the catheter contributes this envelope on top of the scattering envelope". The cuFFTDx Hilbert now sees only the broadband scatter signal and there is no transient to smear. The ring-down `extent_mm` truncation is honoured exactly (samples past `extent_samples` are untouched).
+
+   Knock-on: the bisection in `derive_gain_db.py` was using a calibrated render that previously included the Hilbert-leakage bg lift; with that lift gone, the calibrated `gain_db` had to grow by **+12.19 dB** (132.83 → 145.02) to keep the post-clamp anechoic mean palette at the bench's 46.2 reference. Test I drops from RMS = 31.4 → 21.4 → ~30 palette across the chain (the third number is after the gain re-fit; max |Δ| now sits in the bright shoulder at r ≈ 4-7 mm rather than the spurious far-field rise).
+
+2. **Bright shoulder at r ≈ 4-7 mm — root-caused but not yet fixed (Pass 5).** Pure-scatter renders (ring-down OFF, scatter ON) show a near-field palette peak (mean ≈ 100-200, vs bench ~33-44) that the bench does not. A controlled diagnostic comparing 2D-depth-dependent vs 1D-constant lateral PSF (probe `element_radius=0` falls back to 1D const) showed the **2D depth-dependent lateral PSF is the source**:
+
+   - The 1D-constant lateral PSF gives mean palette ≈ 18-45 across all depths — consistent with the bench's 33-44 floor.
+   - The 2D depth-dependent PSF (`update_psfs` Gaussian-beam model) produces wild depth-dependent oscillation (palette 14 → 200 over ~1 mm intervals in r ∈ [0, 7] mm) that converges to the 1D fallback past r ≈ 12 mm.
+
+   Three sub-issues identified in the implementation (`csrc/cuda/cuda_algorithms.cu` `convolve_columns_depth_dependent_kernel` and `csrc/core/raytracing_ultrasound_simulator.cpp` `update_psfs`):
+
+   1. **Non-cyclic angular convolution.** IVUS angles wrap 360° but the convolution truncates at `index.y = 0` and `index.y = num_scanlines - 1` (lines 106-107). Should be cyclic (`(index.y + k + size.y) % size.y`).
+   2. **`kernel_radius = 64` too small for near-field beam.** At r = 1 mm the Gaussian σ = 113 angular bins (wider than the 64-bin half-window), so the kernel is severely truncated and the sum=1 normalization fails to renormalize against the lost mass.
+   3. **L1-normalized kernel makes envelope amplitude depth-dependent.** For random scatter, the envelope mean of a kernel-convolved zero-mean RF is proportional to the kernel's L2 norm. With sum=1 normalization, L2 ∝ 1/√σ → small-σ depths see disproportionately larger envelope amplitude than large-σ depths. Should normalize by L2 to make envelope amp depth-invariant for random-bg scatter.
+
+   Pass 5 should fix all three (one PR, requires re-running `derive_gain_db.py` since the bg statistics will shift again).
+
+**Tier 1 test I — depth uniformity in anechoic ROI.** New diagnostic in `tier1_evaluation.py` that:
+- Renders N anechoic frames with the calibrated YAML (ring-down ON since that's the deployed config).
+- Computes per-radius mean / median / std palette across angles + frames.
+- Reads bench polar frames (gain 54, D = 60 mm, 5 frames) and masks wires by per-radius p70 clip; takes mean across frames.
+- Compares sim vs bench in the band `r ∈ [max(extent_mm + 1, 4), min(0.97 · t_far_mm, 29)]` mm.
+- Pass criterion: RMS(sim − bench) ≤ 10 palette **AND** sim peak-to-trough span ≤ 1.5 × bench span.
+- Saves figure `tier1_results/figures/depth_uniformity.png` and persists per-radius profiles to `tier1_results/arrays/`.
+
+After Pass 4 with the re-derived `gain_db = +145.02`: bias is essentially zero (sim mean tracks bench mean within ±10 palette over r ∈ [10, 29] mm), but the bright shoulder at r ≈ 4-7 mm dominates the RMS (max |Δ| ≈ 100-120 palette there). Test I FAILS until the near-field scatter peak and the missing additive noise (test F) are addressed in Pass 5.
+
 ---
 
 ## 12. Potential next steps and modeling gaps

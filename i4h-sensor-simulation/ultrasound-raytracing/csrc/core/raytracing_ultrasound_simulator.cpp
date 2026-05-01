@@ -540,21 +540,18 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     write_image(d_scanlines.get(), plane_size, "debug_images/2_tgc.png");
   }
 
-  // 1.55 Reference gain (Pass 3b: applied PRE-ring-down)
+  // 1.55 Reference gain (Pass 3b)
   //
   // Apply the calibrated reference-gain scalar to the post-TGC RF buffer:
   //   rf <- rf * 10^(gain_db / 20)
   // Default `gain_db == 0.f` is a no-op; the CUDA helper short-circuits on
   // scale==1.f so default callers see no overhead.
   //
-  // Order matters: this stage MUST run before ring-down injection. Ring-down
-  // amplitude is specified in the YAML in **bench-calibrated envelope units**
-  // (i.e. amp == 46.4 means peak displays at log10(46.4)*log_multiplier
-  // palette in the final image), so the renderer has to scale the raytraced
-  // scattering UP to bench scale BEFORE adding ring-down — otherwise the
-  // gain_db scalar would also amplify the already-bench-scale ring-down and
-  // saturate the entire image. Linearity of |Hilbert(s*x)| = s*|Hilbert(x)|
-  // means scaling RF here is equivalent to scaling envelope post-Hilbert.
+  // The pre-Hilbert location is mathematically equivalent to scaling the
+  // post-Hilbert envelope by the same factor (linearity of
+  // |H(s*x)| = s*|H(x)|), so the analytical derivation in
+  // `derive_gain_db.py` is unaffected. Doing it here avoids a separate kernel
+  // launch on the envelope buffer.
   //
   // This stage lumps two physically distinct effects (see SimParams::gain_db
   // doc): the bench's slider gain offset and the renderer-specific reference-
@@ -570,14 +567,36 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     }
   }
 
-  // 1.6 Ring-down injection (Pass 2)
+  // 2. Envelope detection
+  {
+    CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Envelope detection", sim_params.stream);
+
+    cuda_algorithms_->hilbert_row(d_scanlines.get(), plane_size, sim_params.stream);
+  }
+  if (sim_params.write_debug_images) {
+    write_image(d_scanlines.get(), plane_size, "debug_images/3_envelope_detection.png");
+  }
+
+  // 2.5 Ring-down injection (Pass 4)
   //
-  // Adds the calibrated catheter ring-down residual to every A-line between TGC
-  // and envelope detection. Off by default (`sim_params.ring_down.enabled ==
-  // false` => no signal at all, i.e. quiet lumen). When on, the waveform is
-  // truncated past `extent_mm` (converted to sample count via the sampling
-  // frequency and the round-trip speed of sound) and added pre-Hilbert so the
-  // existing envelope detection + log compression handle the result naturally.
+  // Adds the calibrated catheter ring-down residual on top of the envelope
+  // buffer (i.e. POST-Hilbert). Off by default (`ring_down.enabled == false`
+  // => no signal added, i.e. silent lumen). The waveform is truncated past
+  // `extent_mm` so it contributes to the inner zone only.
+  //
+  // Why post-Hilbert (changed from Pass 2's pre-Hilbert location): the
+  // calibrated bench template is delivered in envelope-amp units (the YAML
+  // loader applies the palette->envelope-amp conversion via
+  // amp = 10^(palette/log_mult) - 1 with the speckle floor subtracted), so
+  // adding it directly to the envelope buffer is the literal mathematical
+  // operation we want — "the catheter contributes this envelope on top of
+  // the scattering envelope". Adding it pre-Hilbert (Pass 2's location) was
+  // a category error: cuFFTDx's Hilbert is a length-N cyclic FFT, which
+  // smears any inner-zone transient across the *entire* buffer via spectral
+  // side lobes. For the PV .035 ring-down (peak envelope ~45 over 410
+  // samples ≈ 3 mm) the cyclic-Hilbert wraparound contributes ~+50 palette
+  // at r ≈ 29 mm even though `extent_mm = 3` should bound the influence to
+  // the inner 3 mm. Test I (depth uniformity) caught this directly.
   //
   // Provenance of the calibration numbers consumed here is in
   // `instrument-calibration/p035_visions/volcano_s5i.yaml` (E6 / E7) and the
@@ -674,23 +693,9 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
                                 ring_down_sample_count_, /*scale=*/1.f, sim_params.stream);
     }
     if (sim_params.write_debug_images) {
-      write_image(d_scanlines.get(), plane_size, "debug_images/2b_ringdown.png");
+      write_image(d_scanlines.get(), plane_size, "debug_images/3b_ringdown.png");
     }
   }
-
-  // 2. Envelope detection
-  {
-    CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Envelope detection", sim_params.stream);
-
-    cuda_algorithms_->hilbert_row(d_scanlines.get(), plane_size, sim_params.stream);
-  }
-  if (sim_params.write_debug_images) {
-    write_image(d_scanlines.get(), plane_size, "debug_images/3_envelope_detection.png");
-  }
-
-  // (Pass 3b: reference gain stage moved to step 1.55, before ring-down.
-  //  See the long comment there for why ring-down has to be injected on the
-  //  bench-scale RF buffer rather than on the raw raytracer output.)
 
   // 3. Log compression
   {

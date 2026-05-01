@@ -169,24 +169,30 @@ processing:
   # whether the compression curve is signal-level dependent (most
   # likely it is). Re-fit after E7 with a calibrated reflector.
   #
-  # Pass 3b — gain_db is wired (raysim/config.py:ProcessingConfig.gain_db,
-  # SimParams::gain_db). The value below is the *renderer-specific* offset
-  # that puts the OptiX/CUDA backend's RF amplitudes onto the bench's
-  # calibrated scale at slider 54. It is applied PRE-Hilbert and PRE-
-  # ring-down injection (see raytracing_ultrasound_simulator.cpp §1.55)
-  # so that ring-down's `amplitude` field can stay specified in
-  # bench-calibrated envelope units without being double-scaled.
+  # Pass 3b / Pass 4 — gain_db is wired (raysim/config.py:ProcessingConfig
+  # .gain_db, SimParams::gain_db). The value below is the *renderer-
+  # specific* offset that puts the OptiX/CUDA backend's RF amplitudes onto
+  # the bench's calibrated scale at slider 54. It is applied PRE-Hilbert
+  # (see raytracing_ultrasound_simulator.cpp §1.55).
   #
   # Calibration target: the bench water-scatter background mean palette
   # (46.2 at slider 54, E5). We iterate gain_db in a bisection search so
   # the post-clamp post-pipeline mean palette of an anechoic lumen render
   # matches the bench. A pure-amplitude derivation (gain_db_bg_amp_pure)
-  # systematically over-shoots by ~24 dB because the simulator's bg
-  # distribution is wider than the bench's (Rayleigh log10 std = 31
-  # palette vs bench 20.3) — the long left tail crashes through the
-  # reject_palette = 11 floor and the clamp lifts the post-clamp mean by
-  # ~33 palette. The refined value puts the rendered bg at the bench
-  # reference within tolerance.
+  # systematically over-shoots because the simulator's bg distribution is
+  # wider than the bench's (Rayleigh log10 std = 31 palette vs bench 20.3)
+  # — the long left tail crashes through the reject_palette = 11 floor
+  # and the clamp lifts the post-clamp mean. The refined value puts the
+  # rendered bg at the bench reference within tolerance.
+  #
+  # Pass 4 ring-down move (post-Hilbert): Pass 3b put gain_db pre-Hilbert
+  # AND pre-ring-down so the ring-down envelope (already in bench scale)
+  # wasn't re-amplified. Pass 4 moved ring-down to AFTER Hilbert because
+  # cuFFTDx's length-N cyclic FFT was smearing inner-zone ring-down across
+  # the full buffer (~+50 palette spurious lift at r ≈ 29 mm — see
+  # raytracing_ultrasound_simulator.cpp §2.5 and tier1 test I). Removing
+  # that spurious bg lift forced gain_db to grow by ~+12 dB to keep the
+  # post-clamp anechoic mean at palette 46.2.
   #
   # Wire-vs-bg contrast: the simulator's OptiX backend produces
   # ~+100 dB wire/bg contrast in the rendered envelope vs the bench's
@@ -205,12 +211,12 @@ processing:
   #   gain_db_bg_amp_pure  = 20 * log10(2.58 / 3.56e-8) = +157.20 dB
   #     (over-shoots due to clamp lift)
   #   gain_db_calibrated   = bisection match of post-clamp mean palette
-  #                         to 46.2 = +132.83 dB
+  #                         to 46.2 = +145.02 dB (Pass 4)
   # IQR across the 7 unsaturated bench wires (informational, the wire-
   # target alternative): median +83.6 dB.
   # To switch sliders, add (slider - 54) dB per the bench gain LUT
   # (gain_lut.json -> gain_db_table).
-  gain_db: 132.83                         # E7 — renderer offset; post-clamp bg mean palette match (derive_gain_db.py, target = water_background_post_clamp_mean_palette)
+  gain_db: 145.02                         # Pass 4 — renderer offset; post-clamp bg mean palette match after ring-down moved post-Hilbert
   # Pass 3b — display window in palette units. The post-log palette is
   # already in absolute palette units (because log_compression uses the
   # calibrated log_multiplier / log_floor), so the display window only has
