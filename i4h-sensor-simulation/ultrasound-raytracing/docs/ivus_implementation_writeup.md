@@ -530,7 +530,34 @@ pending_fields() (Future, not yet wired):
 
 ### 11.6 What's still on the to-do list
 
-Pass 1 deliberately did not touch any new physics. The Pass 2 work item is the dynamic range / reject mapping in log compression and the **ring-down injection** model — see §12.2 (catheter / ring-down). Noise (§12.4) is captured in the YAML schema (`processing.noise.{type,sigma}`) but intentionally deferred until after ring-down so that we can measure noise on a ring-down-subtracted simulator. `_FUTURE_PATHS` in `raysim/config.py` is the live source of truth for what's still pending.
+Pass 1 deliberately did not touch any new physics. **Pass 2 (§11.7) lands the ring-down injection stage and the dynamic-range / reject display window**; only `gain_db`, `compression_lut`, and `noise.{type,sigma}` remain in `_FUTURE_PATHS`. Noise is intentionally deferred until after ring-down so we can measure noise on a ring-down-subtracted simulator rather than fitting a number that conflates noise with residual catheter signal. `_FUTURE_PATHS` in `raysim/config.py` is the live source of truth for what's still pending.
+
+### 11.7 Configuration-driven processing pipeline (Pass 2)
+
+Pass 2 adds the first batch of new physics on top of Pass 1's plumbing: a calibrated **ring-down injector** that reproduces the catheter's near-field signature, and a **post-log display window** that reproduces the device's reject / saturation palette. Both are off by default so default `SimParams()` continues to be byte-identical to pre-Pass-1 (validated end-to-end: `max abs diff = 0` against the pre-Pass-1 build of the same example).
+
+**Implementation pointers (Pass 2 surface area):**
+
+- C++ surface: [include/raysim/core/raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (new public `struct RingDownParams`; `SimParams::ring_down`, `SimParams::dynamic_range_db`, `SimParams::reject_db`).
+- C++ pipeline: [csrc/core/raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp) (stage **1.6 Ring-down injection** between TGC and envelope detection; stage **3.5 Display window** after log compression).
+- CUDA helpers: [csrc/cuda/cuda_algorithms.{hpp,cu}](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu) — new `add_row` (broadcast vector add along depth) and `apply_display_window` (clamp + linear remap in dB-space).
+- Python bindings: [csrc/python/raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/python/raysim_bindings.cpp) (`RingDownParams` class with `def_readwrite` for every field including a numpy-backed `waveform`; `SimParams.ring_down / dynamic_range_db / reject_db`).
+- Python config: [raysim/config.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/raysim/config.py) (`RingDownConfig` gained `enabled`, `template_pitch_mm`, `template_speckle_floor_palette`; `to_sim_params` loads the .npy template, subtracts the speckle floor, converts palette → envelope amp, and resamples to the simulator's depth-sample pitch).
+- Calibrated YAML: [`instrument-calibration/p035_visions/volcano_s5i.yaml`](../../../instrument-calibration/p035_visions/volcano_s5i.yaml) (`ring_down.enabled: true`, `template_pitch_mm: 0.12`, `template_speckle_floor_palette: 45.0`).
+
+**Where things go in `simulate()`:** ring-down is added pre-Hilbert (between TGC at step 1.5 and envelope detection at step 2). The calibrated template is stored on the host as `std::vector<float>` in envelope-amplitude units, uploaded once per change, and added row-wise via `add_row` so the existing Hilbert + log-compression handle the resulting peak shape naturally. Cache invalidation keys on (`decay`, `amplitude`, `extent_mm`, `buffer_size`, and the host pointer + size of the measured waveform) so callers that swap templates frame-to-frame get a fresh upload. The display window is applied post-log-compression and pre-median-clip (so the median clip filter still operates on a reasonable local window). Both stages skip themselves when their toggle is off (`ring_down.enabled == false` and `dynamic_range_db == 0`), so default callers see no change.
+
+**Sample-pitch convention.** The OptiX raygen maps the radial range `[0, t_far_mm]` onto `buffer_size` samples (`offset = round(t / t_far * (buffer_size - 1))` in `optix_trace.cu`), so the spatial pitch in the scanlines is `t_far / buffer_size` mm/sample — *not* `c / SAMPLING_FREQ / 2`. Both the C++ ring-down stage and the Python loader's resampler use this convention so a calibration template peak at 1.8 mm in the file lands at 1.8 mm in the simulator output (verified end-to-end: median-over-angle radial profile peaks at 1.787 mm for the PV .035 calibrated template, matching the calibrated 1.80 mm). The pre-existing `create_piece_wise_tgc` path uses the legacy `SAMPLING_FREQ`-based convention for its own depth → sample math and is left alone (a separate alignment cleanup).
+
+**Acceptance check (PV .035 calibrated YAML against the cylinder phantom):**
+
+| metric                                | expected (calibration / device)             | observed                                  |
+|---------------------------------------|---------------------------------------------|-------------------------------------------|
+| Inner ~3 mm peak depth (ring_down ON) | ~1.80 mm (E6, calibration_delta.md)         | **1.787 mm** (peak palette 227.9)         |
+| Frame palette range (display window)  | reject ≈ 11, saturation ≈ 239 (E7)          | **[~11, 227.9]** with calibrated dr/reject |
+| `default SimParams()` regression      | bit-identical to Pass 1                     | **max abs diff = 0** (vs Pass 1 reference) |
+
+**What's intentionally not in Pass 2:** noise (deferred per the calibration plan — measurable only on a ring-down-subtracted simulator), `gain_db` (kept informational; per-frame gain is applied by scaling the ring-down `amplitude` and the speckle calibration externally), `compression_lut` (no calibrated LUT yet — full E7 sweep needed). All three remain in `_FUTURE_PATHS`.
 
 ---
 
@@ -548,9 +575,9 @@ Scattering strength is modulated by material σ and attenuation along the path, 
 
 There is **no model of the catheter or sheath**: no near-field ring-down, guided waves, or fixed echo from the housing. Real IVUS has a dead zone and strong echo from the catheter; its absence can make the simulated lumen look “too clean” near the probe.
 
-**Schema status (Pass 1):** The YAML schema already carries the parameters needed for a measured-template ring-down injection — `processing.ring_down.{amplitude, extent_mm, decay, waveform_path, subtract_reference}` — and the calibration pipeline emits a measured waveform template (`P_035_PointScatter/derived/ringdown/...`) for the PV .035 catheter. These appear in `pending_fields()` because the C++ side is not yet implemented.
+**Status (Pass 2 — implemented):** The ring-down injector in `simulate()` (stage 1.6, between TGC and envelope detection) now consumes the calibrated `processing.ring_down.{enabled, amplitude, extent_mm, decay, waveform_path, template_pitch_mm, template_speckle_floor_palette}` block. The `IvusSimConfig` loader resolves the `.npy` template relative to the workspace root, subtracts the speckle floor, converts palette → envelope amplitude using `log_multiplier`, and resamples from the device's display pitch (0.12 mm/sample for PV .035) onto the simulator's `t_far / buffer_size` pitch. With `enabled=false` the simulator emits no ring-down signal at all (silent lumen); with `enabled=true` it adds the residual that survives the device's Acoustic Reference subtraction. See §11.7 for the full implementation table and the acceptance numbers (peak at 1.787 mm vs the calibrated 1.80 mm).
 
-**Next step (Pass 2):** Introduce a configurable ring-down stage in `simulate()` that adds (or subtracts) the measured waveform template before envelope detection, with the on/off semantics agreed in the calibration plan: `enabled=false` ⇒ truly no ring-down signal, `enabled=true` ⇒ add the calibrated residual that survives the device's reference subtraction. A simple dead-zone mask for the inner few hundred microns should land alongside it.
+**Outstanding for ring-down:** the `subtract_reference` field is informational only (the device already does the AR subtraction; we model the residual). A simple dead-zone mask for the inner few hundred microns is not yet wired and may not be needed once the calibrated waveform template is doing the work; revisit if the inner-most ~0.2 mm shows residual artifacts in the comparison frames.
 
 ### 12.3 Element directivity at transmit
 

@@ -128,6 +128,46 @@ class CUDAAlgorithms {
   void mul_row(CudaMemory* buffer, uint2 size, CudaMemory* multiplicator, cudaStream_t stream);
 
   /**
+   * Add a per-depth vector to every row of the buffer in place
+   * (`buffer[y, x] += scale * addend[x]` for x < addend_size, else 0).
+   *
+   * Used by the ring-down injection stage to add a depth-only waveform to every
+   * angular A-line between TGC and envelope detection. `addend_size` may be
+   * smaller than `size.x` (samples past the addend are left untouched).
+   *
+   * @param buffer [in,out] Row-major buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents in samples.
+   * @param addend [in] Per-depth addend, length addend_size <= size.x.
+   * @param addend_size [in] Number of valid samples in `addend`.
+   * @param scale [in] Multiplier applied before adding.
+   * @param stream [in] CUDA stream.
+   */
+  void add_row(CudaMemory* buffer, uint2 size, CudaMemory* addend, uint32_t addend_size,
+               float scale, cudaStream_t stream);
+
+  /**
+   * In-place display window after log compression: clamp to
+   * `[reject_db, reject_db + dynamic_range_db]` and remap that interval to
+   * `[0, log_multiplier * dynamic_range_db / 20]` (matches the previous
+   * `log_multiplier * log10(amp)` mapping for the surviving range).
+   *
+   * Reproduces the device's reject / saturation palette. When `dynamic_range_db
+   * <= 0` the call is a no-op (the simulator falls back to the historical
+   * "pure log compression" output range), which is what default callers want.
+   *
+   * @param buffer [in,out] Row-major buffer of shape (size.y, size.x) in dB.
+   * @param size [in] Buffer extents.
+   * @param reject_db [in] Display floor in dB. Inputs <= reject_db map to 0.
+   * @param dynamic_range_db [in] Width of the displayed window in dB.
+   * @param log_multiplier [in] Same `log_multiplier` used by `log_compression`;
+   *                            sets the output palette scale.
+   * @param stream [in] CUDA stream.
+   */
+  void apply_display_window(CudaMemory* buffer, uint2 size, float reject_db,
+                            float dynamic_range_db, float log_multiplier,
+                            cudaStream_t stream);
+
+  /**
    * Apply hilbert transform to each row.
    *
    * @param buffer  [in]
@@ -217,6 +257,8 @@ class CUDAAlgorithms {
   const CudaLauncher mean_planes_launcher_;
   const CudaLauncher log_compression_launcher_;
   const CudaLauncher mul_rows_launcher_;
+  const CudaLauncher add_row_launcher_;
+  const CudaLauncher display_window_launcher_;
   const CudaLauncher median_clip_launcher_;
   const CudaLauncher scan_convert_curvilinear_launcher_;
   const CudaLauncher scan_convert_linear_launcher_;

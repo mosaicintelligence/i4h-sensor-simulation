@@ -393,6 +393,53 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_property_readonly("element_radius_mm", &raysim::IVUSProbe::get_element_radius_mm)
       .def_property_readonly("focal_length_mm", &raysim::IVUSProbe::get_focal_length_mm);
 
+  // Pass 2 — bind RingDownParams so callers can drive the ring-down injection
+  // stage from Python (and from the YAML loader in raysim/config.py).
+  py::class_<raysim::RingDownParams>(m, "RingDownParams", R"pbdoc(
+        Calibrated catheter ring-down injection parameters.
+
+        Attributes:
+            enabled: Toggle. False (default) => no ring-down signal at all.
+            amplitude: Envelope amplitude at the simulator reference gain. For
+                decay == "measured", this is interpreted as the desired peak of
+                the supplied waveform (the loader scales the template so its
+                peak equals this amplitude); 0 keeps the template as-is.
+            extent_mm: Hard cutoff in radial mm. Samples past this depth are
+                untouched.
+            decay: One of "exponential", "hanning", "measured".
+            waveform: 1D float32 array of envelope-amplitude samples (only used
+                when decay == "measured"). The simulator slices/zeros it to the
+                computed sample count.
+    )pbdoc")
+      .def(py::init<>())
+      .def_readwrite("enabled", &raysim::RingDownParams::enabled)
+      .def_readwrite("amplitude", &raysim::RingDownParams::amplitude)
+      .def_readwrite("extent_mm", &raysim::RingDownParams::extent_mm)
+      .def_readwrite("decay", &raysim::RingDownParams::decay)
+      .def_property(
+          "waveform",
+          [](const raysim::RingDownParams& self) {
+            return py::array_t<float>(static_cast<py::ssize_t>(self.waveform.size()),
+                                       self.waveform.data());
+          },
+          [](raysim::RingDownParams& self, py::array_t<float, py::array::c_style |
+                                                                py::array::forcecast> array) {
+            auto buf = array.request();
+            if (buf.ndim != 1) {
+              throw std::runtime_error("RingDownParams.waveform must be 1-D");
+            }
+            const float* ptr = static_cast<const float*>(buf.ptr);
+            self.waveform.assign(ptr, ptr + buf.shape[0]);
+          },
+          "1D float32 array; envelope-amplitude samples for decay == 'measured'.")
+      .def("__repr__", [](const raysim::RingDownParams& rd) {
+        return std::string("RingDownParams(enabled=") + (rd.enabled ? "True" : "False") +
+               ", amplitude=" + std::to_string(rd.amplitude) +
+               ", extent_mm=" + std::to_string(rd.extent_mm) +
+               ", decay='" + rd.decay +
+               "', waveform.size=" + std::to_string(rd.waveform.size()) + ")";
+      });
+
   // Bind TgcControlPoint (depth_cm, gain_db) so Python callers can build a TGC schedule
   // straight from a config file. A list/empty of these is exposed on SimParams.
   py::class_<raysim::TgcControlPoint>(m, "TgcControlPoint", R"pbdoc(
@@ -495,6 +542,20 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite("disable_scatter",
                      &raysim::RaytracingUltrasoundSimulator::SimParams::disable_scatter,
                      "If true, skip scatter accumulation entirely")
+      .def_readwrite(
+          "ring_down",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::ring_down,
+          "Pass 2: calibrated ring-down injection (RingDownParams). Enabled=False "
+          "by default (truly silent lumen).")
+      .def_readwrite(
+          "dynamic_range_db",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::dynamic_range_db,
+          "Pass 2: post-log display window width in dB. 0 (default) disables the "
+          "stage so default callers keep the historical pure-log mapping.")
+      .def_readwrite(
+          "reject_db",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::reject_db,
+          "Pass 2: reject floor in dB (display window). Inputs <= reject_db map to 0.")
       .def_property(
           "b_mode_size",
           [](raysim::RaytracingUltrasoundSimulator::SimParams& self) {

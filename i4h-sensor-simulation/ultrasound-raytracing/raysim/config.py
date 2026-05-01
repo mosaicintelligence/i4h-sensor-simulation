@@ -106,11 +106,33 @@ class NoiseConfig:
 
 @dataclass
 class RingDownConfig:
+    # When False (the default), the simulator emits no ring-down signal at all.
+    # When True, it adds the calibrated residual that survives the device's
+    # Acoustic Reference subtraction (per the s5i private tag 0x00291006).
+    # Default is False so existing configs that omit `ring_down` keep their
+    # silent-lumen behavior.
+    enabled: bool = False
     amplitude: float = 0.0
     extent_mm: float = 0.5
     decay: str = "exponential"  # exponential | hanning | measured
     waveform_path: Optional[str] = None
     subtract_reference: bool = True
+    # Pitch (mm per sample) of the file at `waveform_path`. Calibration
+    # templates are typically saved at the device's *display* pitch (e.g.
+    # 0.12 mm/pixel for the PV .035), which is much coarser than the
+    # simulator's RF rate (c / fs / 2 ≈ 0.0193 mm/sample at 40 MHz). The
+    # loader linearly resamples the template from this pitch onto the sim
+    # grid before handing it to SimParams. Set to None (default) to assume
+    # the template is already at the simulator's sample pitch.
+    template_pitch_mm: Optional[float] = None
+    # Palette value to subtract from the loaded template before converting
+    # palette → envelope amplitude. The calibrated PV .035 template is the
+    # median over angle of a ring-down ROI, so the baseline (~speckle floor)
+    # represents the device's no-signal value, not real ring-down energy.
+    # Subtracting it makes the "absent ring-down" parts of the template map
+    # to amp ≈ 0 instead of a constant background. Default 0.0 = no
+    # subtraction (matches a synthetic template with a true zero baseline).
+    template_speckle_floor_palette: float = 0.0
 
 
 @dataclass
@@ -125,8 +147,13 @@ class ProcessingConfig:
     median_clip: MedianClipConfig = field(default_factory=MedianClipConfig)
     # --- Future ---
     gain_db: float = 0.0
-    dynamic_range_db: float = 60.0
-    reject_db: float = -80.0
+    # 0.0 is the "disabled" sentinel for both display-window knobs (matches the
+    # SimParams default after Pass 2 wiring): when dynamic_range_db == 0 the
+    # post-log display-window stage is skipped entirely so YAMLs that omit these
+    # fields keep the historical pure-log palette mapping. Calibrated configs
+    # set both to non-zero (e.g. PV .035: dynamic_range_db=40.6, reject_db=-40.6).
+    dynamic_range_db: float = 0.0
+    reject_db: float = 0.0
     compression_lut: Optional[str] = None
     noise: NoiseConfig = field(default_factory=NoiseConfig)
     ring_down: RingDownConfig = field(default_factory=RingDownConfig)
@@ -162,16 +189,14 @@ _FUTURE_PATHS: tuple[str, ...] = (
     "probe.synthetic_aperture",
     "sim.sampling_freq_mhz",
     "processing.gain_db",
-    "processing.dynamic_range_db",
-    "processing.reject_db",
     "processing.compression_lut",
     "processing.noise.type",
     "processing.noise.sigma",
-    "processing.ring_down.amplitude",
-    "processing.ring_down.extent_mm",
-    "processing.ring_down.decay",
-    "processing.ring_down.waveform_path",
-    "processing.ring_down.subtract_reference",
+    # Pass 2 wired the ring-down stage and the dynamic-range / reject display
+    # window through SimParams, so those rows have been removed from this
+    # list. `ring_down.subtract_reference` is informational only (the device
+    # already does the subtraction; we model the residual) and stays out of
+    # the wiring.
 )
 
 # Likewise: Config rows that are in the schema but not yet exposed via SimParams
@@ -195,6 +220,10 @@ class IvusSimConfig:
     sim: SimConfig = field(default_factory=SimConfig)
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     materials: list[MaterialConfig] = field(default_factory=list)
+    # Path the config was loaded from (set by from_yaml/from_json); used to
+    # resolve workspace-relative asset paths like ring_down.waveform_path.
+    # Excluded from to_dict() / dataclass equality below.
+    source_path: Optional[Path] = field(default=None, repr=False, compare=False)
 
     # ---- Constructors ------------------------------------------------------
 
@@ -216,17 +245,52 @@ class IvusSimConfig:
             ) from exc
         with open(path, "r") as f:
             data = yaml.safe_load(f) or {}
-        return cls.from_dict(data)
+        cfg = cls.from_dict(data)
+        cfg.source_path = Path(path).resolve()
+        return cfg
 
     @classmethod
     def from_json(cls, path: str | Path) -> "IvusSimConfig":
         with open(path, "r") as f:
-            return cls.from_dict(json.load(f))
+            cfg = cls.from_dict(json.load(f))
+        cfg.source_path = Path(path).resolve()
+        return cfg
 
     # ---- Serialization -----------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # `source_path` is loader-only metadata; it should never be round-tripped
+        # into a written config (and `Path` is not JSON-serializable).
+        d.pop("source_path", None)
+        return d
+
+    # ---- Path resolution ---------------------------------------------------
+
+    def _resolve_asset_path(self, p: str | Path) -> Path:
+        """Resolve `p` (typically from a YAML field like ring_down.waveform_path).
+
+        Resolution rules, in order:
+          1. Absolute path -> returned unchanged.
+          2. If the config was loaded from disk and the loader can find a
+             "workspace root" by walking parents of `source_path` until a
+             sibling directory named `instrument-calibration` exists, resolve
+             relative to that workspace root. This is what calibrated YAMLs
+             expect (paths like `P_035_PointScatter/derived/...`).
+          3. Otherwise resolve relative to `source_path`'s parent.
+          4. Last resort: relative to current working directory.
+        """
+        path = Path(p)
+        if path.is_absolute():
+            return path
+        if self.source_path is not None:
+            yaml_dir = self.source_path.parent
+            for ancestor in (yaml_dir, *yaml_dir.parents):
+                candidate = ancestor / "instrument-calibration"
+                if candidate.is_dir():
+                    return (ancestor / path).resolve()
+            return (yaml_dir / path).resolve()
+        return Path.cwd() / path
 
     def to_yaml(self, path: str | Path) -> None:
         try:
@@ -346,6 +410,95 @@ class IvusSimConfig:
         # forward whatever the user asked for.
         params.scattering_resolution_mm = float(proc.scattering_resolution_mm)
         params.scatter_integral_scale = float(proc.scatter_integral_scale)
+
+        # ---- Pass 2: ring-down injection ------------------------------------
+        # Off by default (RingDownConfig.enabled = False) => no signal at all.
+        # When enabled and decay == "measured", load the palette template from
+        # `waveform_path` and convert to envelope amplitude using the calibrated
+        # log_multiplier (cf. volcano_s5i.yaml: `amp = 10^(palette / log_mult)`).
+        rd = proc.ring_down
+        params.ring_down.enabled = bool(rd.enabled)
+        params.ring_down.amplitude = float(rd.amplitude)
+        params.ring_down.extent_mm = float(rd.extent_mm)
+        params.ring_down.decay = str(rd.decay)
+        if rd.enabled and rd.decay == "measured" and rd.waveform_path:
+            try:
+                import numpy as np
+            except ImportError as exc:  # pragma: no cover - numpy is a hard dep
+                raise ImportError(
+                    "numpy is required to load measured ring-down templates."
+                ) from exc
+            wf_path = self._resolve_asset_path(rd.waveform_path)
+            if not wf_path.is_file():
+                raise FileNotFoundError(
+                    f"Ring-down waveform template not found: {wf_path} "
+                    f"(from ring_down.waveform_path={rd.waveform_path!r})"
+                )
+            palette = np.load(wf_path).astype(np.float32, copy=False)
+            if palette.ndim != 1:
+                raise ValueError(
+                    f"Ring-down waveform must be 1-D; got shape {palette.shape} from {wf_path}."
+                )
+            log_mult = float(proc.log_multiplier)
+            if log_mult <= 0.0:
+                raise ValueError(
+                    "Ring-down: log_multiplier must be > 0 to convert palette template to amplitude."
+                )
+
+            # Subtract the speckle / reject floor so "no ring-down" samples map
+            # to amp 0 instead of a constant background. Clip to >= 0 so floor-
+            # clipped samples (which read below the device's reject palette)
+            # don't produce phantom signal.
+            palette_excess = np.maximum(
+                palette - float(rd.template_speckle_floor_palette), 0.0
+            ).astype(np.float32, copy=False)
+
+            # Convert the palette excess to envelope-amplitude units. After this
+            # conversion any sample where palette_excess == 0 (no ring-down at
+            # this depth) produces amp = 10^0 = 1. We *want* those samples to
+            # contribute zero, so subtract 1 and clip again — that gives a true
+            # zero baseline matching the C++ side's "ring-down injects on top of
+            # whatever else is in the scanline" semantics.
+            envelope_amp = np.power(10.0, palette_excess / log_mult).astype(
+                np.float32, copy=False
+            )
+            envelope_amp = np.maximum(envelope_amp - 1.0, 0.0).astype(
+                np.float32, copy=False
+            )
+
+            # Resample the template from its source pitch onto the simulator's
+            # depth-sample pitch so a template peak at 1.8 mm in the file lands
+            # at 1.8 mm in the simulator output (and not at sample index 1.8).
+            template_pitch = rd.template_pitch_mm
+            if template_pitch is not None and template_pitch > 0.0:
+                # Simulator depth-sample pitch in the scanline buffer:
+                # OptiX raygen maps the radial range [0, t_far_mm] onto
+                # `buffer_size` samples (see optix_trace.cu offset formula),
+                # so pitch = t_far_mm / buffer_size mm/sample.
+                # NOTE: this is *not* `c / sampling_freq_mhz / 2` — the
+                # legacy `sampling_freq_mhz` field is informational only and
+                # the OptiX path doesn't use it for sample placement.
+                sim_pitch_mm = float(self.sim.t_far_mm) / float(self.sim.buffer_size)
+                src_n = envelope_amp.shape[0]
+                src_extent_mm = src_n * float(template_pitch)
+                dst_n = int(round(src_extent_mm / sim_pitch_mm))
+                if dst_n > 1 and src_n > 1:
+                    src_grid = np.arange(src_n, dtype=np.float64) * float(template_pitch)
+                    dst_grid = np.arange(dst_n, dtype=np.float64) * sim_pitch_mm
+                    envelope_amp = np.interp(
+                        dst_grid, src_grid, envelope_amp.astype(np.float64)
+                    ).astype(np.float32, copy=False)
+            params.ring_down.waveform = envelope_amp
+
+        # ---- Pass 2: display window -----------------------------------------
+        # YAML default for these is the historical "no display window" sentinel
+        # (dynamic_range_db = 60, reject_db = -80) but the calibrated PV .035
+        # YAML overrides them to dynamic_range_db = 40.6, reject_db = -40.6 so
+        # the device's reject palette (11) and saturation (239) reproduce.
+        # SimParams default for both is 0.f => disabled, so an unset YAML keeps
+        # the historical pure-log mapping.
+        params.dynamic_range_db = float(proc.dynamic_range_db)
+        params.reject_db = float(proc.reject_db)
 
         return params
 
