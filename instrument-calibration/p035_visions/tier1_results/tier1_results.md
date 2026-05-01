@@ -8,11 +8,11 @@
 ## Headline
 **Tier 1 gate: ❌ NOT PASSED.** At least one of the tests failed or could not be fully evaluated against bench data; see per-test details below.
 
-The Tier 1 plumbing is correct (configuration round-trip, self-consistency, and TGC schedule all pass) and the *mechanism* of every evaluable physics knob works as expected. The gate fails because of **three structural mismatches** between the calibrated YAML, the simulator's runtime, and the bench analysis pipeline:
+Pass 3b (K2v2 log compression + palette-clamp display window + pre-Hilbert `gain_db`) closed the original gain-alignment gap; configuration round-trip (A/B), log compression (G), TGC (H) and gain alignment now all pass. The remaining FAILs are physics-fidelity issues that the calibration knobs cannot fix:
 
-1. **Gain alignment (dominant):** the rendering pipeline produces envelope amplitudes well below the calibrated `log_floor = 1.0`, so raytraced features (wires, in-water scatter) are clipped by log compression and the only signal that survives at the calibrated device-display range is the ring-down injection. The estimated delta is ≈ 27 dB; an upstream `gain_db` stage (deliberately deferred from Pass 2) is needed to bring the simulator onto the bench's reference scale.
-2. **Log-compression kernel divergence:** the `log_compression_kernel` normalises by the *per-frame* 99.999 %-quantile rather than by the fixed `log_floor`. This makes absolute palette values frame-dependent and breaks the spec's `pixel = log_multiplier · log10(amp / log_floor)` mapping (test G).
-3. **Noise model not yet wired:** Pass 2 deferred additive RF/envelope noise; the calibrated σ in the YAML has no effect on output (test F).
+1. **Wire-vs-bg contrast (drives C/D/E).** The OptiX renderer produces ~+100 dB wire/bg envelope contrast vs the bench's ~+26 dB. With `gain_db` calibrated against the water background, every wire saturates at `saturation_palette = 239`; the −6 dB FWHM is undefined and the ring-down RMS is dominated by saturated wires in the inner zone. Closing this requires changing the scattering-strength scaling on the OptiX path (per-material scatter intensity, sphere material choice, or the geometric-cross-section model on wires).
+2. **Depth uniformity (test I).** The simulator's anechoic ROI shows a bright peak around r ≈ 5 mm (mean palette ~110-170) and median palette pinned at the reject floor (11) past ~9 mm — the scatter integral has essentially no signal in the deep field. The bench's water-scatter floor is nearly flat (palette 33-44) across the same range. Most likely an additive RF/envelope noise stage is needed (the calibrated `noise.sigma = 2.6347` in the YAML is not yet wired) so the deep-field bg becomes a Rayleigh speckle floor rather than sub-floor zeros.
+3. **Noise model not yet wired (test F).** The calibrated σ in the YAML has no effect on output; required to evaluate F, and almost certainly required to fix I.
 
 With those three resolved, the *shape* checks (axial / lateral PSF, ring-down extent + shape RMS) become meaningful Tier 1 gates against the bench. Today they all run cleanly on a 'diagnostic' simulator configuration that bypasses the gain mismatch (lower `log_floor`, ring-down off, display window off); the diagnostic numbers are summarised per-test below.
 
@@ -27,6 +27,7 @@ With those three resolved, the *shape* checks (axial / lateral PSF, ring-down ex
 | | G. Log-compression mapping | ✅ PASS |
 | | H. TGC schedule | ✅ PASS |
 | | Gain alignment (calibration-sheet diagnostic) | ✅ PASS |
+| | I. Depth uniformity (anechoic ROI) | ❌ FAIL |
 
 ## What we evaluated and what we couldn't
 * **Available bench data:** wire-phantom polar images at 3 gains × 3 imaging diameters (19 frames total), with derived axial / lateral PSF per wire (`derived/psf/`), ring-down per-gain templates and fits (`derived/ringdown/`), anechoic-ROI palette histograms (`derived/noise/`), and the operator's TGC ramp (`derived/tgc/`).
@@ -91,14 +92,14 @@ With those three resolved, the *shape* checks (axial / lateral PSF, ring-down ex
 
 ## E. Ring-down (mean A-line) — ❌ FAIL
 
-**Summary.** sim peak palette = 220.1 (bench 231.7, Δ=-11.6); RMS over r ∈ [0, 3] mm = 93.9 palette (≤5 required); sim extent = 3.44 mm (bench 3.84 mm).
+**Summary.** sim peak palette = 222.3 (bench 231.7, Δ=-9.4); RMS over r ∈ [0, 3] mm = 68.6 palette (≤5 required); sim extent = 2.68 mm (bench 3.84 mm).
 
 | Criterion | Sim | Bench | Pass? |
 |---|---:|---:|:--:|
-| Peak palette (r ≤ 3 mm) | 220.1 | 231.7 (±10%) | ✅ |
-| RMS vs template, r ∈ [0, 3] mm (raw) | 93.9 | ≤ 5 | ❌ |
-| RMS vs template, r ∈ [0, 3] mm (shape-only, baseline-subtracted) | 71.6 | ≤ 5 | ❌ |
-| Extent (5% of peak excess) | 3.44 mm | 3.84 mm (±0.3) | ❌ |
+| Peak palette (r ≤ 3 mm) | 222.3 | 231.7 (±10%) | ✅ |
+| RMS vs template, r ∈ [0, 3] mm (raw) | 68.6 | ≤ 5 | ❌ |
+| RMS vs template, r ∈ [0, 3] mm (shape-only, baseline-subtracted) | 67.0 | ≤ 5 | ❌ |
+| Extent (5% of peak excess) | 2.68 mm | 3.84 mm (±0.3) | ❌ |
 
 The raw RMS includes the absolute baseline offset between the sim's lumen-scatter background and the bench template's reject-clipped anechoic floor. The shape-only RMS subtracts each curve's post-ringdown baseline first, so it isolates the ringdown waveform shape (independent of the gain alignment issue surfaced in the diagnostic test).
 
@@ -142,18 +143,36 @@ Sim depth grid: 1024 samples over r ∈ [0.01, 29.99] mm; RMS = 0.0000 dB, max |
 
 ## Gain alignment (calibration-sheet diagnostic) — ✅ PASS
 
-**Summary.** Sim water-bg palette (mean across 8 clean frames, r ∈ [5.0, 25.0] mm) = 47.3 vs bench 46.2 (Δ = +1.1 palette ≈ +0.19 dB). Within ±10 palette tolerance — Pass 3b gain calibration on target.
+**Summary.** Sim water-bg palette (mean across 8 clean frames, r ∈ [5.0, 25.0] mm) = 49.6 vs bench 46.2 (Δ = +3.4 palette ≈ +0.61 dB). Within ±10 palette tolerance — Pass 3b gain calibration on target.
 
 | Quantity | Value |
 |---|---:|
-| Sim water-bg mean palette (mean over 8 frames, r ∈ [5.0, 25.0] mm) | 47.27 |
-| Sim water-bg per-frame std | 0.88 |
+| Sim water-bg mean palette (mean over 8 frames, r ∈ [5.0, 25.0] mm) | 49.61 |
+| Sim water-bg per-frame std | 1.96 |
 | Bench water-bg palette (slider 54 reference) | 46.20 |
-| Δ palette (sim − bench) | +1.07 |
-| Δ in dB (≈ Δ palette × 20 / log_multiplier) | +0.190 |
+| Δ palette (sim − bench) | +3.41 |
+| Δ in dB (≈ Δ palette × 20 / log_multiplier) | +0.607 |
 | Tolerance (palette) | ±10.0 |
 
 **Interpretation.** The calibrated bg matches the bench within tolerance, so the simulator's reject window will reproduce the device's reject palette directly. Wire-vs-bg contrast remains over-represented (simulator > bench by ~74 dB on the OptiX renderer), so the calibrated wires saturate at saturation_palette = 239 — consistent with how the bench renders saturated inner wires.
+
+## I. Depth uniformity (anechoic ROI) — ❌ FAIL
+
+**Summary.** Sim vs bench mean palette over r ∈ [4.0, 29.0] mm: RMS = 30.8 palette (≤ 10 required), max |Δ| = 120.3, bias = +14.0; sim peak-to-trough = 139.0 vs bench 14.1 (ratio 9.89, ≤ 1.5 required). Sim has depth-dependent brightness structure not present in bench data.
+
+| Quantity | Value | Tolerance |
+|---|---:|---:|
+| RMS(sim − bench) palette over r ∈ [4.0, 29.0] mm | 30.78 | ≤ 10 |
+| Max |Δ| palette | 120.34 | — |
+| Bias (sim − bench) palette | +14.04 | — |
+| Sim peak-to-trough palette | 138.99 | — |
+| Bench peak-to-trough palette | 14.06 | — |
+| Sim span / bench span ratio | 9.89 | ≤ 1.5 |
+| Sim frames / bench frames | 8 / 5 | — |
+
+![Depth uniformity](figures/depth_uniformity.png)
+
+**Interpretation.** The bench's anechoic ROI is wire-masked at the per-radius p70 threshold to remove the 9 wire columns; what remains is the device's water-scatter / ringdown floor. The simulator's anechoic render should match this profile within ±10 palette RMS in the evaluation band — any larger structure is a TGC, scattering-strength, or noise-floor issue that will show up in deployed images as bright/dark depth bands.
 
 ## Recommended next steps
 1. **Resolve the wire-vs-bg contrast gap (~74 dB excess in the OptiX renderer).** The `gain_db` scalar is calibrated against the water background, which puts the simulator's bg at the device's reject shoulder; with the renderer's wire echoes ~74 dB above that, every wire ends up clipped to `saturation_palette = 239`. The bench frames show saturated inner wires too, but their outer wires (r ≥ 15 mm) stay in the 200-230 palette range. Tightening this requires changing the scattering-strength scaling on the OptiX path (per-material scatter intensity, or the geometric-cross-section model on the wire primitive) — not a calibration-sheet fix.

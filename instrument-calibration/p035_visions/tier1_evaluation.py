@@ -1377,6 +1377,198 @@ def test_gain_alignment(cfg, sim_params, materials, out_dir: Path) -> TestResult
     )
 
 
+def _bench_depth_profile(*, exclude_angle_deg: float = 12.0,
+                         peak_clip_percentile: float = 70.0,
+                         gain_slider: float = 54.0,
+                         diameter_mm: float = 60.0,
+                         min_radius_mm: float = 4.0,
+                         ringdown_extent_mm: float = 3.0):
+    """Mean palette vs depth from the bench polar frames at the reference op-point.
+
+    Uses every gain-54, D=60 wire-phantom polar frame and masks out wires by
+    rejecting any pixel above the per-radius ``peak_clip_percentile`` (the
+    9 wires at known angular positions are the brightest pixels per radial
+    bin). The result is the bench's mean speckle / ring-down floor as a
+    function of depth — the reference target the simulator's anechoic render
+    needs to match.
+
+    Returns ``(r_mm, mean_profile_palette, std_profile_palette,
+              n_frames_used, mask_metadata)``.
+    """
+    import csv
+
+    meta_rows = list(csv.DictReader(open(BENCH_FRAMES_META)))
+    meta = {row["file"]: row for row in meta_rows}
+
+    profiles = []
+    pix_pitch_mm = None
+    for fpath in sorted(BENCH_POLAR_DIR.glob("FILE*.npy")):
+        fname = fpath.stem
+        if fname not in meta:
+            continue
+        m = meta[fname]
+        if abs(float(m["gain_slider"]) - gain_slider) > 1e-3:
+            continue
+        if abs(float(m["diameter_mm"]) - diameter_mm) > 1e-3:
+            continue
+        pp = float(m["pixel_spacing_mm"])
+        pix_pitch_mm = pp if pix_pitch_mm is None else pix_pitch_mm
+        f = np.load(fpath)  # (n_theta, n_r) at the bench's display pitch
+        # Wire-rejection mask: per-radius high-percentile clip.
+        thresh = np.percentile(f, peak_clip_percentile, axis=0, keepdims=True)
+        masked = np.where(f > thresh, np.nan, f)
+        prof = np.nanmean(masked, axis=0)  # mean palette per radial bin
+        profiles.append(prof)
+    if not profiles or pix_pitch_mm is None:
+        raise RuntimeError(
+            f"No bench frames at gain={gain_slider}, D={diameter_mm} found in "
+            f"{BENCH_POLAR_DIR}"
+        )
+    n_min = min(len(p) for p in profiles)
+    arr = np.stack([p[:n_min] for p in profiles])
+    mean_profile = np.nanmean(arr, axis=0)
+    std_profile = np.nanstd(arr, axis=0)
+    r_mm = (np.arange(n_min) + 0.5) * pix_pitch_mm
+    return r_mm, mean_profile, std_profile, len(profiles), {
+        "exclude_angle_deg": exclude_angle_deg,
+        "peak_clip_percentile": peak_clip_percentile,
+        "gain_slider": gain_slider,
+        "diameter_mm": diameter_mm,
+    }
+
+
+def test_depth_uniformity(cfg, sim_params, materials, n_frames: int,
+                          out_dir: Path) -> TestResult:
+    """I — depth uniformity in non-reflecting regions (Pass 4 metric).
+
+    The bench's mean palette in the anechoic ROI is essentially flat across
+    r ∈ [5, 29] mm at slider 54 (palette ≈ 33-44, span ≈ 12). Any non-flat
+    structure in the simulator's anechoic render is a calibration / TGC /
+    scattering-strength issue — visible as bright/dark "rings" the operator
+    will read as artifacts.
+
+    Renders ``n_frames`` anechoic frames with the calibrated YAML (ring-down
+    ON since that's the deployed config), computes the per-radius mean
+    palette across angles + frames, compares to the bench's mean profile in
+    the same band, and reports the RMS difference as the metric.
+
+    Pass criterion: RMS(sim − bench) ≤ 10 palette over r ∈ [4, 29] mm
+    (excluding the inner 4 mm so the ring-down zone isn't penalised) AND
+    sim profile peak-to-trough span ≤ 1.5× the bench span.
+    """
+    world = build_anechoic_world(materials)
+    bg_frames = render_frames(cfg, world, materials, n_frames, sim_params)
+
+    theta_deg, r_mm_sim, _, _ = polar_axes(cfg)
+    n_r = len(r_mm_sim)
+    stk = np.stack([b_mode_to_theta_r(f, cfg) for f in bg_frames])  # (N, n_theta, n_r)
+    sim_mean_per_r = stk.mean(axis=(0, 1))     # (n_r,) post-clamp post-display palette
+    sim_median_per_r = np.median(stk, axis=(0, 1))
+    sim_std_per_r = stk.std(axis=(0, 1))
+
+    bench_r_mm, bench_mean_per_r, bench_std_per_r, bench_n_frames, mask_meta = (
+        _bench_depth_profile()
+    )
+
+    # Resample bench profile onto sim radial grid (linear interp; clamp ends).
+    bench_on_sim = np.interp(r_mm_sim, bench_r_mm, bench_mean_per_r,
+                             left=bench_mean_per_r[0], right=bench_mean_per_r[-1])
+
+    # Evaluation window: skip the ring-down zone.
+    rd_extent_mm = float(cfg.processing.ring_down.extent_mm)
+    r_lo_mm = max(rd_extent_mm + 1.0, 4.0)
+    r_hi_mm = min(0.97 * float(r_mm_sim[-1]), 29.0)
+    mask = (r_mm_sim >= r_lo_mm) & (r_mm_sim <= r_hi_mm)
+    diff = sim_mean_per_r[mask] - bench_on_sim[mask]
+    rms = float(np.sqrt(np.mean(diff ** 2)))
+    max_abs = float(np.abs(diff).max())
+    bias = float(np.mean(diff))
+    sim_span = float(sim_mean_per_r[mask].max() - sim_mean_per_r[mask].min())
+    bench_span = float(bench_on_sim[mask].max() - bench_on_sim[mask].min())
+    # Avoid div-by-zero on the bench span (it's ~12 palette in practice).
+    span_ratio = float(sim_span / max(bench_span, 1e-6))
+
+    rms_tol_palette = 10.0
+    span_tol_ratio = 1.5
+    rms_ok = rms <= rms_tol_palette
+    span_ok = span_ratio <= span_tol_ratio
+    pass_ok = rms_ok and span_ok
+    status = "pass" if pass_ok else "fail"
+
+    # Plot: sim mean ± std vs bench mean ± std.
+    fig_path = out_dir / "figures" / "depth_uniformity.png"
+    if plt is not None:
+        fig, ax = plt.subplots(figsize=(9, 5.5))
+        ax.fill_between(r_mm_sim, sim_mean_per_r - sim_std_per_r,
+                        sim_mean_per_r + sim_std_per_r, color="C3", alpha=0.20,
+                        label="sim ± 1σ (over θ, frames)")
+        ax.plot(r_mm_sim, sim_mean_per_r, color="C3", lw=1.6,
+                label=f"sim mean palette ({n_frames} anechoic frames)")
+        ax.plot(r_mm_sim, sim_median_per_r, color="C3", lw=1.0, ls="--", alpha=0.8,
+                label="sim median palette")
+        ax.fill_between(bench_r_mm, bench_mean_per_r - bench_std_per_r,
+                        bench_mean_per_r + bench_std_per_r, color="C0", alpha=0.20,
+                        label=f"bench ± 1σ (over θ, {bench_n_frames} frames)")
+        ax.plot(bench_r_mm, bench_mean_per_r, color="C0", lw=1.6,
+                label=f"bench mean palette (g54 D60, wire-masked p70)")
+        ax.axvspan(0, rd_extent_mm, color="0.85", alpha=0.4, lw=0,
+                   label=f"ring-down zone (r ≤ {rd_extent_mm:.1f} mm)")
+        ax.axvspan(r_lo_mm, r_hi_mm, color="C2", alpha=0.05, lw=0)
+        ax.axhline(11, color="0.5", ls=":", lw=0.8, label="reject_palette = 11")
+        ax.axhline(46.2, color="C0", ls=":", lw=0.8, label="bench bg ref = 46.2")
+        ax.set_xlim(0, float(r_mm_sim[-1]))
+        ax.set_ylim(0, 250)
+        ax.set_xlabel("radial depth r (mm)")
+        ax.set_ylabel("palette (mean over θ and frames)")
+        ax.set_title(f"Depth uniformity — sim vs bench mean palette "
+                     f"(RMS = {rms:.1f}, max |Δ| = {max_abs:.1f}, "
+                     f"sim span/bench span = {span_ratio:.2f})")
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(fig_path, dpi=120)
+        plt.close(fig)
+
+    # Save the raw profiles so downstream tooling (e.g. derive_gain_db.py) can
+    # consume them.
+    np.save(out_dir / "arrays" / "depth_profile_sim_mean.npy", sim_mean_per_r)
+    np.save(out_dir / "arrays" / "depth_profile_sim_median.npy", sim_median_per_r)
+    np.save(out_dir / "arrays" / "depth_profile_sim_std.npy", sim_std_per_r)
+    np.save(out_dir / "arrays" / "depth_profile_bench_mean.npy", bench_mean_per_r)
+    np.save(out_dir / "arrays" / "depth_profile_bench_std.npy", bench_std_per_r)
+    np.save(out_dir / "arrays" / "depth_profile_r_mm_sim.npy", r_mm_sim)
+    np.save(out_dir / "arrays" / "depth_profile_r_mm_bench.npy", bench_r_mm)
+
+    detail = {
+        "rms_palette": rms,
+        "max_abs_palette": max_abs,
+        "bias_palette": bias,
+        "sim_peak_to_trough_palette": sim_span,
+        "bench_peak_to_trough_palette": bench_span,
+        "sim_span_over_bench_span": span_ratio,
+        "rms_tolerance_palette": rms_tol_palette,
+        "span_ratio_tolerance": span_tol_ratio,
+        "rms_pass": rms_ok,
+        "span_ratio_pass": span_ok,
+        "evaluation_band_mm": (float(r_lo_mm), float(r_hi_mm)),
+        "ringdown_excluded_mm": rd_extent_mm,
+        "n_sim_frames": int(n_frames),
+        "n_bench_frames": int(bench_n_frames),
+        "bench_mask": mask_meta,
+        "figure": str(fig_path.relative_to(out_dir)),
+    }
+    summary = (
+        f"Sim vs bench mean palette over r ∈ [{r_lo_mm:.1f}, {r_hi_mm:.1f}] mm: "
+        f"RMS = {rms:.1f} palette (≤ {rms_tol_palette:.0f} required), "
+        f"max |Δ| = {max_abs:.1f}, bias = {bias:+.1f}; "
+        f"sim peak-to-trough = {sim_span:.1f} vs bench {bench_span:.1f} "
+        f"(ratio {span_ratio:.2f}, ≤ {span_tol_ratio:.1f} required). "
+        + ("Sim depth uniformity matches bench within tolerance." if pass_ok
+           else "Sim has depth-dependent brightness structure not present in bench data.")
+    )
+    return TestResult("I. Depth uniformity (anechoic ROI)", status, summary, detail)
+
+
 def test_tgc(cfg, sim_params) -> TestResult:
     """H — compare YAML control-point interpolation with the simulator's effective TGC.
 
@@ -1457,26 +1649,32 @@ def render_markdown(results: list[TestResult], cfg, n_frames_wire: int,
     else:
         lines.append("**Tier 1 gate: ✅ PASSED.** All tests passed.\n")
     lines.append(
-        "\nThe Tier 1 plumbing is correct (configuration round-trip, self-"
-        "consistency, and TGC schedule all pass) and the *mechanism* of every "
-        "evaluable physics knob works as expected. The gate fails because of "
-        "**three structural mismatches** between the calibrated YAML, the "
-        "simulator's runtime, and the bench analysis pipeline:\n\n"
-        "1. **Gain alignment (dominant):** the rendering pipeline produces "
-        "envelope amplitudes well below the calibrated `log_floor = 1.0`, so "
-        "raytraced features (wires, in-water scatter) are clipped by log "
-        "compression and the only signal that survives at the calibrated "
-        "device-display range is the ring-down injection. The estimated "
-        "delta is ≈ 27 dB; an upstream `gain_db` stage (deliberately "
-        "deferred from Pass 2) is needed to bring the simulator onto the "
-        "bench's reference scale.\n"
-        "2. **Log-compression kernel divergence:** the `log_compression_kernel` "
-        "normalises by the *per-frame* 99.999 %-quantile rather than by the "
-        "fixed `log_floor`. This makes absolute palette values frame-dependent "
-        "and breaks the spec's `pixel = log_multiplier · log10(amp / log_floor)` "
-        "mapping (test G).\n"
-        "3. **Noise model not yet wired:** Pass 2 deferred additive RF/envelope "
-        "noise; the calibrated σ in the YAML has no effect on output (test F).\n"
+        "\nPass 3b (K2v2 log compression + palette-clamp display window + "
+        "pre-Hilbert `gain_db`) closed the original gain-alignment gap; "
+        "configuration round-trip (A/B), log compression (G), TGC (H) and "
+        "gain alignment now all pass. The remaining FAILs are physics-"
+        "fidelity issues that the calibration knobs cannot fix:\n\n"
+        "1. **Wire-vs-bg contrast (drives C/D/E).** The OptiX renderer "
+        "produces ~+100 dB wire/bg envelope contrast vs the bench's ~+26 dB. "
+        "With `gain_db` calibrated against the water background, every wire "
+        "saturates at `saturation_palette = 239`; the −6 dB FWHM is "
+        "undefined and the ring-down RMS is dominated by saturated wires "
+        "in the inner zone. Closing this requires changing the "
+        "scattering-strength scaling on the OptiX path (per-material "
+        "scatter intensity, sphere material choice, or the geometric-"
+        "cross-section model on wires).\n"
+        "2. **Depth uniformity (test I).** The simulator's anechoic ROI "
+        "shows a bright peak around r ≈ 5 mm (mean palette ~110-170) and "
+        "median palette pinned at the reject floor (11) past ~9 mm — the "
+        "scatter integral has essentially no signal in the deep field. "
+        "The bench's water-scatter floor is nearly flat (palette 33-44) "
+        "across the same range. Most likely an additive RF/envelope noise "
+        "stage is needed (the calibrated `noise.sigma = 2.6347` in the "
+        "YAML is not yet wired) so the deep-field bg becomes a Rayleigh "
+        "speckle floor rather than sub-floor zeros.\n"
+        "3. **Noise model not yet wired (test F).** The calibrated σ in "
+        "the YAML has no effect on output; required to evaluate F, and "
+        "almost certainly required to fix I.\n"
         "\nWith those three resolved, the *shape* checks (axial / lateral PSF, "
         "ring-down extent + shape RMS) become meaningful Tier 1 gates against "
         "the bench. Today they all run cleanly on a 'diagnostic' simulator "
@@ -1678,6 +1876,39 @@ def render_markdown(results: list[TestResult], cfg, n_frames_wire: int,
             lines.append(f"Sim depth grid: {d['n_samples']} samples over r ∈ [{d['depth_range_mm'][0]:.2f}, "
                          f"{d['depth_range_mm'][1]:.2f}] mm; RMS = {d['rms_dB']:.4f} dB, "
                          f"max |Δ| = {d['max_abs_dB']:.4f} dB.\n")
+        if r.name.startswith("I."):
+            d = r.detail
+            lo, hi = d.get("evaluation_band_mm", (0.0, 0.0))
+            lines.append(
+                "| Quantity | Value | Tolerance |\n|---|---:|---:|\n"
+                f"| RMS(sim − bench) palette over r ∈ [{lo:.1f}, {hi:.1f}] mm | "
+                f"{d.get('rms_palette', float('nan')):.2f} | "
+                f"≤ {d.get('rms_tolerance_palette', float('nan')):.0f} |\n"
+                f"| Max |Δ| palette | {d.get('max_abs_palette', float('nan')):.2f} | — |\n"
+                f"| Bias (sim − bench) palette | "
+                f"{d.get('bias_palette', float('nan')):+.2f} | — |\n"
+                f"| Sim peak-to-trough palette | "
+                f"{d.get('sim_peak_to_trough_palette', float('nan')):.2f} | — |\n"
+                f"| Bench peak-to-trough palette | "
+                f"{d.get('bench_peak_to_trough_palette', float('nan')):.2f} | — |\n"
+                f"| Sim span / bench span ratio | "
+                f"{d.get('sim_span_over_bench_span', float('nan')):.2f} | "
+                f"≤ {d.get('span_ratio_tolerance', float('nan')):.1f} |\n"
+                f"| Sim frames / bench frames | "
+                f"{d.get('n_sim_frames', '?')} / {d.get('n_bench_frames', '?')} | — |\n"
+            )
+            fig = d.get("figure")
+            if fig:
+                lines.append(f"\n![Depth uniformity]({fig})\n")
+            lines.append(
+                "\n**Interpretation.** The bench's anechoic ROI is wire-masked at "
+                "the per-radius p70 threshold to remove the 9 wire columns; what "
+                "remains is the device's water-scatter / ringdown floor. The "
+                "simulator's anechoic render should match this profile within "
+                "±10 palette RMS in the evaluation band — any larger structure "
+                "is a TGC, scattering-strength, or noise-floor issue that will "
+                "show up in deployed images as bright/dark depth bands.\n"
+            )
 
     lines.append("\n## Recommended next steps\n")
     lines.append(
@@ -1742,6 +1973,8 @@ def main() -> int:
     results.append(test_tgc(cfg, sim_params))
     # Diagnostic: gain alignment finding (uses the calibrated wire frames PSF dropped on disk).
     results.append(test_gain_alignment(cfg, sim_params, materials, out_dir))
+    results.append(test_depth_uniformity(cfg, sim_params, materials,
+                                         args.n_frames_anechoic, out_dir))
 
     summary_path = out_dir / "tier1_summary.json"
     summary_path.write_text(json.dumps([r.to_dict() for r in results], indent=2, default=str))
