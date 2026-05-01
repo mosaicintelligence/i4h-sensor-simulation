@@ -1,0 +1,122 @@
+{
+  "method_summary": "Analytical re-derivation of processing.gain_db for the PV .035 / Volcano s5i. Renders the wire phantom in raw-envelope mode (log_multiplier=1, log_floor=1.0, ring-down OFF, display window OFF, median clip OFF, gain_db=0) so post-log palette = log10(envelope amp). Two candidate calibrations are reported: matching the median bench wire amplitude (gain_db_wire) and matching the bench water-scatter background (gain_db_bg). The YAML uses the *background* calibration so the device's reject palette behaviour is preserved; any residual wire-vs-bg contrast gap is a scattering-strength problem the gain_db scalar cannot fix.",
+  "n_frames": 16,
+  "log_multiplier_used": 112.30000305175781,
+  "bench_saturation_cutoff_palette": 220.0,
+  "bench_unsaturated_wire_count": 7,
+  "sim_envelope_amp_median_wire": 0.003585637517548234,
+  "sim_envelope_amp_water_bg_mean": 3.558270938900427e-08,
+  "bench_envelope_amp_median_wire": 54.11324822137348,
+  "bench_envelope_amp_water_bg_at_slider_54": 2.578683431097714,
+  "bench_water_bg_palette_at_slider_54": 46.2,
+  "gain_db_wire_target": 83.57474440941144,
+  "gain_db_bg_target": 132.82818032220146,
+  "gain_db_bg_amp_pure": 157.20318032220146,
+  "gain_db_calibrated": 132.82818032220146,
+  "calibration_target": "water_background_post_clamp_mean_palette",
+  "wire_vs_bg_contrast_db": {
+    "sim": 100.06654739379883,
+    "bench": 26.438111481008786,
+    "gap_dB_bench_minus_sim": -73.62843591279004,
+    "interpretation": "Positive gap means the bench has more wire-vs-background contrast than the simulator. With the background-calibrated gain_db, sim wires will undershoot the bench wire palette by ~-73.6 dB (-413.4 palette). Closing this gap requires increasing the wire's scattering strength (e.g. switching the sphere material to one with higher impedance contrast) or increasing the wire size \u2014 the gain_db scalar cannot."
+  },
+  "gain_db_distribution_dB": {
+    "median": 83.57474440941144,
+    "p25": 80.3334265990082,
+    "p75": 85.04936591875972,
+    "p10": 70.32559071781044,
+    "p90": 85.32648078211068,
+    "n_bench_wires": 7
+  },
+  "per_wire": {
+    "sim": [
+      {
+        "r_mm": 5.0,
+        "sim_palette_log10amp": -1.4053781032562256,
+        "sim_envelope_amp": 0.03932075939941365,
+        "log10_amp_diff_to_bench_median": 3.1386817070886135,
+        "gain_db_required_to_match_bench_median": 62.77363414177227
+      },
+      {
+        "r_mm": 10.0,
+        "sim_palette_log10amp": -1.0783079862594604,
+        "sim_envelope_amp": 0.08350106482449624,
+        "log10_amp_diff_to_bench_median": 2.8116115900918484,
+        "gain_db_required_to_match_bench_median": 56.23223180183697
+      },
+      {
+        "r_mm": 15.0,
+        "sim_palette_log10amp": -2.627228260040283,
+        "sim_envelope_amp": 0.0023592379197305106,
+        "log10_amp_diff_to_bench_median": 4.360531863872671,
+        "gain_db_required_to_match_bench_median": 87.21063727745343
+      },
+      {
+        "r_mm": 20.0,
+        "sim_palette_log10amp": -2.4454336166381836,
+        "sim_envelope_amp": 0.003585637517548234,
+        "log10_amp_diff_to_bench_median": 4.1787372204705715,
+        "gain_db_required_to_match_bench_median": 83.57474440941144
+      },
+      {
+        "r_mm": 25.0,
+        "sim_palette_log10amp": -2.7255771160125732,
+        "sim_envelope_amp": 0.0018811476483567647,
+        "log10_amp_diff_to_bench_median": 4.458880719844961,
+        "gain_db_required_to_match_bench_median": 89.17761439689923
+      }
+    ],
+    "bench_unsaturated": [
+      {
+        "wire": 3,
+        "r_mm": 16.68,
+        "peak_palette": 175.6,
+        "envelope_amp": 36.61581472794474
+      },
+      {
+        "wire": 4,
+        "r_mm": 22.92,
+        "peak_palette": 37.24,
+        "envelope_amp": 2.145911193903679
+      },
+      {
+        "wire": 3,
+        "r_mm": 15.48,
+        "peak_palette": 203.63,
+        "envelope_amp": 65.05309787167032
+      },
+      {
+        "wire": 4,
+        "r_mm": 21.36,
+        "peak_palette": 194.65,
+        "envelope_amp": 54.11324822137348
+      },
+      {
+        "wire": 4,
+        "r_mm": 21.84,
+        "peak_palette": 177.3,
+        "envelope_amp": 37.91462148962649
+      },
+      {
+        "wire": 5,
+        "r_mm": 26.28,
+        "peak_palette": 202.23,
+        "envelope_amp": 63.21226845279551
+      },
+      {
+        "wire": 1,
+        "r_mm": 3.72,
+        "peak_palette": 205.77,
+        "envelope_amp": 67.97106614365768
+      }
+    ]
+  },
+  "sim_water_bg_diagnostic": {
+    "mean_palette_log10amp": -7.448760986328125,
+    "median_palette_log10amp": -7.701116561889648,
+    "mean_envelope_amp": 3.558270938900427e-08,
+    "median_envelope_amp": 1.990139126557753e-08,
+    "n_pixels_per_frame": 157744
+  },
+  "calibration_recipe": "Set processing.gain_db in volcano_s5i.yaml to the value reported as gain_db_calibrated. To extend to a different slider, add (slider - 54) dB per the bench gain LUT (gain_lut.json -> gain_db_table)."
+}

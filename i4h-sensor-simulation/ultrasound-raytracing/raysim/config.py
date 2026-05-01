@@ -143,17 +143,27 @@ class ProcessingConfig:
         default_factory=lambda: [(0.0, 0.0), (1.0, 2.0)]
     )
     log_multiplier: float = 20.0
-    log_floor: float = 1.0e-19
+    # Pass 3b: log_floor is the calibration anchor (amp == log_floor maps to
+    # palette 0). Default 1.0 makes the K2v2 mapping reduce to
+    # `log_multiplier * log10(amp)` for amp >= 1, which matches the legacy
+    # `examples/ivus_example.py` MIN_VAL/MAX_VAL = (-60, 0) display window
+    # at log_multiplier = 20. Calibrated YAMLs override.
+    log_floor: float = 1.0
     median_clip: MedianClipConfig = field(default_factory=MedianClipConfig)
-    # --- Future ---
+    # Pass 3a: reference gain applied to the envelope buffer between Hilbert
+    # and log compression: amp <- amp * 10^(gain_db / 20). 0.0 = no-op
+    # (default); calibrated YAMLs set this to the renderer-specific offset
+    # that puts the simulator's envelope onto the bench's reference scale
+    # (see SimParams::gain_db doc and calibration_delta.md).
     gain_db: float = 0.0
-    # 0.0 is the "disabled" sentinel for both display-window knobs (matches the
-    # SimParams default after Pass 2 wiring): when dynamic_range_db == 0 the
-    # post-log display-window stage is skipped entirely so YAMLs that omit these
-    # fields keep the historical pure-log palette mapping. Calibrated configs
-    # set both to non-zero (e.g. PV .035: dynamic_range_db=40.6, reject_db=-40.6).
-    dynamic_range_db: float = 0.0
-    reject_db: float = 0.0
+    # Pass 3b: post-log display-window palette anchors. With both at 0.0
+    # (default) the display-window stage is skipped entirely, so YAMLs that
+    # omit these fields keep the historical pure-log palette mapping.
+    # Calibrated configs set both to non-zero (e.g. PV .035:
+    # reject_palette=11, saturation_palette=239 from gain_lut.json).
+    reject_palette: float = 0.0
+    saturation_palette: float = 0.0
+    # --- Future ---
     compression_lut: Optional[str] = None
     noise: NoiseConfig = field(default_factory=NoiseConfig)
     ring_down: RingDownConfig = field(default_factory=RingDownConfig)
@@ -188,15 +198,15 @@ _FUTURE_PATHS: tuple[str, ...] = (
     "probe.impulse_response_path",
     "probe.synthetic_aperture",
     "sim.sampling_freq_mhz",
-    "processing.gain_db",
     "processing.compression_lut",
     "processing.noise.type",
     "processing.noise.sigma",
-    # Pass 2 wired the ring-down stage and the dynamic-range / reject display
-    # window through SimParams, so those rows have been removed from this
-    # list. `ring_down.subtract_reference` is informational only (the device
-    # already does the subtraction; we model the residual) and stays out of
-    # the wiring.
+    # Pass 2 wired the ring-down stage. Pass 3a wired `processing.gain_db`
+    # (reference gain) and Pass 3b replaced the dB-shift display window with
+    # `processing.reject_palette` / `processing.saturation_palette` (direct
+    # palette clamp). `ring_down.subtract_reference` is informational only
+    # (the device already does the subtraction; we model the residual) and
+    # stays out of the wiring.
 )
 
 # Likewise: Config rows that are in the schema but not yet exposed via SimParams
@@ -490,15 +500,20 @@ class IvusSimConfig:
                     ).astype(np.float32, copy=False)
             params.ring_down.waveform = envelope_amp
 
-        # ---- Pass 2: display window -----------------------------------------
-        # YAML default for these is the historical "no display window" sentinel
-        # (dynamic_range_db = 60, reject_db = -80) but the calibrated PV .035
-        # YAML overrides them to dynamic_range_db = 40.6, reject_db = -40.6 so
-        # the device's reject palette (11) and saturation (239) reproduce.
-        # SimParams default for both is 0.f => disabled, so an unset YAML keeps
-        # the historical pure-log mapping.
-        params.dynamic_range_db = float(proc.dynamic_range_db)
-        params.reject_db = float(proc.reject_db)
+        # ---- Pass 3b: display window (palette clamp) ------------------------
+        # Calibrated PV .035 YAML sets reject_palette = 11 and
+        # saturation_palette = 239 from gain_lut.json. With both at 0.0
+        # (default) the SimParams kernel skips the display-window stage and
+        # keeps the historical pure-log mapping.
+        params.reject_palette = float(proc.reject_palette)
+        params.saturation_palette = float(proc.saturation_palette)
+
+        # ---- Pass 3: reference gain ----------------------------------------
+        # Calibrated YAMLs set this to the renderer-specific scalar that puts
+        # the simulator's envelope onto the bench's reference scale at the
+        # bench's reference gain (slider 54 for the PV .035). Default 0.0 is
+        # a no-op so YAMLs that omit the field keep the historical behaviour.
+        params.gain_db = float(proc.gain_db)
 
         return params
 

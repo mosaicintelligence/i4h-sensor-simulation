@@ -538,14 +538,14 @@ Pass 2 adds the first batch of new physics on top of Pass 1's plumbing: a calibr
 
 **Implementation pointers (Pass 2 surface area):**
 
-- C++ surface: [include/raysim/core/raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (new public `struct RingDownParams`; `SimParams::ring_down`, `SimParams::dynamic_range_db`, `SimParams::reject_db`).
+- C++ surface: [include/raysim/core/raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (new public `struct RingDownParams`; `SimParams::ring_down`, `SimParams::reject_palette`, `SimParams::saturation_palette` — see §11.9 for the Pass 3b rename of the display-window knobs).
 - C++ pipeline: [csrc/core/raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp) (stage **1.6 Ring-down injection** between TGC and envelope detection; stage **3.5 Display window** after log compression).
-- CUDA helpers: [csrc/cuda/cuda_algorithms.{hpp,cu}](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu) — new `add_row` (broadcast vector add along depth) and `apply_display_window` (clamp + linear remap in dB-space).
-- Python bindings: [csrc/python/raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/python/raysim_bindings.cpp) (`RingDownParams` class with `def_readwrite` for every field including a numpy-backed `waveform`; `SimParams.ring_down / dynamic_range_db / reject_db`).
+- CUDA helpers: [csrc/cuda/cuda_algorithms.{hpp,cu}](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu) — new `add_row` (broadcast vector add along depth) and `apply_display_window` (Pass 3b: direct palette clamp; replaces the dB-shift formulation that landed in Pass 2).
+- Python bindings: [csrc/python/raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/python/raysim_bindings.cpp) (`RingDownParams` class with `def_readwrite` for every field including a numpy-backed `waveform`; `SimParams.ring_down / reject_palette / saturation_palette`).
 - Python config: [raysim/config.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/raysim/config.py) (`RingDownConfig` gained `enabled`, `template_pitch_mm`, `template_speckle_floor_palette`; `to_sim_params` loads the .npy template, subtracts the speckle floor, converts palette → envelope amp, and resamples to the simulator's depth-sample pitch).
 - Calibrated YAML: [`instrument-calibration/p035_visions/volcano_s5i.yaml`](../../../instrument-calibration/p035_visions/volcano_s5i.yaml) (`ring_down.enabled: true`, `template_pitch_mm: 0.12`, `template_speckle_floor_palette: 45.0`).
 
-**Where things go in `simulate()`:** ring-down is added pre-Hilbert (between TGC at step 1.5 and envelope detection at step 2). The calibrated template is stored on the host as `std::vector<float>` in envelope-amplitude units, uploaded once per change, and added row-wise via `add_row` so the existing Hilbert + log-compression handle the resulting peak shape naturally. Cache invalidation keys on (`decay`, `amplitude`, `extent_mm`, `buffer_size`, and the host pointer + size of the measured waveform) so callers that swap templates frame-to-frame get a fresh upload. The display window is applied post-log-compression and pre-median-clip (so the median clip filter still operates on a reasonable local window). Both stages skip themselves when their toggle is off (`ring_down.enabled == false` and `dynamic_range_db == 0`), so default callers see no change.
+**Where things go in `simulate()`:** ring-down is added pre-Hilbert (between TGC at step 1.5 and envelope detection at step 2). The calibrated template is stored on the host as `std::vector<float>` in envelope-amplitude units, uploaded once per change, and added row-wise via `add_row` so the existing Hilbert + log-compression handle the resulting peak shape naturally. Cache invalidation keys on (`decay`, `amplitude`, `extent_mm`, `buffer_size`, and the host pointer + size of the measured waveform) so callers that swap templates frame-to-frame get a fresh upload. The display window is applied post-log-compression and pre-median-clip (so the median clip filter still operates on a reasonable local window). Both stages skip themselves when their toggle is off (`ring_down.enabled == false` and `saturation_palette <= reject_palette`), so default callers see no change.
 
 **Sample-pitch convention.** The OptiX raygen maps the radial range `[0, t_far_mm]` onto `buffer_size` samples (`offset = round(t / t_far * (buffer_size - 1))` in `optix_trace.cu`), so the spatial pitch in the scanlines is `t_far / buffer_size` mm/sample — *not* `c / SAMPLING_FREQ / 2`. Both the C++ ring-down stage and the Python loader's resampler use this convention so a calibration template peak at 1.8 mm in the file lands at 1.8 mm in the simulator output (verified end-to-end: median-over-angle radial profile peaks at 1.787 mm for the PV .035 calibrated template, matching the calibrated 1.80 mm). The pre-existing `create_piece_wise_tgc` path uses the legacy `SAMPLING_FREQ`-based convention for its own depth → sample math and is left alone (a separate alignment cleanup).
 
@@ -558,6 +558,67 @@ Pass 2 adds the first batch of new physics on top of Pass 1's plumbing: a calibr
 | `default SimParams()` regression      | bit-identical to Pass 1                     | **max abs diff = 0** (vs Pass 1 reference) |
 
 **What's intentionally not in Pass 2:** noise (deferred per the calibration plan — measurable only on a ring-down-subtracted simulator), `gain_db` (kept informational; per-frame gain is applied by scaling the ring-down `amplitude` and the speckle calibration externally), `compression_lut` (no calibrated LUT yet — full E7 sweep needed). All three remain in `_FUTURE_PATHS`.
+
+### 11.8 Log-compression: fixed-reference mapping (Pass 3a → Pass 3b / K2v2)
+
+Tier 1 evaluation (test G in `instrument-calibration/p035_visions/tier1_results/tier1_results.md`) surfaced a structural divergence between the calibration sheet and the simulator's `log_compression_kernel`:
+
+* The sheet defines `pixel = log_multiplier · log10(amp / log_floor)` — an **absolute, fixed-reference** mapping between envelope amplitude and palette.
+* The legacy kernel computed `pixel = log_multiplier · log10(max(amp, log_floor) / per_frame_quantile)` where `per_frame_quantile` was the per-frame 99.999 %-quantile of the envelope buffer. This made absolute palette values **frame-dependent** (every frame's brightest pixel landed at palette 0 regardless of absolute amplitude) and broke the round-trip with the calibration sheet for any non-degenerate scene.
+
+**Pass 3a (K2)** removed the per-frame quantile and used `log10(max(amp, log_floor)) · log_multiplier`. **Pass 3b (K2v2)** further switches to the spec form so `amp == log_floor` lands at palette 0 (instead of palette `log_multiplier · log10(log_floor)`), and so `amp < log_floor` produces *negative* palette values that the display-window stage can clamp to the device's reject palette:
+
+```diff
+- buffer[offset] = log10f(max(buffer[offset], minimum)) * mutliplicator;
++ const float floor_safe = fmaxf(minimum, 1e-30f);
++ const float amp_safe   = fmaxf(buffer[offset], 1e-30f * floor_safe);
++ buffer[offset] = log10f(amp_safe / floor_safe) * mutliplicator;
+```
+
+The two epsilon clamps make `amp == 0` / `log_floor == 0` produce a finite, very-negative palette value (~`-30 · log_multiplier`) instead of NaN/-inf. The corresponding C++ caller (`CUDAAlgorithms::log_compression`) drops the `cub::DeviceRadixSort` reduction and the `log_compression_sorted_` / `temp_log_compression_` scratch buffers (Pass 3a). The host-side `<cub/cub.cuh>` include is also no longer needed by `cuda_algorithms.cu`.
+
+**Default change (Pass 3b).** `SimParams::log_floor` default changes from `1e-19f` to `1.f`. With `log_multiplier == 20` (default) this puts the post-log palette in roughly `[-60, 0]` for envelope amplitudes in `[1e-3, 1]` — the same range the existing `examples/ivus_example.py` `MIN_VAL/MAX_VAL` window assumes. Default callers that constructed `SimParams()` see a palette shift of `+log_multiplier · log10(1e-19) = -380` cancelled out by the new default, so their displayed images look the same as before Pass 3a.
+
+**Tier 1 acceptance after K2v2:** test G (log-compression mapping) passes by construction (kernel now mirrors the spec exactly). The display-window rewrite (Pass 3b, §11.9) and the calibrated `gain_db` stage (Pass 3a, §11.9.1) close out the rest of the gain-alignment story.
+
+### 11.9 Display window + reference gain (Pass 3b)
+
+Pass 3b lands two coupled fixes that together let the calibrated PV .035 YAML reproduce the device's reject behaviour and put the simulator's envelope amplitudes onto the bench's reference scale at slider 54.
+
+#### 11.9.1 Reference gain stage (`gain_db`)
+
+A new `SimParams::gain_db` is applied **between TGC (stage 1.5) and ring-down injection (stage 1.6)** as `rf ← rf · 10^(gain_db / 20)`. The CUDA wrapper short-circuits on `gain_db == 0` so default callers pay no kernel-launch cost.
+
+The pre-Hilbert location is deliberate — `gain_db` has to scale the raytraced RF up to bench-calibrated amplitude *before* ring-down is added, because ring-down's `amplitude` field is specified in bench-calibrated envelope units. Putting `gain_db` after ring-down would double-scale the ring-down by `10^(gain_db/20) = 10^7.86 ≈ 7×10^7`, blowing out the inner ring and cascading saturation through the lateral PSF into the rest of the image. By linearity of the Hilbert transform (`|H(s·rf)| = s·|H(rf)|`), scaling RF pre-Hilbert is mathematically equivalent to scaling envelope post-Hilbert for the scattering signal, so the pure-amplitude derivation in `derive_gain_db.py` is unchanged by the move.
+
+`gain_db` lumps two physically distinct effects into one calibrated scalar:
+
+1. The bench's **slider-gain offset** (the device's gain control: slider 54 maps to 0 dB by convention; a 10-step change is ±10 dB on the bench gain LUT).
+2. A **renderer-specific reference-amplitude offset** — the simulator's raw envelope amplitudes are not on the same linear scale as the bench's calibrated amplitudes. The calibration sheet treats the bench's "amp at slider 54" as the reference (in arbitrary linear units), so this offset is the constant that puts the simulator's output onto that scale. See `instrument-calibration/p035_visions/derive_gain_db.py` for the analytical derivation.
+
+The PV .035 YAML calibrates `gain_db` against the **bench water-scatter background** (palette 46.2 at slider 54). `derive_gain_db.py` runs in two passes:
+
+1. *Pure-amplitude seed.* Render the wire phantom in raw-envelope mode (`log_floor=1.0, log_multiplier=1.0, ring-down OFF, display window OFF, gain_db=0`) so the post-log palette equals `log10(envelope_amp)`. The geometric-mean water-bg amplitude is `sim_bg_amp = 10^(mean(log10(amp_i)))`; the bench reference is `bench_bg_amp = 10^(46.2 / log_multiplier)`; the seed is `gain_db_seed = 20·log10(bench_bg_amp / sim_bg_amp) = +157.20 dB`.
+2. *Bisection refinement.* The seed systematically over-shoots because the simulator's rendered bg distribution is wider than the bench's (Rayleigh log10 std ≈ 31 palette vs the bench's narrower-than-Rayleigh 20.3 palette). The seeded mean palette would be 46 if no clipping occurred; in the calibrated render the long left tail of `log10(amp)` crashes through `reject_palette = 11` and the clamp lifts the post-clamp mean by ~33 palette. The script bisects `gain_db` against the *post-pipeline post-clamp mean palette* of an anechoic lumen render until the rendered bg matches the bench reference within 0.5 palette. For PV .035 this lands at **`gain_db = +132.83 dB`**.
+
+Calibrating against the background (rather than the wire peaks) is deliberate: the bench's wire-vs-bg amplitude contrast (~26 dB) is much smaller than the simulator's (~100 dB on the current renderer), so a single `gain_db` scalar cannot align both. Anchoring at the background preserves the device's reject-palette behaviour; the wire echoes will then saturate at `saturation_palette = 239`, which matches how the bench frames already render their inner wires (palette ≥ 220 on the device's display) but over-saturates the bench's outer wires. Closing that contrast gap is a scattering-strength problem in the OptiX pipeline — orthogonal to the gain/log/display-window calibration and tracked in `instrument-calibration/p035_visions/calibration_delta.md`.
+
+#### 11.9.2 Display window: direct palette clamp
+
+The Pass 2 display window had two bugs:
+
+* It used dB-space anchors (`reject_db`, `dynamic_range_db`) and remapped `[reject_db, reject_db + dr_db]` onto `[0, log_multiplier · dr_db / 20]`. With K2v2's *negative* palette outputs (which represent `amp < log_floor`), the kernel's input pixel of 0 was shifted *up* to the saturation ceiling instead of clamped *down* to the reject floor — exactly the opposite of the device's behaviour. So everything below the reject window came out white instead of black.
+* The re-zeroing step meant the device's documented reject palette (e.g. 11 for the PV .035) was never actually displayed; the simulator's reject floor was always palette 0.
+
+Pass 3b replaces the dB-shift formulation with a **direct palette clamp**:
+
+```cpp
+buffer[offset] = fminf(fmaxf(buffer[offset], reject_palette), saturation_palette);
+```
+
+`SimParams::reject_palette` and `SimParams::saturation_palette` replace the old `reject_db` / `dynamic_range_db` knobs. With both at 0 (default) the display-window stage is skipped entirely. The PV .035 YAML uses the values straight out of `gain_lut.json` (`reject_palette: 11.0`, `saturation_palette: 239.0`), so the device's reject floor and saturation ceiling reproduce by construction.
+
+**Tier 1 acceptance after Pass 3b:** the Tier 1 evaluation script (`instrument-calibration/p035_visions/tier1_evaluation.py`) reports five PASSes (configuration round-trip A, configuration self-consistency B, log-compression mapping G with 0.0 palette error, TGC schedule H with 0.0 dB error, and the new gain-alignment diagnostic with bg landing at palette 47.3 vs the bench reference 46.2 — Δ = +0.19 dB). The remaining FAILs (axial PSF C, lateral PSF D, ring-down RMS E) are all attributable to the wire-vs-bg contrast gap: every wire saturates at `saturation_palette = 239`, so the −6 dB FWHM measurement is undefined and the PSF-ringdown shape RMS is dominated by saturation rather than ringdown shape. Test F (noise floor σ) remains N/A pending the additive-noise wiring deferred to Pass 4. The renderer-vs-bench wire-vs-bg contrast gap (~74 dB) is tracked separately in `instrument-calibration/p035_visions/calibration_delta.md` as the next blocking issue for closing C/D/E.
 
 ---
 

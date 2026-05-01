@@ -478,7 +478,8 @@ rays emanate radially over 360° for a cross-sectional vessel image.
             - write_debug_images: Enable debug image output
             - b_mode_size: B-mode image size (width, height). For IVUS unwrapped display: (angle pixels, depth pixels).
             - tgc_control_points: List[TgcControlPoint]; empty => use built-in probe-type default.
-            - log_multiplier / log_floor: log_compression(out = mul * log10(max(in, floor))).
+            - log_multiplier / log_floor: log_compression(out = mul * log10(amp / floor)).
+            - reject_palette / saturation_palette: post-log display-window clamp.
             - median_clip_size / median_clip_d_min_db / median_clip_d_max_db: median clip filter knobs.
             - scattering_resolution_mm: 0 => auto from probe type (10 mm IVUS / 50 mm general).
             - scatter_integral_scale: scale on the scatter line integral (0 = strict).
@@ -523,7 +524,7 @@ rays emanate radially over 360° for a cross-sectional vessel image.
                      "log_compression multiplier (default 20.0)")
       .def_readwrite("log_floor",
                      &raysim::RaytracingUltrasoundSimulator::SimParams::log_floor,
-                     "log_compression floor (default 1e-19)")
+                     "log_compression calibration anchor (amp == log_floor -> palette 0; default 1.0)")
       .def_readwrite("median_clip_size",
                      &raysim::RaytracingUltrasoundSimulator::SimParams::median_clip_size,
                      "Median clip filter kernel size (default 5)")
@@ -548,14 +549,21 @@ rays emanate radially over 360° for a cross-sectional vessel image.
           "Pass 2: calibrated ring-down injection (RingDownParams). Enabled=False "
           "by default (truly silent lumen).")
       .def_readwrite(
-          "dynamic_range_db",
-          &raysim::RaytracingUltrasoundSimulator::SimParams::dynamic_range_db,
-          "Pass 2: post-log display window width in dB. 0 (default) disables the "
-          "stage so default callers keep the historical pure-log mapping.")
+          "reject_palette",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::reject_palette,
+          "Pass 3b: post-log display-window reject floor (palette units). "
+          "Inputs below this value are clamped up to it. Disabled when "
+          "saturation_palette <= reject_palette (both default to 0.f).")
       .def_readwrite(
-          "reject_db",
-          &raysim::RaytracingUltrasoundSimulator::SimParams::reject_db,
-          "Pass 2: reject floor in dB (display window). Inputs <= reject_db map to 0.")
+          "saturation_palette",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::saturation_palette,
+          "Pass 3b: post-log display-window saturation ceiling (palette units). "
+          "Inputs above this value are clamped down to it.")
+      .def_readwrite(
+          "gain_db",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::gain_db,
+          "Pass 3: reference gain (dB) applied to envelope amp between Hilbert and "
+          "log compression: amp <- amp * 10^(gain_db / 20). 0.0 = no-op (default).")
       .def_property(
           "b_mode_size",
           [](raysim::RaytracingUltrasoundSimulator::SimParams& self) {

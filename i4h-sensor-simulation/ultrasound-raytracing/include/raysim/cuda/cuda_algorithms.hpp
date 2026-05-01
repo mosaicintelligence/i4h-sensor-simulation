@@ -104,15 +104,23 @@ class CUDAAlgorithms {
   void mean_planes(CudaMemory* source, uint3 size, CudaMemory* dst, cudaStream_t stream);
 
   /**
-   * Log compression in place.
+   * Log compression in place (Pass 3b / K2v2 spec mapping):
    *
-   * buffer[i] = log10(min(buffer[i], minimum) / max(buffer)) * mutliplicator
+   *   buffer[i] = mutliplicator * log10(max(buffer[i], eps) / max(minimum, eps))
    *
-   * @param buffer [in] input data
-   * @param size [in]
-   * @param multiplicator [in] multiplicator
-   * @param minimum [in]
-   * @param stream [in] CUDA stream
+   * `minimum` is the calibration anchor (`log_floor`): amp == minimum maps to
+   * pixel 0; amp == 10*minimum maps to pixel == mutliplicator; amp < minimum
+   * maps to a *negative* palette (which `apply_display_window` clamps to the
+   * device's reject palette). The kernel applies a tiny epsilon clamp so
+   * amp == 0 / `minimum == 0` produce a finite, very-negative palette value
+   * instead of NaN/-inf.
+   *
+   * @param buffer [in,out] envelope buffer; replaced by post-log palette in place.
+   * @param size [in] (samples, lines).
+   * @param mutliplicator [in] palette per log10(amplitude) (e.g. 20 = 1 palette/dB).
+   * @param minimum [in] calibration anchor `log_floor` (envelope amplitude
+   *                     mapped to palette 0).
+   * @param stream [in] CUDA stream.
    */
   void log_compression(CudaMemory* buffer, uint2 size, float mutliplicator, float minimum,
                        cudaStream_t stream);
@@ -146,26 +154,43 @@ class CUDAAlgorithms {
                float scale, cudaStream_t stream);
 
   /**
-   * In-place display window after log compression: clamp to
-   * `[reject_db, reject_db + dynamic_range_db]` and remap that interval to
-   * `[0, log_multiplier * dynamic_range_db / 20]` (matches the previous
-   * `log_multiplier * log10(amp)` mapping for the surviving range).
+   * Multiply every element of `buffer` by a scalar in place.
    *
-   * Reproduces the device's reject / saturation palette. When `dynamic_range_db
-   * <= 0` the call is a no-op (the simulator falls back to the historical
-   * "pure log compression" output range), which is what default callers want.
+   * Used by the Pass 3 reference-gain stage between envelope detection and
+   * log compression: `amp <- amp * 10^(gain_db / 20)`. When `scale == 1.f`
+   * the call is a no-op (kernel skipped), so default callers pay no cost.
    *
-   * @param buffer [in,out] Row-major buffer of shape (size.y, size.x) in dB.
-   * @param size [in] Buffer extents.
-   * @param reject_db [in] Display floor in dB. Inputs <= reject_db map to 0.
-   * @param dynamic_range_db [in] Width of the displayed window in dB.
-   * @param log_multiplier [in] Same `log_multiplier` used by `log_compression`;
-   *                            sets the output palette scale.
+   * @param buffer [in,out] Row-major buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents in samples.
+   * @param scale [in] Multiplier applied to every element.
    * @param stream [in] CUDA stream.
    */
-  void apply_display_window(CudaMemory* buffer, uint2 size, float reject_db,
-                            float dynamic_range_db, float log_multiplier,
-                            cudaStream_t stream);
+  void scale_buffer(CudaMemory* buffer, uint2 size, float scale, cudaStream_t stream);
+
+  /**
+   * In-place display window after log compression: clamp every element of
+   * `buffer` to `[reject_palette, saturation_palette]` in palette units.
+   *
+   * Pass 3b semantics: the post-log palette produced by `log_compression`
+   * is already in absolute palette units (because `log_compression` uses
+   * the calibrated `log_multiplier` / `log_floor`), so the display window
+   * only has to enforce the device's reject floor and saturation ceiling.
+   * No re-zeroing or shift is applied — palette 0 stays palette 0,
+   * palette 100 stays palette 100, and the device's reject/saturation
+   * values reproduce exactly when the calibrated palette anchors are used.
+   *
+   * Disabled (skipped) when `saturation_palette <= reject_palette`. Default
+   * SimParams leave both at 0.f so default callers pay no cost.
+   *
+   * @param buffer [in,out] Row-major buffer of shape (size.y, size.x) in palette.
+   * @param size [in] Buffer extents.
+   * @param reject_palette [in] Reject floor in palette units (e.g. 11 for PV .035).
+   * @param saturation_palette [in] Saturation ceiling in palette units
+   *                                (e.g. 239 for PV .035).
+   * @param stream [in] CUDA stream.
+   */
+  void apply_display_window(CudaMemory* buffer, uint2 size, float reject_palette,
+                            float saturation_palette, cudaStream_t stream);
 
   /**
    * Apply hilbert transform to each row.
@@ -258,6 +283,7 @@ class CUDAAlgorithms {
   const CudaLauncher log_compression_launcher_;
   const CudaLauncher mul_rows_launcher_;
   const CudaLauncher add_row_launcher_;
+  const CudaLauncher scale_buffer_launcher_;
   const CudaLauncher display_window_launcher_;
   const CudaLauncher median_clip_launcher_;
   const CudaLauncher scan_convert_curvilinear_launcher_;
@@ -271,6 +297,10 @@ class CUDAAlgorithms {
   UniqueCudaEvent sub_event_;
   std::array<UniqueCudaStream, NUM_SUB_STREAMS> sub_streams_;
 
+  // Pass 3 (K2): the log-compression kernel no longer needs scratch buffers
+  // for the per-frame quantile sort. The members are kept (zero-sized) to
+  // avoid touching the constructor's member-initialiser list, but no longer
+  // resized at runtime.
   CudaMemory log_compression_sorted_;
   CudaMemory temp_log_compression_;
   std::shared_ptr<CudaArray> scan_convert_curvilinear_array_;
