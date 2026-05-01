@@ -183,6 +183,7 @@ processing:
     #   sigma_complex(g54)    = 8.46 / 10^(10/20)  = 2.67  (gain reference)
     sigma: 2.6347                         # E7 — RF noise std at gain-54 reference; std of complex Gaussian per quadrature
   ring_down:                              # Manual p.190: caused by element crosstalk + crystal physics
+    enabled: true                         # Pass 2 — turn the calibrated ring-down injector on (false = silent lumen)
     # E6 results from P_035_PointScatter (median-over-theta radial profile,
     # n=19 frames split across gain {44,54,64} x diameter {35,40,60} mm):
     #   peak depth        = 1.80 mm (just inside catheter OD = 1.905 mm) — gain-independent
@@ -204,6 +205,8 @@ processing:
     extent_mm: 3.0                        # E6 — palette-excess drops below 5% of peak by r = 3 mm, all gains
     decay: measured                       # exponential | hanning | measured — physics is exponential-in-RF; we have the measured template, prefer it
     waveform_path: P_035_PointScatter/derived/ringdown/ringdown_template_g54_d60.npy  # canonical mean A-line at gain 54, D 60 mm, n=5; in PALETTE units, simulator should convert via amp = 10^(palette/log_multiplier) and subtract the local speckle floor (~45 palette at gain 54). Path is resolved relative to the simulator's CWD (workspace root).
+    template_pitch_mm: 0.12               # E6 — template was sampled at the device's display pitch (D=60 mm displayed across 500 px => 0.12 mm/px). Loader resamples to the simulator's RF rate (~0.0193 mm/sample at 40 MHz).
+    template_speckle_floor_palette: 45.0  # E5/E6 — anechoic-ROI mean palette at gain 54 (subtract before palette->amp so the "no ringdown" parts of the template map to amp 0 instead of constant background).
     subtract_reference: true              # device default — confirmed from private tag 0x00291006 = 1 in all frames
 
 # Material catalog. The simulator currently ships with these names hard-coded in

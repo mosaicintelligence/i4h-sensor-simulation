@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "raysim/core/probe_types.hpp"
@@ -41,6 +42,33 @@ class CUDAAlgorithms;
 struct TgcControlPoint {
   float depth_cm = 0.f;
   float gain_db = 0.f;
+};
+
+/// Pass 2 — calibrated ring-down injection knobs.
+///
+/// Models the residual ring-down signal that survives the device's Acoustic Reference
+/// subtraction. When `enabled == false` the simulator emits no ring-down at all
+/// (default; matches the "truly quiet lumen" semantics from the calibration handoff).
+/// When `enabled == true` a depth-only waveform is added to every angular A-line
+/// before envelope detection so the lumen looks like a real PV .035 frame.
+///
+/// `decay`:
+///   * "exponential": per-sample envelope = amplitude * exp(-r/decay_length); decay_length
+///     defaults to extent_mm/3 so amplitude has dropped to ~5% by `extent_mm`.
+///   * "hanning":     a half-cosine window of length extent_mm scaled by amplitude.
+///   * "measured":    use `waveform` directly (already in envelope-amplitude units; the
+///                    YAML loader converts the palette template via
+///                    amp = 10^(palette / log_multiplier)).
+///
+/// In all cases the waveform is truncated to zero past `extent_mm` so deeper structures
+/// are unaffected. See `ivus_implementation_writeup.md` §11 for the calibration
+/// provenance and the device-side AR subtraction modeling decisions.
+struct RingDownParams {
+  bool enabled = false;
+  float amplitude = 0.f;            // envelope amplitude at simulator reference gain
+  float extent_mm = 0.5f;           // hard cutoff in radial mm
+  std::string decay = "exponential";  // exponential | hanning | measured
+  std::vector<float> waveform;      // populated by host code from .npy when decay == "measured"
 };
 
 class RaytracingUltrasoundSimulator {
@@ -92,6 +120,24 @@ class RaytracingUltrasoundSimulator {
     float scattering_resolution_mm = 0.f;
     float scatter_integral_scale = 40.f;
     bool disable_scatter = false;
+
+    // -------------------------------------------------------------------------
+    // Pass 2 plumbing.
+    // -------------------------------------------------------------------------
+
+    /// Calibrated ring-down injection (off by default; see `RingDownParams`).
+    /// Added to each A-line between TGC and envelope detection so it goes
+    /// through the same Hilbert + log-compression pipeline as the scatter signal.
+    RingDownParams ring_down;
+
+    /// Display-window dynamic range / reject (post log-compression). 0.f
+    /// disables the stage entirely so default callers keep the existing
+    /// log_multiplier-based mapping. When > 0, the post-log scanlines are
+    /// clamped to [reject_db, reject_db + dynamic_range_db] and remapped so
+    /// the displayed palette matches the device (cf. PV .035: dynamic_range_db
+    /// = 40.6, reject_db = -40.6 => reject palette 11, saturation 239).
+    float dynamic_range_db = 0.f;
+    float reject_db = 0.f;
   };
 
   /// Simulation results
@@ -187,6 +233,18 @@ class RaytracingUltrasoundSimulator {
 
   std::unique_ptr<CudaMemory> tgc_curve_;
   std::optional<ProbeType> tgc_probe_type_;  ///< Probe type used to build current TGC (for cache invalidation)
+
+  // Pass 2 — cached ring-down waveform on device. Rebuilt whenever the host-side
+  // RingDownParams that feed it change (decay shape, amplitude, extent_mm, the
+  // measured waveform, sampling buffer size, or sampling frequency / SoS conversion).
+  std::unique_ptr<CudaMemory> ring_down_waveform_;
+  uint32_t ring_down_sample_count_ = 0;
+  std::string ring_down_decay_cached_;
+  float ring_down_amplitude_cached_ = 0.f;
+  float ring_down_extent_mm_cached_ = 0.f;
+  uint32_t ring_down_buffer_size_cached_ = 0;
+  size_t ring_down_waveform_data_size_cached_ = 0;
+  const float* ring_down_waveform_data_cached_ = nullptr;
 
   void update_psfs(const BaseProbe* probe, cudaStream_t stream, uint32_t buffer_size, float t_far);
 };

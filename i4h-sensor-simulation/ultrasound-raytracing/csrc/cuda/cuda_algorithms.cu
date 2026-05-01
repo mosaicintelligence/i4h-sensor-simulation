@@ -183,6 +183,48 @@ static __global__ void mul_rows_kernel(float* __restrict__ buffer, uint2 size,
   buffer[index.y * size.x + index.x] *= multiplicator[index.x];
 }
 
+// Pass 2: add a per-depth vector to every row of the buffer in place.
+// `addend` has length `addend_size` <= size.x; samples past addend_size are untouched.
+// Used by the ring-down injection stage.
+static __global__ void add_row_kernel(float* __restrict__ buffer, uint2 size,
+                                      const float* __restrict__ addend, uint32_t addend_size,
+                                      float scale) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  if (index.x < addend_size) {
+    buffer[index.y * size.x + index.x] += scale * addend[index.x];
+  }
+}
+
+// Pass 2: post-log display window. Clamp to [reject_db, reject_db + dynamic_range_db]
+// in dB-space and remap that interval to [0, log_multiplier * dynamic_range_db / 20].
+// This reproduces the device's reject / saturation palette while keeping the same
+// post-log palette scale convention as `log_compression_kernel`.
+//
+// Conversion (matches log_compression_kernel's `log_multiplier * log10(amp)` mapping):
+//   palette_per_dB = log_multiplier / 20
+//   value_dB       = buffer_in / palette_per_dB                             (input is already in palette units)
+//   clamped_dB     = clamp(value_dB, reject_db, reject_db + dynamic_range_db)
+//   excess_dB      = clamped_dB - reject_db                                 (in [0, dynamic_range_db])
+//   buffer_out     = excess_dB * palette_per_dB                             (in [0, log_multiplier * dr_db / 20])
+static __global__ void display_window_kernel(float* __restrict__ buffer, uint2 size,
+                                             float reject_db, float dynamic_range_db,
+                                             float log_multiplier) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  const float palette_per_db = log_multiplier / 20.f;
+  const uint32_t offset = index.y * size.x + index.x;
+  const float value_db = buffer[offset] / palette_per_db;
+  const float clamped_db = fminf(fmaxf(value_db, reject_db), reject_db + dynamic_range_db);
+  buffer[offset] = (clamped_db - reject_db) * palette_per_db;
+}
+
 static __global__ void median_clip_kernel(const float* __restrict__ source, uint2 size,
                                           float* __restrict__ dst, uint32_t filter_size,
                                           float d_min, float d_max) {
@@ -500,6 +542,8 @@ CUDAAlgorithms::CUDAAlgorithms()
       mean_planes_launcher_((void*)&mean_planes_kernel),
       log_compression_launcher_((void*)&log_compression_kernel),
       mul_rows_launcher_((void*)&mul_rows_kernel),
+      add_row_launcher_((void*)&add_row_kernel),
+      display_window_launcher_((void*)&display_window_kernel),
       median_clip_launcher_((void*)&median_clip_kernel),
       scan_convert_curvilinear_launcher_((void*)&scan_convert_curvilinear_kernel),
       scan_convert_linear_launcher_((void*)&scan_convert_linear_kernel),
@@ -650,6 +694,39 @@ void CUDAAlgorithms::mul_row(CudaMemory* buffer, uint2 size, CudaMemory* multipl
                             reinterpret_cast<float*>(buffer->get_ptr(stream)),
                             size,
                             reinterpret_cast<const float*>(multiplicator->get_ptr(stream)));
+}
+
+void CUDAAlgorithms::add_row(CudaMemory* buffer, uint2 size, CudaMemory* addend,
+                             uint32_t addend_size, float scale, cudaStream_t stream) {
+  if (addend_size > size.x) {
+    throw std::runtime_error("add_row: addend_size larger than buffer row");
+  }
+  if (addend_size > addend->get_size() / sizeof(float)) {
+    throw std::runtime_error("add_row: addend_size exceeds addend buffer length");
+  }
+  if (addend_size == 0) { return; }
+
+  add_row_launcher_.launch(size,
+                           stream,
+                           reinterpret_cast<float*>(buffer->get_ptr(stream)),
+                           size,
+                           reinterpret_cast<const float*>(addend->get_ptr(stream)),
+                           addend_size,
+                           scale);
+}
+
+void CUDAAlgorithms::apply_display_window(CudaMemory* buffer, uint2 size, float reject_db,
+                                          float dynamic_range_db, float log_multiplier,
+                                          cudaStream_t stream) {
+  if (dynamic_range_db <= 0.f) { return; }  // disabled
+
+  display_window_launcher_.launch(size,
+                                  stream,
+                                  reinterpret_cast<float*>(buffer->get_ptr(stream)),
+                                  size,
+                                  reject_db,
+                                  dynamic_range_db,
+                                  log_multiplier);
 }
 
 void CUDAAlgorithms::hilbert_row(CudaMemory* buffer, uint2 size, cudaStream_t stream) {

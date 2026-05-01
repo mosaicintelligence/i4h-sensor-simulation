@@ -540,6 +540,114 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     write_image(d_scanlines.get(), plane_size, "debug_images/2_tgc.png");
   }
 
+  // 1.6 Ring-down injection (Pass 2)
+  //
+  // Adds the calibrated catheter ring-down residual to every A-line between TGC
+  // and envelope detection. Off by default (`sim_params.ring_down.enabled ==
+  // false` => no signal at all, i.e. quiet lumen). When on, the waveform is
+  // truncated past `extent_mm` (converted to sample count via the sampling
+  // frequency and the round-trip speed of sound) and added pre-Hilbert so the
+  // existing envelope detection + log compression handle the result naturally.
+  //
+  // Provenance of the calibration numbers consumed here is in
+  // `instrument-calibration/p035_visions/volcano_s5i.yaml` (E6 / E7) and the
+  // residual is what survives the device's Acoustic Reference subtraction
+  // (private DICOM tag 0x00291006 = 1 in all PV .035 frames).
+  if (sim_params.ring_down.enabled) {
+    CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Ring-down", sim_params.stream);
+    const auto& rd = sim_params.ring_down;
+
+    // Each scanline has `buffer_size` samples covering the radial range
+    // [0, t_far_mm] (cf. OptiX raygen offset computation in optix_trace.cu:
+    //   `offset = round(t / t_far * (buffer_size - 1))`).
+    // So the spatial pitch in the scanlines is `t_far / buffer_size` mm/sample
+    // — NOT `c / SAMPLING_FREQ / 2`. Using the wrong convention misaligns the
+    // injected ring-down with where it ends up after scan conversion, which
+    // matters because Pass 2 must reproduce the calibrated 1.8 mm peak depth.
+    const float samples_per_mm = (sim_params.t_far > 0.f)
+                                     ? static_cast<float>(sim_params.buffer_size) / sim_params.t_far
+                                     : 0.f;
+    uint32_t extent_samples =
+        static_cast<uint32_t>(std::min<float>(std::ceil(rd.extent_mm * samples_per_mm),
+                                              static_cast<float>(sim_params.buffer_size)));
+
+    // Cache invalidation: rebuild whenever the host-side waveform inputs change.
+    // For decay == "measured" we additionally key on the data pointer + byte size
+    // so callers that swap the waveform get a fresh upload.
+    const float* waveform_ptr = rd.waveform.empty() ? nullptr : rd.waveform.data();
+    const size_t waveform_data_size = rd.waveform.size() * sizeof(float);
+    const bool stale = !ring_down_waveform_ ||
+                       ring_down_decay_cached_ != rd.decay ||
+                       ring_down_amplitude_cached_ != rd.amplitude ||
+                       ring_down_extent_mm_cached_ != rd.extent_mm ||
+                       ring_down_buffer_size_cached_ != sim_params.buffer_size ||
+                       ring_down_sample_count_ != extent_samples ||
+                       (rd.decay == std::string("measured") &&
+                        (ring_down_waveform_data_cached_ != waveform_ptr ||
+                         ring_down_waveform_data_size_cached_ != waveform_data_size));
+
+    if (stale && extent_samples > 0) {
+      std::vector<float> wf(extent_samples, 0.f);
+      if (rd.decay == std::string("exponential")) {
+        // amp(r) = amplitude * exp(-r / decay_length); decay_length = extent_mm/3
+        // so amp drops to ~5% of peak by `extent_mm`.
+        const float decay_length_mm = rd.extent_mm / 3.f;
+        for (uint32_t i = 0; i < extent_samples; ++i) {
+          const float r_mm = static_cast<float>(i) / samples_per_mm;
+          wf[i] = rd.amplitude * std::exp(-r_mm / std::max(decay_length_mm, 1e-6f));
+        }
+      } else if (rd.decay == std::string("hanning")) {
+        // Half-cosine window: amp(0) = amplitude, amp(extent_mm) = 0.
+        for (uint32_t i = 0; i < extent_samples; ++i) {
+          const float t = static_cast<float>(i) / static_cast<float>(extent_samples);
+          wf[i] = rd.amplitude * 0.5f * (1.f + std::cos(static_cast<float>(M_PI) * t));
+        }
+      } else if (rd.decay == std::string("measured")) {
+        // Caller-supplied envelope template, already in envelope-amp units (the
+        // YAML loader does the palette->amp conversion via 10^(palette/log_mult)).
+        // Truncated to extent_samples; padded with zeros if shorter.
+        const uint32_t copy_n = std::min<uint32_t>(extent_samples,
+                                                   static_cast<uint32_t>(rd.waveform.size()));
+        for (uint32_t i = 0; i < copy_n; ++i) { wf[i] = rd.waveform[i]; }
+        // For "measured" the YAML pre-scales the template into envelope amplitude;
+        // amplitude is then a multiplicative override in the same units so a value
+        // of 1.0 keeps the calibration as-fit. Default amplitude == 0 in the
+        // schema, but YAML configs typically set both fields explicitly.
+        if (rd.amplitude != 0.f && rd.amplitude != 1.f) {
+          // Renormalize so the peak of the supplied template equals `amplitude`.
+          float peak = 0.f;
+          for (uint32_t i = 0; i < copy_n; ++i) { peak = std::max(peak, std::fabs(wf[i])); }
+          if (peak > 0.f) {
+            const float scale = rd.amplitude / peak;
+            for (uint32_t i = 0; i < copy_n; ++i) { wf[i] *= scale; }
+          }
+        }
+      } else {
+        throw std::runtime_error(
+            std::string("Ring-down: unknown decay shape '") + rd.decay +
+            "' (expected one of: exponential, hanning, measured)");
+      }
+      ring_down_waveform_ = std::make_unique<CudaMemory>(extent_samples * sizeof(float),
+                                                         sim_params.stream);
+      ring_down_waveform_->upload(wf.data(), sim_params.stream);
+      ring_down_sample_count_ = extent_samples;
+      ring_down_decay_cached_ = rd.decay;
+      ring_down_amplitude_cached_ = rd.amplitude;
+      ring_down_extent_mm_cached_ = rd.extent_mm;
+      ring_down_buffer_size_cached_ = sim_params.buffer_size;
+      ring_down_waveform_data_cached_ = waveform_ptr;
+      ring_down_waveform_data_size_cached_ = waveform_data_size;
+    }
+
+    if (extent_samples > 0 && ring_down_waveform_) {
+      cuda_algorithms_->add_row(d_scanlines.get(), plane_size, ring_down_waveform_.get(),
+                                ring_down_sample_count_, /*scale=*/1.f, sim_params.stream);
+    }
+    if (sim_params.write_debug_images) {
+      write_image(d_scanlines.get(), plane_size, "debug_images/2b_ringdown.png");
+    }
+  }
+
   // 2. Envelope detection
   {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Envelope detection", sim_params.stream);
@@ -561,6 +669,24 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   }
   if (sim_params.write_debug_images) {
     write_image(d_scanlines.get(), plane_size, "debug_images/4_log_compression.png");
+  }
+
+  // 3.5 Display window (Pass 2)
+  //
+  // Applies the device's reject / dynamic-range palette mapping after log
+  // compression. With dynamic_range_db == 0 this stage is a no-op so default
+  // callers see the historical pure-log output. Calibrated PV .035 settings
+  // (dynamic_range_db=40.6, reject_db=-40.6) reproduce reject palette = 11 and
+  // saturation = 239 on the device's 256-entry grayscale (cf. volcano_s5i.yaml
+  // E7 derivation).
+  if (sim_params.dynamic_range_db > 0.f) {
+    CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Display window", sim_params.stream);
+    cuda_algorithms_->apply_display_window(
+        d_scanlines.get(), plane_size, sim_params.reject_db, sim_params.dynamic_range_db,
+        sim_params.log_multiplier, sim_params.stream);
+    if (sim_params.write_debug_images) {
+      write_image(d_scanlines.get(), plane_size, "debug_images/4b_display_window.png");
+    }
   }
 
   // 4. Median clip filter for speckle noise reduction
