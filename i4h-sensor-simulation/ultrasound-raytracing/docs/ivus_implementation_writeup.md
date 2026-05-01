@@ -630,7 +630,18 @@ Pass 3b shipped a calibrated PV .035 build that visually showed a "bright centre
 
    Knock-on: the bisection in `derive_gain_db.py` was using a calibrated render that previously included the Hilbert-leakage bg lift; with that lift gone, the calibrated `gain_db` had to grow by **+12.19 dB** (132.83 → 145.02) to keep the post-clamp anechoic mean palette at the bench's 46.2 reference. Test I drops from RMS = 31.4 → 21.4 → ~30 palette across the chain (the third number is after the gain re-fit; max |Δ| now sits in the bright shoulder at r ≈ 4-7 mm rather than the spurious far-field rise).
 
-2. **Bright shoulder at r ≈ 4-7 mm.** Pure-scatter renders (ring-down OFF, scatter ON) still show a near-field palette peak (mean ≈ 100-170) that the bench does not. Independent of `scattering_resolution_mm` (sweep 0.2 → 10 mm shows the peak at r ≈ 5 mm in every case). Almost certainly a near-field artifact in the OptiX scatter integral or the depth-bin indexing — a focused investigation under §12 / Pass 5.
+2. **Bright shoulder at r ≈ 4-7 mm — root-caused but not yet fixed (Pass 5).** Pure-scatter renders (ring-down OFF, scatter ON) show a near-field palette peak (mean ≈ 100-200, vs bench ~33-44) that the bench does not. A controlled diagnostic comparing 2D-depth-dependent vs 1D-constant lateral PSF (probe `element_radius=0` falls back to 1D const) showed the **2D depth-dependent lateral PSF is the source**:
+
+   - The 1D-constant lateral PSF gives mean palette ≈ 18-45 across all depths — consistent with the bench's 33-44 floor.
+   - The 2D depth-dependent PSF (`update_psfs` Gaussian-beam model) produces wild depth-dependent oscillation (palette 14 → 200 over ~1 mm intervals in r ∈ [0, 7] mm) that converges to the 1D fallback past r ≈ 12 mm.
+
+   Three sub-issues identified in the implementation (`csrc/cuda/cuda_algorithms.cu` `convolve_columns_depth_dependent_kernel` and `csrc/core/raytracing_ultrasound_simulator.cpp` `update_psfs`):
+
+   1. **Non-cyclic angular convolution.** IVUS angles wrap 360° but the convolution truncates at `index.y = 0` and `index.y = num_scanlines - 1` (lines 106-107). Should be cyclic (`(index.y + k + size.y) % size.y`).
+   2. **`kernel_radius = 64` too small for near-field beam.** At r = 1 mm the Gaussian σ = 113 angular bins (wider than the 64-bin half-window), so the kernel is severely truncated and the sum=1 normalization fails to renormalize against the lost mass.
+   3. **L1-normalized kernel makes envelope amplitude depth-dependent.** For random scatter, the envelope mean of a kernel-convolved zero-mean RF is proportional to the kernel's L2 norm. With sum=1 normalization, L2 ∝ 1/√σ → small-σ depths see disproportionately larger envelope amplitude than large-σ depths. Should normalize by L2 to make envelope amp depth-invariant for random-bg scatter.
+
+   Pass 5 should fix all three (one PR, requires re-running `derive_gain_db.py` since the bg statistics will shift again).
 
 **Tier 1 test I — depth uniformity in anechoic ROI.** New diagnostic in `tier1_evaluation.py` that:
 - Renders N anechoic frames with the calibrated YAML (ring-down ON since that's the deployed config).
