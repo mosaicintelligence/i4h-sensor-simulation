@@ -82,7 +82,14 @@ sim:
   min_intensity: 1.0e-3
   contact_epsilon_mm: 0.0
   conv_psf: true
-  median_clip_filter: true
+  # Pass 3b: disabled because the calibrated K2v2 + display-window pipeline
+  # already produces the device's reject/saturation behaviour directly. The
+  # legacy median_clip kernel uses absolute thresholds (d_min_db/d_max_db)
+  # designed for the pre-Pass-1 [-60, 0] palette range; on the calibrated
+  # absolute palette range (~[11, 239]) it pins every pixel to its local
+  # median and crushes the dynamic range. Re-enable only after rewriting
+  # median_clip to use offsets relative to the local median.
+  median_clip_filter: false
   # --- Future ---
   sampling_freq_mhz: 40.0                 # currently hard-coded SAMPLING_FREQ in C++
 
@@ -161,9 +168,56 @@ processing:
   # gain 64 is closer to +13 dB than +10 dB) -- but this depends on
   # whether the compression curve is signal-level dependent (most
   # likely it is). Re-fit after E7 with a calibrated reflector.
-  gain_db: 0.0                            # E7 — simulator reference = slider 54 (= 0 dB by convention); other amplitudes scale by 10^((g-54)/20)
-  dynamic_range_db: 40.6                  # E7 — (saturation_palette - reject_palette) * 20 / log_multiplier = (239-11)*20/112.3
-  reject_db: -40.6                        # E7 — palette 11 is the bottom of the displayed dynamic range
+  #
+  # Pass 3b — gain_db is wired (raysim/config.py:ProcessingConfig.gain_db,
+  # SimParams::gain_db). The value below is the *renderer-specific* offset
+  # that puts the OptiX/CUDA backend's RF amplitudes onto the bench's
+  # calibrated scale at slider 54. It is applied PRE-Hilbert and PRE-
+  # ring-down injection (see raytracing_ultrasound_simulator.cpp §1.55)
+  # so that ring-down's `amplitude` field can stay specified in
+  # bench-calibrated envelope units without being double-scaled.
+  #
+  # Calibration target: the bench water-scatter background mean palette
+  # (46.2 at slider 54, E5). We iterate gain_db in a bisection search so
+  # the post-clamp post-pipeline mean palette of an anechoic lumen render
+  # matches the bench. A pure-amplitude derivation (gain_db_bg_amp_pure)
+  # systematically over-shoots by ~24 dB because the simulator's bg
+  # distribution is wider than the bench's (Rayleigh log10 std = 31
+  # palette vs bench 20.3) — the long left tail crashes through the
+  # reject_palette = 11 floor and the clamp lifts the post-clamp mean by
+  # ~33 palette. The refined value puts the rendered bg at the bench
+  # reference within tolerance.
+  #
+  # Wire-vs-bg contrast: the simulator's OptiX backend produces
+  # ~+100 dB wire/bg contrast in the rendered envelope vs the bench's
+  # ~+26 dB; with the bg-calibrated gain_db, sim wires saturate at
+  # saturation_palette = 239 (matching how the bench renders its
+  # inner saturated wires, but over-saturating the outer ones). Closing
+  # the contrast gap is a scattering-strength problem the gain_db scalar
+  # cannot fix — see ivus_implementation_writeup.md §11.9.
+  #
+  # Derivation (derive_gain_db.py output:
+  # P_035_PointScatter/derived/gain_lut/gain_db_derivation.json):
+  #   sim   water-bg amp (raw envelope render, log_floor=1, log_mult=1,
+  #     gain_db=0, no ring-down, no display window) = 3.56e-8
+  #   bench water-bg amp at slider 54 (palette 46.2 / log_mult=112.3)
+  #     = 10^(46.2/112.3) = 2.58
+  #   gain_db_bg_amp_pure  = 20 * log10(2.58 / 3.56e-8) = +157.20 dB
+  #     (over-shoots due to clamp lift)
+  #   gain_db_calibrated   = bisection match of post-clamp mean palette
+  #                         to 46.2 = +132.83 dB
+  # IQR across the 7 unsaturated bench wires (informational, the wire-
+  # target alternative): median +83.6 dB.
+  # To switch sliders, add (slider - 54) dB per the bench gain LUT
+  # (gain_lut.json -> gain_db_table).
+  gain_db: 132.83                         # E7 — renderer offset; post-clamp bg mean palette match (derive_gain_db.py, target = water_background_post_clamp_mean_palette)
+  # Pass 3b — display window in palette units. The post-log palette is
+  # already in absolute palette units (because log_compression uses the
+  # calibrated log_multiplier / log_floor), so the display window only has
+  # to enforce the device's hard reject floor and saturation ceiling.
+  # Anchors come straight from gain_lut.json (E7).
+  reject_palette: 11.0                    # E7 — device reject palette at slider 54 (gain_lut.json)
+  saturation_palette: 239.0               # E7 — device saturation palette at slider 54 (gain_lut.json)
   compression_lut: null                   # Manual p.141: device uses 256-entry grayscale palette; with only 3 gain points we can't reconstruct it (full E7 needs the calibrated-reflector amplitude sweep)
   noise:
     # E5 results from P_035_PointScatter (anechoic-ROI palette histograms,

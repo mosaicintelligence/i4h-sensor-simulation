@@ -18,7 +18,9 @@
 #include "raysim/cuda/cuda_algorithms.hpp"
 
 #include <sutil/vec_math.h>
-#include <cub/cub.cuh>
+// cub/cub.cuh was previously included for the per-frame quantile sort in
+// log_compression; Pass 3 (K2) removed that reduction so the include is no
+// longer needed.
 #include <cufftdx/cufftdx.hpp>
 
 namespace raysim {
@@ -160,8 +162,32 @@ static __global__ void mean_planes_kernel(const float* __restrict__ source, uint
   dst[offset] = sum / size.z;
 }
 
+// Pass 3 (K2v2): fixed-reference log compression.
+//
+// Implements the spec mapping
+//   pixel = log_multiplier * log10(amp / log_floor)
+// where `minimum == log_floor` is the calibration anchor: amp == log_floor
+// maps to pixel == 0, amp == 10*log_floor maps to pixel == log_multiplier,
+// amp < log_floor maps to a *negative* palette (which the post-log display
+// window can then clamp to the device's reject palette). This is the spec
+// mapping used by the calibration sheet (`gain_lut.json` /
+// `volcano_s5i.yaml`).
+//
+// Two safety clamps:
+//   * `floor_safe = max(log_floor, 1e-30)` so a degenerate `log_floor == 0`
+//     in user-supplied SimParams does not divide by zero.
+//   * `amp_safe = max(amp, 1e-30 * floor_safe)` so envelope amp == 0 (or any
+//     denormal) maps to a finite, very-negative palette of about
+//     `-30 * log_multiplier` instead of NaN/-inf. Downstream stages
+//     (display window) then clamp this to `reject_palette`.
+//
+// Note: this changes the meaning of the historical Pass 3a K2 mapping
+// `pixel = log_multiplier * log10(max(amp, log_floor))` by an additive
+// offset of `-log_multiplier * log10(log_floor)`. The Pass 1 default was
+// `log_floor = 1e-19`; that default is now `1.0` (see SimParams::log_floor)
+// so default callers get a useful `[-60, 0]`-ish palette range that matches
+// the existing `examples/ivus_example.py` `MIN_VAL/MAX_VAL` window.
 static __global__ void log_compression_kernel(float* __restrict__ buffer, uint2 size,
-                                              const float* __restrict__ quantile,
                                               float mutliplicator, float minimum) {
   const uint2 index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
@@ -170,7 +196,9 @@ static __global__ void log_compression_kernel(float* __restrict__ buffer, uint2 
 
   const uint32_t offset = index.y * size.x + index.x;
 
-  buffer[offset] = log10f(max(buffer[offset], minimum) / (*quantile)) * mutliplicator;
+  const float floor_safe = fmaxf(minimum, 1e-30f);
+  const float amp_safe = fmaxf(buffer[offset], 1e-30f * floor_safe);
+  buffer[offset] = log10f(amp_safe / floor_safe) * mutliplicator;
 }
 
 static __global__ void mul_rows_kernel(float* __restrict__ buffer, uint2 size,
@@ -199,30 +227,53 @@ static __global__ void add_row_kernel(float* __restrict__ buffer, uint2 size,
   }
 }
 
-// Pass 2: post-log display window. Clamp to [reject_db, reject_db + dynamic_range_db]
-// in dB-space and remap that interval to [0, log_multiplier * dynamic_range_db / 20].
-// This reproduces the device's reject / saturation palette while keeping the same
-// post-log palette scale convention as `log_compression_kernel`.
+// Pass 3: in-place scalar multiply on every element of `buffer`.
 //
-// Conversion (matches log_compression_kernel's `log_multiplier * log10(amp)` mapping):
-//   palette_per_dB = log_multiplier / 20
-//   value_dB       = buffer_in / palette_per_dB                             (input is already in palette units)
-//   clamped_dB     = clamp(value_dB, reject_db, reject_db + dynamic_range_db)
-//   excess_dB      = clamped_dB - reject_db                                 (in [0, dynamic_range_db])
-//   buffer_out     = excess_dB * palette_per_dB                             (in [0, log_multiplier * dr_db / 20])
-static __global__ void display_window_kernel(float* __restrict__ buffer, uint2 size,
-                                             float reject_db, float dynamic_range_db,
-                                             float log_multiplier) {
+// Used by the reference-gain stage to bring raytraced RF amplitudes onto the
+// bench's calibrated linear scale before ring-down injection
+// (`rf <- rf * 10^(gain_db / 20)`; equivalent to scaling envelope post-
+// Hilbert by linearity of |Hilbert(s*x)| = s*|Hilbert(x)|). The host wrapper
+// short-circuits on `scale == 1.f` so default callers don't even launch the
+// kernel.
+static __global__ void scale_buffer_kernel(float* __restrict__ buffer, uint2 size,
+                                           float scale) {
   const uint2 index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
 
   if ((index.x >= size.x) || (index.y >= size.y)) { return; }
 
-  const float palette_per_db = log_multiplier / 20.f;
   const uint32_t offset = index.y * size.x + index.x;
-  const float value_db = buffer[offset] / palette_per_db;
-  const float clamped_db = fminf(fmaxf(value_db, reject_db), reject_db + dynamic_range_db);
-  buffer[offset] = (clamped_db - reject_db) * palette_per_db;
+  buffer[offset] *= scale;
+}
+
+// Pass 3b: post-log display window. Direct clamp to
+// `[reject_palette, saturation_palette]` in palette units. This reproduces
+// the device's reject / saturation palette behaviour: any amplitude whose
+// post-log palette is below `reject_palette` is pushed up to the reject
+// floor (no negative pixels leak through), and any amplitude above
+// `saturation_palette` is clipped to the saturation ceiling.
+//
+// The previous Pass 2 kernel did two things at once: clamp the dB window AND
+// re-zero the lower bound (subtract `reject_db`). The re-zero step shifted
+// the entire palette so that `reject_db` mapped to palette 0 and the
+// device's own `reject_palette` value (e.g. 11) was no longer reached;
+// worse, the input palette of 0 (which K2v2's negative outputs *should*
+// map to the reject floor) was instead shifted up to the saturation
+// ceiling. This kernel matches the calibration sheet semantics: the post-
+// log palette is *already* in absolute palette units (because
+// `log_compression_kernel` uses the calibrated `log_multiplier` /
+// `log_floor`), so the display window only has to enforce the device's
+// hard floor and ceiling.
+static __global__ void display_window_kernel(float* __restrict__ buffer, uint2 size,
+                                             float reject_palette,
+                                             float saturation_palette) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  const uint32_t offset = index.y * size.x + index.x;
+  buffer[offset] = fminf(fmaxf(buffer[offset], reject_palette), saturation_palette);
 }
 
 static __global__ void median_clip_kernel(const float* __restrict__ source, uint2 size,
@@ -543,6 +594,7 @@ CUDAAlgorithms::CUDAAlgorithms()
       log_compression_launcher_((void*)&log_compression_kernel),
       mul_rows_launcher_((void*)&mul_rows_kernel),
       add_row_launcher_((void*)&add_row_kernel),
+      scale_buffer_launcher_((void*)&scale_buffer_kernel),
       display_window_launcher_((void*)&display_window_kernel),
       median_clip_launcher_((void*)&median_clip_kernel),
       scan_convert_curvilinear_launcher_((void*)&scan_convert_curvilinear_kernel),
@@ -646,41 +698,13 @@ void CUDAAlgorithms::mean_planes(CudaMemory* source, uint3 size, CudaMemory* dst
 
 void CUDAAlgorithms::log_compression(CudaMemory* buffer, uint2 size, float mutliplicator,
                                      float minimum, cudaStream_t stream) {
-  const uint32_t num_items = size.x * size.y;
+  // Pass 3 (K2): the kernel now uses the spec's fixed-reference mapping
+  // `pixel = mutliplicator * log10(max(amp, minimum))`, no per-frame quantile.
+  // The quantile-normalisation scratch buffers are no longer needed; they are
+  // kept on the host as zero-size resize-able allocations so that downstream
+  // bookkeeping (`CudaMemory` pool churn) is unchanged.
   float* const d_data = reinterpret_cast<float*>(buffer->get_ptr(stream));
-
-  // get 0.9999 quantile of buffer
-  log_compression_sorted_.resize(buffer->get_size(), stream);
-  float* const d_sorted = reinterpret_cast<float*>(log_compression_sorted_.get_ptr(stream));
-
-  {
-    // Determine temporary device storage requirements
-    size_t temp_storage_bytes = 0;
-    CUDA_CHECK(cub::DeviceRadixSort::SortKeys(nullptr,
-                                              temp_storage_bytes,
-                                              d_data,
-                                              d_sorted,
-                                              num_items,
-                                              0,
-                                              sizeof(float) * 8 /*end_bit*/,
-                                              stream));
-
-    temp_log_compression_.resize(temp_storage_bytes, stream);
-
-    // Run max-reduction
-    CUDA_CHECK(cub::DeviceRadixSort::SortKeys(temp_log_compression_.get_ptr(stream),
-                                              temp_storage_bytes,
-                                              d_data,
-                                              d_sorted,
-                                              num_items,
-                                              0,
-                                              sizeof(float) * 8 /*end_bit*/,
-                                              stream));
-  }
-
-  const float* const d_quantile = d_sorted + uint32_t(0.99999f * (num_items - 1) + 0.5f);
-
-  log_compression_launcher_.launch(size, stream, d_data, size, d_quantile, mutliplicator, minimum);
+  log_compression_launcher_.launch(size, stream, d_data, size, mutliplicator, minimum);
 }
 
 void CUDAAlgorithms::mul_row(CudaMemory* buffer, uint2 size, CudaMemory* multiplicator,
@@ -715,18 +739,29 @@ void CUDAAlgorithms::add_row(CudaMemory* buffer, uint2 size, CudaMemory* addend,
                            scale);
 }
 
-void CUDAAlgorithms::apply_display_window(CudaMemory* buffer, uint2 size, float reject_db,
-                                          float dynamic_range_db, float log_multiplier,
-                                          cudaStream_t stream) {
-  if (dynamic_range_db <= 0.f) { return; }  // disabled
+void CUDAAlgorithms::scale_buffer(CudaMemory* buffer, uint2 size, float scale,
+                                  cudaStream_t stream) {
+  if (scale == 1.f) { return; }  // no-op fast path
+
+  scale_buffer_launcher_.launch(size,
+                                stream,
+                                reinterpret_cast<float*>(buffer->get_ptr(stream)),
+                                size,
+                                scale);
+}
+
+void CUDAAlgorithms::apply_display_window(CudaMemory* buffer, uint2 size, float reject_palette,
+                                          float saturation_palette, cudaStream_t stream) {
+  // Disabled when the ceiling is at or below the floor (default-constructed
+  // SimParams leaves both at 0.f, so default callers skip the launch).
+  if (!(saturation_palette > reject_palette)) { return; }
 
   display_window_launcher_.launch(size,
                                   stream,
                                   reinterpret_cast<float*>(buffer->get_ptr(stream)),
                                   size,
-                                  reject_db,
-                                  dynamic_range_db,
-                                  log_multiplier);
+                                  reject_palette,
+                                  saturation_palette);
 }
 
 void CUDAAlgorithms::hilbert_row(CudaMemory* buffer, uint2 size, cudaStream_t stream) {
