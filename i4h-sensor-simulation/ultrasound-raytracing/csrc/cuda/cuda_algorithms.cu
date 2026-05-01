@@ -162,23 +162,31 @@ static __global__ void mean_planes_kernel(const float* __restrict__ source, uint
   dst[offset] = sum / size.z;
 }
 
-// Pass 3 (K2): fixed-reference log compression.
+// Pass 3 (K2v2): fixed-reference log compression.
 //
-// Implements the spec mapping `pixel = log_multiplier * log10(max(amp, log_floor))`,
-// i.e. the post-log palette is an *absolute* function of the envelope amplitude
-// rather than being normalised by a per-frame quantile of the buffer. This is
-// what the calibration sheet documents (`gain_lut.json` /
-// `volcano_s5i.yaml`) and what the bench acquisition pipeline actually does;
-// the previous per-frame 99.999%-quantile normalisation was a legacy artifact
-// that made absolute palette values frame-dependent and broke the round-trip
-// against the calibration sheet (Tier 1 test G).
+// Implements the spec mapping
+//   pixel = log_multiplier * log10(amp / log_floor)
+// where `minimum == log_floor` is the calibration anchor: amp == log_floor
+// maps to pixel == 0, amp == 10*log_floor maps to pixel == log_multiplier,
+// amp < log_floor maps to a *negative* palette (which the post-log display
+// window can then clamp to the device's reject palette). This is the spec
+// mapping used by the calibration sheet (`gain_lut.json` /
+// `volcano_s5i.yaml`).
 //
-// Note: this is a behavioural change vs the Pass 1 promise of byte-identical
-// defaults. Callers that constructed `SimParams()` and relied on the legacy
-// kernel will see different output. See `docs/ivus_implementation_writeup.md`
-// §11.3 / §11.8 for the migration notes; in practice the only caller that
-// needed updating was the existing `examples/ivus_example.py`, which now
-// matches the bench's display-window-clipped output.
+// Two safety clamps:
+//   * `floor_safe = max(log_floor, 1e-30)` so a degenerate `log_floor == 0`
+//     in user-supplied SimParams does not divide by zero.
+//   * `amp_safe = max(amp, 1e-30 * floor_safe)` so envelope amp == 0 (or any
+//     denormal) maps to a finite, very-negative palette of about
+//     `-30 * log_multiplier` instead of NaN/-inf. Downstream stages
+//     (display window) then clamp this to `reject_palette`.
+//
+// Note: this changes the meaning of the historical Pass 3a K2 mapping
+// `pixel = log_multiplier * log10(max(amp, log_floor))` by an additive
+// offset of `-log_multiplier * log10(log_floor)`. The Pass 1 default was
+// `log_floor = 1e-19`; that default is now `1.0` (see SimParams::log_floor)
+// so default callers get a useful `[-60, 0]`-ish palette range that matches
+// the existing `examples/ivus_example.py` `MIN_VAL/MAX_VAL` window.
 static __global__ void log_compression_kernel(float* __restrict__ buffer, uint2 size,
                                               float mutliplicator, float minimum) {
   const uint2 index =
@@ -188,7 +196,9 @@ static __global__ void log_compression_kernel(float* __restrict__ buffer, uint2 
 
   const uint32_t offset = index.y * size.x + index.x;
 
-  buffer[offset] = log10f(max(buffer[offset], minimum)) * mutliplicator;
+  const float floor_safe = fmaxf(minimum, 1e-30f);
+  const float amp_safe = fmaxf(buffer[offset], 1e-30f * floor_safe);
+  buffer[offset] = log10f(amp_safe / floor_safe) * mutliplicator;
 }
 
 static __global__ void mul_rows_kernel(float* __restrict__ buffer, uint2 size,
@@ -217,30 +227,53 @@ static __global__ void add_row_kernel(float* __restrict__ buffer, uint2 size,
   }
 }
 
-// Pass 2: post-log display window. Clamp to [reject_db, reject_db + dynamic_range_db]
-// in dB-space and remap that interval to [0, log_multiplier * dynamic_range_db / 20].
-// This reproduces the device's reject / saturation palette while keeping the same
-// post-log palette scale convention as `log_compression_kernel`.
+// Pass 3: in-place scalar multiply on every element of `buffer`.
 //
-// Conversion (matches log_compression_kernel's `log_multiplier * log10(amp)` mapping):
-//   palette_per_dB = log_multiplier / 20
-//   value_dB       = buffer_in / palette_per_dB                             (input is already in palette units)
-//   clamped_dB     = clamp(value_dB, reject_db, reject_db + dynamic_range_db)
-//   excess_dB      = clamped_dB - reject_db                                 (in [0, dynamic_range_db])
-//   buffer_out     = excess_dB * palette_per_dB                             (in [0, log_multiplier * dr_db / 20])
-static __global__ void display_window_kernel(float* __restrict__ buffer, uint2 size,
-                                             float reject_db, float dynamic_range_db,
-                                             float log_multiplier) {
+// Used by the reference-gain stage to bring raytraced RF amplitudes onto the
+// bench's calibrated linear scale before ring-down injection
+// (`rf <- rf * 10^(gain_db / 20)`; equivalent to scaling envelope post-
+// Hilbert by linearity of |Hilbert(s*x)| = s*|Hilbert(x)|). The host wrapper
+// short-circuits on `scale == 1.f` so default callers don't even launch the
+// kernel.
+static __global__ void scale_buffer_kernel(float* __restrict__ buffer, uint2 size,
+                                           float scale) {
   const uint2 index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
 
   if ((index.x >= size.x) || (index.y >= size.y)) { return; }
 
-  const float palette_per_db = log_multiplier / 20.f;
   const uint32_t offset = index.y * size.x + index.x;
-  const float value_db = buffer[offset] / palette_per_db;
-  const float clamped_db = fminf(fmaxf(value_db, reject_db), reject_db + dynamic_range_db);
-  buffer[offset] = (clamped_db - reject_db) * palette_per_db;
+  buffer[offset] *= scale;
+}
+
+// Pass 3b: post-log display window. Direct clamp to
+// `[reject_palette, saturation_palette]` in palette units. This reproduces
+// the device's reject / saturation palette behaviour: any amplitude whose
+// post-log palette is below `reject_palette` is pushed up to the reject
+// floor (no negative pixels leak through), and any amplitude above
+// `saturation_palette` is clipped to the saturation ceiling.
+//
+// The previous Pass 2 kernel did two things at once: clamp the dB window AND
+// re-zero the lower bound (subtract `reject_db`). The re-zero step shifted
+// the entire palette so that `reject_db` mapped to palette 0 and the
+// device's own `reject_palette` value (e.g. 11) was no longer reached;
+// worse, the input palette of 0 (which K2v2's negative outputs *should*
+// map to the reject floor) was instead shifted up to the saturation
+// ceiling. This kernel matches the calibration sheet semantics: the post-
+// log palette is *already* in absolute palette units (because
+// `log_compression_kernel` uses the calibrated `log_multiplier` /
+// `log_floor`), so the display window only has to enforce the device's
+// hard floor and ceiling.
+static __global__ void display_window_kernel(float* __restrict__ buffer, uint2 size,
+                                             float reject_palette,
+                                             float saturation_palette) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  const uint32_t offset = index.y * size.x + index.x;
+  buffer[offset] = fminf(fmaxf(buffer[offset], reject_palette), saturation_palette);
 }
 
 static __global__ void median_clip_kernel(const float* __restrict__ source, uint2 size,
@@ -561,6 +594,7 @@ CUDAAlgorithms::CUDAAlgorithms()
       log_compression_launcher_((void*)&log_compression_kernel),
       mul_rows_launcher_((void*)&mul_rows_kernel),
       add_row_launcher_((void*)&add_row_kernel),
+      scale_buffer_launcher_((void*)&scale_buffer_kernel),
       display_window_launcher_((void*)&display_window_kernel),
       median_clip_launcher_((void*)&median_clip_kernel),
       scan_convert_curvilinear_launcher_((void*)&scan_convert_curvilinear_kernel),
@@ -705,18 +739,29 @@ void CUDAAlgorithms::add_row(CudaMemory* buffer, uint2 size, CudaMemory* addend,
                            scale);
 }
 
-void CUDAAlgorithms::apply_display_window(CudaMemory* buffer, uint2 size, float reject_db,
-                                          float dynamic_range_db, float log_multiplier,
-                                          cudaStream_t stream) {
-  if (dynamic_range_db <= 0.f) { return; }  // disabled
+void CUDAAlgorithms::scale_buffer(CudaMemory* buffer, uint2 size, float scale,
+                                  cudaStream_t stream) {
+  if (scale == 1.f) { return; }  // no-op fast path
+
+  scale_buffer_launcher_.launch(size,
+                                stream,
+                                reinterpret_cast<float*>(buffer->get_ptr(stream)),
+                                size,
+                                scale);
+}
+
+void CUDAAlgorithms::apply_display_window(CudaMemory* buffer, uint2 size, float reject_palette,
+                                          float saturation_palette, cudaStream_t stream) {
+  // Disabled when the ceiling is at or below the floor (default-constructed
+  // SimParams leaves both at 0.f, so default callers skip the launch).
+  if (!(saturation_palette > reject_palette)) { return; }
 
   display_window_launcher_.launch(size,
                                   stream,
                                   reinterpret_cast<float*>(buffer->get_ptr(stream)),
                                   size,
-                                  reject_db,
-                                  dynamic_range_db,
-                                  log_multiplier);
+                                  reject_palette,
+                                  saturation_palette);
 }
 
 void CUDAAlgorithms::hilbert_row(CudaMemory* buffer, uint2 size, cudaStream_t stream) {
