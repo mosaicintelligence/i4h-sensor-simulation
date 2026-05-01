@@ -559,6 +559,30 @@ Pass 2 adds the first batch of new physics on top of Pass 1's plumbing: a calibr
 
 **What's intentionally not in Pass 2:** noise (deferred per the calibration plan — measurable only on a ring-down-subtracted simulator), `gain_db` (kept informational; per-frame gain is applied by scaling the ring-down `amplitude` and the speckle calibration externally), `compression_lut` (no calibrated LUT yet — full E7 sweep needed). All three remain in `_FUTURE_PATHS`.
 
+### 11.8 Log-compression: fixed-reference mapping (Pass 3a, K2)
+
+Tier 1 evaluation (test G in `instrument-calibration/p035_visions/tier1_results/tier1_results.md`) surfaced a structural divergence between the calibration sheet and the simulator's `log_compression_kernel`:
+
+* The sheet defines `pixel = log_multiplier · log10(max(amp, log_floor) / log_floor)` — an **absolute, fixed-reference** mapping between envelope amplitude and palette.
+* The legacy kernel computed `pixel = log_multiplier · log10(max(amp, log_floor) / per_frame_quantile)` where `per_frame_quantile` was the per-frame 99.999 %-quantile of the envelope buffer. This made absolute palette values **frame-dependent** (every frame's brightest pixel landed at palette 0 regardless of absolute amplitude) and broke the round-trip with the calibration sheet for any non-degenerate scene.
+
+Pass 3a (option K2 from the design discussion) **removes the per-frame quantile** from `log_compression_kernel` so the kernel matches the spec exactly:
+
+```diff
+- buffer[offset] = log10f(max(buffer[offset], minimum) / (*quantile)) * mutliplicator;
++ buffer[offset] = log10f(max(buffer[offset], minimum)) * mutliplicator;
+```
+
+The corresponding C++ caller (`CUDAAlgorithms::log_compression`) drops the `cub::DeviceRadixSort` reduction and the `log_compression_sorted_` / `temp_log_compression_` scratch buffers. The host-side `<cub/cub.cuh>` include is also no longer needed by `cuda_algorithms.cu`.
+
+**Backwards-compat impact (deliberately accepted).** Pass 1 promised "default `SimParams()` is byte-identical to pre-Pass-1." Pass 3a breaks that contract for callers that constructed a default `SimParams()` and consumed the legacy quantile-normalised palette. The replacement behaviour is the spec mapping, and `log_floor` keeps its legacy default of `1e-19`, so the practical effect on default callers is just an additive offset of `log_multiplier · log10(per_frame_quantile)` (typically a few hundred palette) — the *shape* of the output is unchanged. Existing examples (`examples/ivus_example.py`, `examples/wire_phantom_evaluation.py`, `examples/cystic_resolution_phantom_evaluation.py`) still produce sensible images; the calibrated YAML pathway now produces palette values that round-trip with the calibration sheet.
+
+**Tier 1 acceptance after K2:** test G (log-compression mapping) passes by construction; tests A / B / G / H all pass; the headline mismatch left to fix is the **27 dB sim-renderer gain offset** (gain alignment diagnostic), which Pass 3b addresses below.
+
+### 11.9 Reference gain stage (Pass 3b — `gain_db`)
+
+*(Section reserved — implementation in progress on the same branch.)*
+
 ---
 
 ## 12. Potential next steps and modeling gaps

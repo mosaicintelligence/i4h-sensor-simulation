@@ -271,6 +271,10 @@ class CUDAAlgorithms {
   UniqueCudaEvent sub_event_;
   std::array<UniqueCudaStream, NUM_SUB_STREAMS> sub_streams_;
 
+  // Pass 3 (K2): the log-compression kernel no longer needs scratch buffers
+  // for the per-frame quantile sort. The members are kept (zero-sized) to
+  // avoid touching the constructor's member-initialiser list, but no longer
+  // resized at runtime.
   CudaMemory log_compression_sorted_;
   CudaMemory temp_log_compression_;
   std::shared_ptr<CudaArray> scan_convert_curvilinear_array_;

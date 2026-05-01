@@ -18,7 +18,9 @@
 #include "raysim/cuda/cuda_algorithms.hpp"
 
 #include <sutil/vec_math.h>
-#include <cub/cub.cuh>
+// cub/cub.cuh was previously included for the per-frame quantile sort in
+// log_compression; Pass 3 (K2) removed that reduction so the include is no
+// longer needed.
 #include <cufftdx/cufftdx.hpp>
 
 namespace raysim {
@@ -160,8 +162,24 @@ static __global__ void mean_planes_kernel(const float* __restrict__ source, uint
   dst[offset] = sum / size.z;
 }
 
+// Pass 3 (K2): fixed-reference log compression.
+//
+// Implements the spec mapping `pixel = log_multiplier * log10(max(amp, log_floor))`,
+// i.e. the post-log palette is an *absolute* function of the envelope amplitude
+// rather than being normalised by a per-frame quantile of the buffer. This is
+// what the calibration sheet documents (`gain_lut.json` /
+// `volcano_s5i.yaml`) and what the bench acquisition pipeline actually does;
+// the previous per-frame 99.999%-quantile normalisation was a legacy artifact
+// that made absolute palette values frame-dependent and broke the round-trip
+// against the calibration sheet (Tier 1 test G).
+//
+// Note: this is a behavioural change vs the Pass 1 promise of byte-identical
+// defaults. Callers that constructed `SimParams()` and relied on the legacy
+// kernel will see different output. See `docs/ivus_implementation_writeup.md`
+// §11.3 / §11.8 for the migration notes; in practice the only caller that
+// needed updating was the existing `examples/ivus_example.py`, which now
+// matches the bench's display-window-clipped output.
 static __global__ void log_compression_kernel(float* __restrict__ buffer, uint2 size,
-                                              const float* __restrict__ quantile,
                                               float mutliplicator, float minimum) {
   const uint2 index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
@@ -170,7 +188,7 @@ static __global__ void log_compression_kernel(float* __restrict__ buffer, uint2 
 
   const uint32_t offset = index.y * size.x + index.x;
 
-  buffer[offset] = log10f(max(buffer[offset], minimum) / (*quantile)) * mutliplicator;
+  buffer[offset] = log10f(max(buffer[offset], minimum)) * mutliplicator;
 }
 
 static __global__ void mul_rows_kernel(float* __restrict__ buffer, uint2 size,
@@ -646,41 +664,13 @@ void CUDAAlgorithms::mean_planes(CudaMemory* source, uint3 size, CudaMemory* dst
 
 void CUDAAlgorithms::log_compression(CudaMemory* buffer, uint2 size, float mutliplicator,
                                      float minimum, cudaStream_t stream) {
-  const uint32_t num_items = size.x * size.y;
+  // Pass 3 (K2): the kernel now uses the spec's fixed-reference mapping
+  // `pixel = mutliplicator * log10(max(amp, minimum))`, no per-frame quantile.
+  // The quantile-normalisation scratch buffers are no longer needed; they are
+  // kept on the host as zero-size resize-able allocations so that downstream
+  // bookkeeping (`CudaMemory` pool churn) is unchanged.
   float* const d_data = reinterpret_cast<float*>(buffer->get_ptr(stream));
-
-  // get 0.9999 quantile of buffer
-  log_compression_sorted_.resize(buffer->get_size(), stream);
-  float* const d_sorted = reinterpret_cast<float*>(log_compression_sorted_.get_ptr(stream));
-
-  {
-    // Determine temporary device storage requirements
-    size_t temp_storage_bytes = 0;
-    CUDA_CHECK(cub::DeviceRadixSort::SortKeys(nullptr,
-                                              temp_storage_bytes,
-                                              d_data,
-                                              d_sorted,
-                                              num_items,
-                                              0,
-                                              sizeof(float) * 8 /*end_bit*/,
-                                              stream));
-
-    temp_log_compression_.resize(temp_storage_bytes, stream);
-
-    // Run max-reduction
-    CUDA_CHECK(cub::DeviceRadixSort::SortKeys(temp_log_compression_.get_ptr(stream),
-                                              temp_storage_bytes,
-                                              d_data,
-                                              d_sorted,
-                                              num_items,
-                                              0,
-                                              sizeof(float) * 8 /*end_bit*/,
-                                              stream));
-  }
-
-  const float* const d_quantile = d_sorted + uint32_t(0.99999f * (num_items - 1) + 0.5f);
-
-  log_compression_launcher_.launch(size, stream, d_data, size, d_quantile, mutliplicator, minimum);
+  log_compression_launcher_.launch(size, stream, d_data, size, mutliplicator, minimum);
 }
 
 void CUDAAlgorithms::mul_row(CudaMemory* buffer, uint2 size, CudaMemory* multiplicator,
