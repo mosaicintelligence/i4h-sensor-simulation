@@ -540,6 +540,36 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     write_image(d_scanlines.get(), plane_size, "debug_images/2_tgc.png");
   }
 
+  // 1.55 Reference gain (Pass 3b: applied PRE-ring-down)
+  //
+  // Apply the calibrated reference-gain scalar to the post-TGC RF buffer:
+  //   rf <- rf * 10^(gain_db / 20)
+  // Default `gain_db == 0.f` is a no-op; the CUDA helper short-circuits on
+  // scale==1.f so default callers see no overhead.
+  //
+  // Order matters: this stage MUST run before ring-down injection. Ring-down
+  // amplitude is specified in the YAML in **bench-calibrated envelope units**
+  // (i.e. amp == 46.4 means peak displays at log10(46.4)*log_multiplier
+  // palette in the final image), so the renderer has to scale the raytraced
+  // scattering UP to bench scale BEFORE adding ring-down — otherwise the
+  // gain_db scalar would also amplify the already-bench-scale ring-down and
+  // saturate the entire image. Linearity of |Hilbert(s*x)| = s*|Hilbert(x)|
+  // means scaling RF here is equivalent to scaling envelope post-Hilbert.
+  //
+  // This stage lumps two physically distinct effects (see SimParams::gain_db
+  // doc): the bench's slider gain offset and the renderer-specific reference-
+  // amplitude offset that puts the simulator's RF amplitudes onto the
+  // bench's calibrated linear scale. Calibration provenance for the PV .035
+  // lives in `instrument-calibration/p035_visions/calibration_delta.md`.
+  if (sim_params.gain_db != 0.f) {
+    CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Reference gain", sim_params.stream);
+    const float scale = std::pow(10.f, sim_params.gain_db / 20.f);
+    cuda_algorithms_->scale_buffer(d_scanlines.get(), plane_size, scale, sim_params.stream);
+    if (sim_params.write_debug_images) {
+      write_image(d_scanlines.get(), plane_size, "debug_images/2a_reference_gain.png");
+    }
+  }
+
   // 1.6 Ring-down injection (Pass 2)
   //
   // Adds the calibrated catheter ring-down residual to every A-line between TGC
@@ -658,6 +688,10 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     write_image(d_scanlines.get(), plane_size, "debug_images/3_envelope_detection.png");
   }
 
+  // (Pass 3b: reference gain stage moved to step 1.55, before ring-down.
+  //  See the long comment there for why ring-down has to be injected on the
+  //  bench-scale RF buffer rather than on the raw raytracer output.)
+
   // 3. Log compression
   {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Log compression", sim_params.stream);
@@ -671,19 +705,19 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     write_image(d_scanlines.get(), plane_size, "debug_images/4_log_compression.png");
   }
 
-  // 3.5 Display window (Pass 2)
+  // 3.5 Display window (Pass 3b)
   //
-  // Applies the device's reject / dynamic-range palette mapping after log
-  // compression. With dynamic_range_db == 0 this stage is a no-op so default
-  // callers see the historical pure-log output. Calibrated PV .035 settings
-  // (dynamic_range_db=40.6, reject_db=-40.6) reproduce reject palette = 11 and
-  // saturation = 239 on the device's 256-entry grayscale (cf. volcano_s5i.yaml
-  // E7 derivation).
-  if (sim_params.dynamic_range_db > 0.f) {
+  // Direct palette clamp to [reject_palette, saturation_palette]. With both
+  // at 0.f (default) this stage is a no-op so default callers see the
+  // historical pure-log output. Calibrated PV .035 settings
+  // (reject_palette=11, saturation_palette=239 from gain_lut.json) reproduce
+  // the device's reject floor and saturation ceiling directly.
+  if (sim_params.saturation_palette > sim_params.reject_palette) {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Display window", sim_params.stream);
     cuda_algorithms_->apply_display_window(
-        d_scanlines.get(), plane_size, sim_params.reject_db, sim_params.dynamic_range_db,
-        sim_params.log_multiplier, sim_params.stream);
+        d_scanlines.get(), plane_size,
+        sim_params.reject_palette, sim_params.saturation_palette,
+        sim_params.stream);
     if (sim_params.write_debug_images) {
       write_image(d_scanlines.get(), plane_size, "debug_images/4b_display_window.png");
     }

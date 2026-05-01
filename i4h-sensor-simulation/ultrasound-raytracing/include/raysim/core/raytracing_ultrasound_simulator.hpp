@@ -106,9 +106,15 @@ class RaytracingUltrasoundSimulator {
     // -------------------------------------------------------------------------
     std::vector<TgcControlPoint> tgc_control_points;  // (depth_cm, gain_db); empty = auto
 
-    // Log compression: out = log_multiplier * log10(max(in, log_floor))
+    // Log compression (Pass 3b / K2v2): out = log_multiplier * log10(amp / log_floor).
+    // `log_floor` is the calibration anchor (amp == log_floor maps to palette 0).
+    // Default `log_floor = 1.f` makes the mapping reduce to
+    // `log_multiplier * log10(amp)` for amp >= 1, which matches the legacy
+    // `examples/ivus_example.py` MIN_VAL/MAX_VAL = (-60, 0) display window
+    // when `log_multiplier = 20`. Calibrated YAMLs override this with the
+    // bench's anchor (e.g. PV .035 uses log_floor = 1.0, log_multiplier = 112.3).
     float log_multiplier = 20.f;
-    float log_floor = 1e-19f;
+    float log_floor = 1.f;
 
     // Median clip filter (only used when median_clip_filter == true)
     uint32_t median_clip_size = 5;        // square kernel side
@@ -130,14 +136,56 @@ class RaytracingUltrasoundSimulator {
     /// through the same Hilbert + log-compression pipeline as the scatter signal.
     RingDownParams ring_down;
 
-    /// Display-window dynamic range / reject (post log-compression). 0.f
-    /// disables the stage entirely so default callers keep the existing
-    /// log_multiplier-based mapping. When > 0, the post-log scanlines are
-    /// clamped to [reject_db, reject_db + dynamic_range_db] and remapped so
-    /// the displayed palette matches the device (cf. PV .035: dynamic_range_db
-    /// = 40.6, reject_db = -40.6 => reject palette 11, saturation 239).
-    float dynamic_range_db = 0.f;
-    float reject_db = 0.f;
+    /// Pass 3b — display window in palette units.
+    ///
+    /// After log compression (which uses the calibrated `log_multiplier` /
+    /// `log_floor`, so its output is in absolute palette units) the post-log
+    /// buffer is clamped to ``[reject_palette, saturation_palette]``. This
+    /// reproduces the device's hard reject floor and saturation ceiling
+    /// directly (cf. PV .035: `reject_palette = 11`, `saturation_palette =
+    /// 239` from `gain_lut.json`).
+    ///
+    /// Disabled (skipped) when `saturation_palette <= reject_palette`. Both
+    /// default to 0.f so default callers keep the historical pure-log
+    /// mapping; calibrated YAMLs set both to non-zero.
+    ///
+    /// Note: this replaces the previous Pass 2 ``dynamic_range_db`` /
+    /// ``reject_db`` knobs, which both clamped *and* re-zeroed the palette
+    /// (shifting `reject_db` to palette 0). That re-zeroing was incorrect:
+    /// it interacted with K2v2's negative-palette outputs (which represent
+    /// `amp < log_floor`) by shifting them up to the saturation ceiling, so
+    /// the device's reject floor was never actually displayed. The
+    /// palette-anchor formulation removes that bug and matches the
+    /// calibration sheet's semantics directly.
+    float reject_palette = 0.f;
+    float saturation_palette = 0.f;
+
+    // -------------------------------------------------------------------------
+    // Pass 3 plumbing.
+    // -------------------------------------------------------------------------
+
+    /// Pass 3 — single-knob reference gain applied to the envelope buffer
+    /// between Hilbert (stage 2) and log compression (stage 3) as
+    /// ``amp <- amp * 10^(gain_db / 20)``. This lumps two physically distinct
+    /// effects into one calibrated scalar:
+    ///
+    ///   1. The bench's *slider gain* offset (the device's gain control:
+    ///      slider 54 maps to 0 dB by convention; a 10-step change is +/- 10 dB
+    ///      on the bench gain LUT).
+    ///   2. A renderer-specific *reference-amplitude offset* — the simulator's
+    ///      raw envelope amplitudes are not on the same linear scale as the
+    ///      bench's calibrated amplitudes. The calibration sheet treats the
+    ///      bench's "amp at slider 54" as the reference (in arbitrary linear
+    ///      units), so this offset is the constant that puts the simulator's
+    ///      output onto that scale. See
+    ///      `instrument-calibration/p035_visions/calibration_delta.md` for
+    ///      how it's measured (analytically, from a known-target render).
+    ///
+    /// Default ``gain_db = 0.f`` is a no-op so callers that don't set it see
+    /// no change in behaviour. For the calibrated PV .035 YAML the value is
+    /// derived per-renderer; ~+27 dB for the current OptiX/CUDA backend
+    /// against the PV .035 bench at slider 54.
+    float gain_db = 0.f;
   };
 
   /// Simulation results
