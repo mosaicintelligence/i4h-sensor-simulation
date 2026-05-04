@@ -4,66 +4,66 @@
   "log_multiplier_used": 112.30000305175781,
   "bench_saturation_cutoff_palette": 220.0,
   "bench_unsaturated_wire_count": 7,
-  "sim_envelope_amp_median_wire": 0.010899308226421787,
-  "sim_envelope_amp_water_bg_mean": 5.445720833617378e-07,
+  "sim_envelope_amp_median_wire": 0.010899338143923106,
+  "sim_envelope_amp_water_bg_mean": 1.8811486810677275e-07,
   "bench_envelope_amp_median_wire": 54.11324822137348,
   "bench_envelope_amp_water_bg_at_slider_54": 2.578683431097714,
   "bench_water_bg_palette_at_slider_54": 46.2,
-  "gain_db_wire_target": 73.91809338936139,
-  "gain_db_bg_target": 111.0068531127288,
-  "gain_db_bg_amp_pure": 133.5068531127288,
-  "gain_db_calibrated": 111.0068531127288,
+  "gain_db_wire_target": 73.91806954750348,
+  "gain_db_bg_target": 130.55199814751884,
+  "gain_db_bg_amp_pure": 142.73949814751884,
+  "gain_db_calibrated": 130.55199814751884,
   "calibration_target": "water_background_post_clamp_mean_palette",
   "wire_vs_bg_contrast_db": {
-    "sim": 86.02687120437622,
+    "sim": 95.25954008102417,
     "bench": 26.438111481008786,
-    "gap_dB_bench_minus_sim": -59.58875972336743,
-    "interpretation": "Positive gap means the bench has more wire-vs-background contrast than the simulator. With the background-calibrated gain_db, sim wires will undershoot the bench wire palette by ~-59.6 dB (-334.6 palette). Closing this gap requires increasing the wire's scattering strength (e.g. switching the sphere material to one with higher impedance contrast) or increasing the wire size \u2014 the gain_db scalar cannot."
+    "gap_dB_bench_minus_sim": -68.82142860001538,
+    "interpretation": "Positive gap means the bench has more wire-vs-background contrast than the simulator. With the background-calibrated gain_db, sim wires will undershoot the bench wire palette by ~-68.8 dB (-386.4 palette). Closing this gap requires increasing the wire's scattering strength (e.g. switching the sphere material to one with higher impedance contrast) or increasing the wire size \u2014 the gain_db scalar cannot."
   },
   "gain_db_distribution_dB": {
-    "median": 73.91809338936139,
-    "p25": 70.67677557895814,
-    "p75": 75.39271489870967,
-    "p10": 60.66893969776039,
-    "p90": 75.66982976206063,
+    "median": 73.91806954750348,
+    "p25": 70.67675173710023,
+    "p75": 75.39269105685176,
+    "p10": 60.66891585590248,
+    "p90": 75.66980592020272,
     "n_bench_wires": 7
   },
   "per_wire": {
     "sim": [
       {
         "r_mm": 5.0,
-        "sim_palette_log10amp": -1.4170491695404053,
-        "sim_envelope_amp": 0.03827814034818743,
-        "log10_amp_diff_to_bench_median": 3.150352773372793,
-        "gain_db_required_to_match_bench_median": 63.007055467455864
+        "sim_palette_log10amp": -0.582577645778656,
+        "sim_envelope_amp": 0.2614702934035389,
+        "log10_amp_diff_to_bench_median": 2.315881249611044,
+        "gain_db_required_to_match_bench_median": 46.31762499222088
       },
       {
         "r_mm": 10.0,
-        "sim_palette_log10amp": -1.0778729915618896,
-        "sim_envelope_amp": 0.08358474241785974,
-        "log10_amp_diff_to_bench_median": 2.8111765953942776,
-        "gain_db_required_to_match_bench_median": 56.22353190788556
+        "sim_palette_log10amp": -0.43019795417785645,
+        "sim_envelope_amp": 0.3713659195736861,
+        "log10_amp_diff_to_bench_median": 2.1635015580102444,
+        "gain_db_required_to_match_bench_median": 43.270031160204894
       },
       {
         "r_mm": 15.0,
-        "sim_palette_log10amp": -2.7935361862182617,
-        "sim_envelope_amp": 0.0016086583359212383,
-        "log10_amp_diff_to_bench_median": 4.52683979005065,
-        "gain_db_required_to_match_bench_median": 90.536795801013
+        "sim_palette_log10amp": -2.4649441242218018,
+        "sim_envelope_amp": 0.0034281188945295363,
+        "log10_amp_diff_to_bench_median": 4.19824772805419,
+        "gain_db_required_to_match_bench_median": 83.9649545610838
       },
       {
         "r_mm": 20.0,
-        "sim_palette_log10amp": -1.9626010656356812,
-        "sim_envelope_amp": 0.010899308226421787,
-        "log10_amp_diff_to_bench_median": 3.695904669468069,
-        "gain_db_required_to_match_bench_median": 73.91809338936139
+        "sim_palette_log10amp": -1.9625998735427856,
+        "sim_envelope_amp": 0.010899338143923106,
+        "log10_amp_diff_to_bench_median": 3.6959034773751736,
+        "gain_db_required_to_match_bench_median": 73.91806954750348
       },
       {
         "r_mm": 25.0,
-        "sim_palette_log10amp": -2.330456256866455,
-        "sim_envelope_amp": 0.004672440106873162,
-        "log10_amp_diff_to_bench_median": 4.063759860698843,
-        "gain_db_required_to_match_bench_median": 81.27519721397687
+        "sim_palette_log10amp": -2.3304572105407715,
+        "sim_envelope_amp": 0.004672429846597203,
+        "log10_amp_diff_to_bench_median": 4.063760814373159,
+        "gain_db_required_to_match_bench_median": 81.2752162874632
       }
     ],
     "bench_unsaturated": [
@@ -112,10 +112,10 @@
     ]
   },
   "sim_water_bg_diagnostic": {
-    "mean_palette_log10amp": -6.263944625854492,
-    "median_palette_log10amp": -6.611429214477539,
-    "mean_envelope_amp": 5.445720833617378e-07,
-    "median_envelope_amp": 2.446644021302395e-07,
+    "mean_palette_log10amp": -6.725576877593994,
+    "median_palette_log10amp": -7.046034336090088,
+    "mean_envelope_amp": 1.8811486810677275e-07,
+    "median_envelope_amp": 8.994264684710582e-08,
     "n_pixels_per_frame": 157744
   },
   "calibration_recipe": "Set processing.gain_db in volcano_s5i.yaml to the value reported as gain_db_calibrated. To extend to a different slider, add (slider - 54) dB per the bench gain LUT (gain_lut.json -> gain_db_table)."
