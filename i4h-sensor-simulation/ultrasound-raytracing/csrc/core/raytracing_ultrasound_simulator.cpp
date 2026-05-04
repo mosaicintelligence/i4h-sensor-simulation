@@ -293,7 +293,13 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
       psf_lat_2d_buffer_size_ = buffer_size;
       psf_lat_2d_t_far_ = t_far;
       constexpr uint32_t depth_bins = 64;
-      constexpr uint32_t kernel_radius = 64;
+      // Pass 5: kernel_radius scales with the angular array so the near-field
+      // beam (sigma ~ 100+ angular bins at r ≈ 1 mm with the PV .035 geometry)
+      // can fit inside the kernel window without truncation, and the cyclic
+      // angular convolution (see `convolve_columns_depth_dependent_kernel`)
+      // covers the full half-circumference.
+      const uint32_t num_angular_rays = probe->get_num_elements();
+      const uint32_t kernel_radius = std::max(1u, num_angular_rays / 2u);
       const uint32_t kernel_len = 2 * kernel_radius + 1;
       const float lambda_mm = probe->get_wave_length();
       // Gaussian beam model for depth-dependent lateral PSF (see e.g. Siegman "Lasers", Ch. 17;
@@ -305,7 +311,6 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
       const float z_R_mm = (lambda_mm > 0.f)
                                ? (static_cast<float>(M_PI) * w0_mm * w0_mm / lambda_mm)
                                : w0_mm;  // Rayleigh length; avoid div-by-zero if lambda unset
-      const uint32_t num_angular_rays = probe->get_num_elements();
       const float two_pi = 6.28318530717958647692f;
       std::vector<float> k2d(depth_bins * kernel_len, 0.f);
       for (uint32_t b = 0; b < depth_bins; ++b) {
@@ -322,6 +327,31 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
           row[i] = v;
           sum += v;
         }
+        // Pass 5: kept L1 normalization (sum = 1).
+        //
+        // Empirical comparison vs L2 normalization (sqrt(sum_sq) = 1):
+        //   * L2 norm preserves envelope amplitude for *uncorrelated* random-
+        //     scatter input (the textbook expectation for distributed point
+        //     scatterers).
+        //   * Our scatter sampling (`scattering_resolution_mm` ~ 10 mm voxel
+        //     texture, trilinearly interpolated) is *positively correlated*
+        //     across angular bins at small radii where the arc length per
+        //     scanline (2*pi*r/N) is much smaller than the texture voxel.
+        //     With L2 normalization the cyclic Gaussian convolution then
+        //     amplifies the correlated near-field signal by ~sqrt(sigma_bins)
+        //     (sum_k a_k for fully-correlated input vs sqrt(sum_k a_k^2) for
+        //     uncorrelated), producing a +50-80 palette unit bright shoulder
+        //     at r ≈ 4-5 mm that overshoots even the saturation_palette.
+        //   * L1 normalization gives the depth-dependent envelope behaviour
+        //     baked into the bench TGC schedule, which the calibration
+        //     `gain_db` was derived against and which produces the closest
+        //     match to bench mean palette across the 8-29 mm window.
+        //
+        // The bright-shoulder near-field artifact (r ≈ 4-7 mm, +50-100
+        // palette excess vs bench) is NOT fully cured by this pass; see
+        // `ivus_implementation_writeup.md` §11.x for the deferred follow-up
+        // (additive noise floor, scatter-texture decorrelation, or a
+        // physics-based near-field beam cap).
         if (sum > 0.f) {
           for (uint32_t i = 0; i < kernel_len; ++i) { row[i] /= sum; }
         }
@@ -434,6 +464,9 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     // Scale scatter integral so vascular/cystic phantoms have visible background; wire phantom
     // remains valid (reflections dominate). 0 = strict integral (dark); ~40 gives usable range.
     params.scatter_integral_scale = sim_params.scatter_integral_scale;
+    // Pass 5b: per-scanline scatter decorrelation (see SimParams).
+    params.scatter_angular_decorrelate = sim_params.scatter_angular_decorrelate ? 1u : 0u;
+    params.frame_seed = sim_params.frame_seed;
 
     pipeline_params_.upload(&params, sim_params.stream);
 

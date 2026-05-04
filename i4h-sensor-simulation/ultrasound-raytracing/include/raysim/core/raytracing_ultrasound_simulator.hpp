@@ -127,6 +127,26 @@ class RaytracingUltrasoundSimulator {
     float scatter_integral_scale = 40.f;
     bool disable_scatter = false;
 
+    // Pass 5b — per-scanline angular decorrelation of the scatter texture lookup.
+    //
+    // `scatter_angular_decorrelate == true`: each scanline (`ray_index`) adds a
+    // pseudo-random offset to the scatter texture coordinate before sampling
+    // (see `optix_trace.cu::get_scattering_value`). Adjacent angular bins
+    // therefore sample independent regions of the 256³ wrap-mode texture
+    // instead of a single trilinearly-interpolated voxel. This is the fix for
+    // the near-field bright shoulder produced by the depth-dependent lateral
+    // PSF (Tier 1 test I, see ivus_implementation_writeup.md §11.x). For
+    // spherical / mesh phantoms the deterministic targets are unaffected
+    // (the offset only changes which patch of speckle is sampled).
+    //
+    // `frame_seed`: per-frame seed mixed into the decorrelation hash so
+    // successive `simulate()` calls draw independent speckle realizations.
+    // Callers that want frame-to-frame stable speckle can keep
+    // `frame_seed == 0`. Tier 1 test I increments this per frame to converge
+    // on the bench's depth-flat anechoic statistics under temporal averaging.
+    bool scatter_angular_decorrelate = true;
+    uint32_t frame_seed = 0u;
+
     // -------------------------------------------------------------------------
     // Pass 2 plumbing.
     // -------------------------------------------------------------------------
