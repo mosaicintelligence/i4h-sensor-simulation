@@ -42,6 +42,15 @@ struct Params {
   float scattering_resolution_mm;  // voxel size used to sample scattering texture
   uint32_t disable_scatter;        // non-zero disables scatter accumulation
   float scatter_integral_scale;    // multiplier on the scatter line integral (0 = strict)
+  // Pass 5b: per-scanline angular decorrelation of the scatter texture lookup.
+  // When non-zero, `get_scattering_value` adds a per-ray pseudo-random offset
+  // (in texture coordinates) computed from `ray_index` and `frame_seed`, so
+  // adjacent angular bins sample independent regions of the scatter texture.
+  // This breaks the near-field positive angular correlation that the depth-
+  // dependent lateral PSF was amplifying into a +50-100 palette bright
+  // shoulder at r ≈ 4-7 mm. See ivus_implementation_writeup.md §11.x.
+  uint32_t scatter_angular_decorrelate;  // non-zero enables per-ray scatter offset
+  uint32_t frame_seed;                   // per-frame seed for decorrelation hash (0 = use 0)
 };
 
 struct RayGenData {

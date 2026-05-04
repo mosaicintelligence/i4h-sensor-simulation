@@ -41,10 +41,64 @@ static __forceinline__ __device__ Payload get_payload() {
   return payload;
 }
 
-static __device__ float get_scattering_value(float3 pos, const Material* material) {
+// Pass 5b: per-scanline scatter decorrelation hash.
+//
+// PCG-style integer hash (Jarzynski & Olano 2020, "Hash Functions for GPU Rendering";
+// Melissa O'Neill 2014, "PCG: A Family of Simple Fast Space-Efficient Statistically
+// Good Algorithms for Random Number Generation"). Decorrelates 32-bit input keys
+// to 32-bit output with avalanche-quality mixing — fully sufficient for
+// per-scanline texture-coordinate jitter; we are not using this for any
+// security-sensitive purpose.
+static __device__ uint32_t pcg_hash(uint32_t x) {
+  uint32_t state = x * 747796405u + 2891336453u;
+  uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+
+// Map a 32-bit integer to a float in [0, 1) using the top 24 bits (mantissa
+// width). Equivalent to (x >> 8) * 2^-24, which is exact in IEEE-754 single
+// precision.
+static __device__ float pcg_to_unit_float(uint32_t x) {
+  return (x >> 8) * (1.f / 16777216.f);
+}
+
+static __device__ float get_scattering_value(float3 pos, const Material* material,
+                                             uint32_t ray_index) {
   // Convert point to texture coordinates (resolution_mm sets speckle scale)
   const float resolution_mm = params.scattering_resolution_mm;
   pos /= resolution_mm;
+
+  // Pass 5b: angular decorrelation of the scatter texture lookup.
+  //
+  // The scatter texture is 256³ voxels addressed in WRAP mode (see
+  // World::generate_scattering_texture). Adding a large pseudo-random offset
+  // in texture coordinates is equivalent to sampling an independent region
+  // of the texture per ray, which (after wrap-around) gives uncorrelated
+  // scatter values across angular bins for any ray_index spacing — including
+  // adjacent scanlines. This addresses the near-field positive angular
+  // correlation: at r=1 mm with num_scanlines=256, adjacent scanlines sample
+  // world points 0.025 mm apart, well within one trilinearly-interpolated
+  // texture voxel even at scattering_resolution_mm = 0.1 mm. Without
+  // decorrelation, the depth-dependent lateral PSF (with sigma > 100
+  // angular bins in the near field) sums these correlated samples up to a
+  // bright shoulder at r ≈ 4-7 mm.
+  //
+  // The offset depends on ray_index (per-scanline decorrelation) and
+  // frame_seed (so successive frames sample independent realizations,
+  // enabling temporal averaging to converge on the bench's noise-floor
+  // statistics). All depth samples ALONG a single scanline share the same
+  // offset, so the axial scatter integral is still spatially coherent in
+  // depth (preserving wire/sphere PSFs and the band-pass character that
+  // the axial Hanning-windowed cosine PSF later filters).
+  if (params.scatter_angular_decorrelate) {
+    const uint32_t base = ray_index * 3u + params.frame_seed * 2654435761u;
+    const float ox = pcg_to_unit_float(pcg_hash(base + 0u)) * 4096.f;
+    const float oy = pcg_to_unit_float(pcg_hash(base + 1u)) * 4096.f;
+    const float oz = pcg_to_unit_float(pcg_hash(base + 2u)) * 4096.f;
+    pos.x += ox;
+    pos.y += oy;
+    pos.z += oz;
+  }
 
   const float2 scatter_val = tex3D<float2>(params.scattering_texture, pos.x, pos.y, pos.z);
 
@@ -112,7 +166,7 @@ static __device__ void sample_intensities(float3 origin, float3 dir, float t_anc
     const uint32_t bin = get_intensity_offset(depth);
     if (bin >= params.buffer_size) { continue; }
     const float3 pos_world = origin + (t_ancestors + t_val) * dir;
-    const float scatter = get_scattering_value(pos_world, material) * intensity *
+    const float scatter = get_scattering_value(pos_world, material, ray_index) * intensity *
                          get_intensity_at_distance(t_val - t_min, material->attenuation_);
     scanline[bin] += segment_weight * scatter;
   }
