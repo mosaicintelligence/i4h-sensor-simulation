@@ -216,7 +216,7 @@ processing:
   # target alternative): median +83.6 dB.
   # To switch sliders, add (slider - 54) dB per the bench gain LUT
   # (gain_lut.json -> gain_db_table).
-  gain_db: 111.01                         # Pass 5b — renderer offset; post-clamp bg mean palette match after per-scanline scatter angular decorrelation
+  gain_db: 130.55                         # Pass 5c — renderer offset; post-clamp bg mean palette match after pre-focal beam clamp
   # Pass 3b — display window in palette units. The post-log palette is
   # already in absolute palette units (because log_compression uses the
   # calibrated log_multiplier / log_floor), so the display window only has

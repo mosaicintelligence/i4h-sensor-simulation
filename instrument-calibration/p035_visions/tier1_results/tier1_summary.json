@@ -68,10 +68,10 @@
         "ok": true
       },
       "processing.gain_db": {
-        "yaml": 111.01,
-        "sim_params": 111.01000213623047,
-        "abs_diff": 2.1362304636340923e-06,
-        "tol": 0.0011101000213623049,
+        "yaml": 130.55,
+        "sim_params": 130.5500030517578,
+        "abs_diff": 3.0517578011313162e-06,
+        "tol": 0.0013055000305175783,
         "ok": true
       },
       "ring_down.enabled": {
@@ -182,7 +182,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2599.192626953125,
+          "peak_palette_max": 2802.7255859375,
           "detected": true,
           "saturated": true
         },
@@ -193,7 +193,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2653.48046875,
+          "peak_palette_max": 2835.931396484375,
           "detected": true,
           "saturated": true
         },
@@ -204,7 +204,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2500.559326171875,
+          "peak_palette_max": 2655.5986328125,
           "detected": true,
           "saturated": true
         },
@@ -215,7 +215,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2563.0537109375,
+          "peak_palette_max": 2672.770751953125,
           "detected": true,
           "saturated": true
         },
@@ -226,7 +226,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2712.452392578125,
+          "peak_palette_max": 2822.16943359375,
           "detected": true,
           "saturated": true
         }
@@ -358,7 +358,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2599.192626953125,
+          "peak_palette_max": 2802.7255859375,
           "detected": true,
           "saturated": true
         },
@@ -369,7 +369,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2653.48046875,
+          "peak_palette_max": 2835.931396484375,
           "detected": true,
           "saturated": true
         },
@@ -380,7 +380,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2500.559326171875,
+          "peak_palette_max": 2655.5986328125,
           "detected": true,
           "saturated": true
         },
@@ -391,7 +391,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2563.0537109375,
+          "peak_palette_max": 2672.770751953125,
           "detected": true,
           "saturated": true
         },
@@ -402,7 +402,7 @@
           "n_unsat": 0,
           "axial_fwhm_mm_median": null,
           "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2712.452392578125,
+          "peak_palette_max": 2822.16943359375,
           "detected": true,
           "saturated": true
         }
@@ -413,7 +413,7 @@
   {
     "name": "E. Ring-down (mean A-line)",
     "status": "fail",
-    "summary": "sim peak palette = 211.8 (bench 231.7, \u0394=-19.9); RMS over r \u2208 [0, 3] mm = 79.2 palette (\u22645 required); sim extent = 2.97 mm (bench 3.84 mm).",
+    "summary": "sim peak palette = 210.8 (bench 231.7, \u0394=-21.0); RMS over r \u2208 [0, 3] mm = 103.0 palette (\u22645 required); sim extent = 3.18 mm (bench 3.84 mm).",
     "detail": {
       "bench": {
         "peak_palette": 231.70911865234376,
@@ -422,34 +422,34 @@
         "peak_palette_excess": 187.09462089538576
       },
       "sim": {
-        "peak_palette": 211.81280517578125,
-        "peak_depth_mm": 1.8896484375,
-        "extent_mm": 2.9736328125,
-        "speckle_floor_palette_proxy": 99.942138671875,
-        "peak_palette_excess": 111.87066650390625,
-        "rms_palette_inner3mm": 79.16159139009154,
-        "rms_palette_inner3mm_shape_only": 65.25107316068431
+        "peak_palette": 210.7550811767578,
+        "peak_depth_mm": 1.8310546875,
+        "extent_mm": 3.1787109375,
+        "speckle_floor_palette_proxy": 74.72328186035156,
+        "peak_palette_excess": 136.03179931640625,
+        "rms_palette_inner3mm": 102.96763866652518,
+        "rms_palette_inner3mm_shape_only": 88.84089125207326
       },
       "pass_criteria": {
         "peak_within_10pct": {
-          "sim": 211.81280517578125,
+          "sim": 210.7550811767578,
           "bench": 231.70911865234376,
-          "rel_err": 0.08586763262612435,
+          "rel_err": 0.09043251123416242,
           "ok": true
         },
         "rms_le_5_palette": {
-          "value": 79.16159139009154,
+          "value": 102.96763866652518,
           "ok": false
         },
         "rms_shape_le_5_palette": {
-          "value": 65.25107316068431,
+          "value": 88.84089125207326,
           "ok": false,
           "note": "shape-only RMS after subtracting each curve's post-ringdown baseline; cf. gain-alignment diagnostic"
         },
         "extent_within_0_3_mm": {
-          "sim": 2.9736328125,
+          "sim": 3.1787109375,
           "bench": 3.84,
-          "delta_mm": 0.8663671874999999,
+          "delta_mm": 0.6612890624999999,
           "ok": false
         }
       }
@@ -554,13 +554,13 @@
   {
     "name": "Gain alignment (calibration-sheet diagnostic)",
     "status": "pass",
-    "summary": "Sim water-bg palette (mean across 8 clean frames, r \u2208 [5.0, 25.0] mm) = 44.3 vs bench 46.2 (\u0394 = -1.9 palette \u2248 -0.34 dB). Within \u00b110 palette tolerance \u2014 Pass 3b gain calibration on target.",
+    "summary": "Sim water-bg palette (mean across 8 clean frames, r \u2208 [5.0, 25.0] mm) = 43.9 vs bench 46.2 (\u0394 = -2.3 palette \u2248 -0.41 dB). Within \u00b110 palette tolerance \u2014 Pass 3b gain calibration on target.",
     "detail": {
-      "sim_bg_mean_palette": 44.26711988449097,
-      "sim_bg_std_palette": 1.6594003659563552,
+      "sim_bg_mean_palette": 43.88234233856201,
+      "sim_bg_std_palette": 1.5345766549661053,
       "bench_bg_palette_at_slider_54": 46.2,
-      "delta_palette": -1.932880115509036,
-      "delta_dB_estimate": -0.3442351051663466,
+      "delta_palette": -2.317657661437991,
+      "delta_dB_estimate": -0.4127618275045398,
       "tolerance_palette": 10.0,
       "clean_band_mm": [
         5.0,
@@ -573,14 +573,14 @@
   {
     "name": "I. Depth uniformity (anechoic ROI)",
     "status": "fail",
-    "summary": "Sim vs bench mean palette over r \u2208 [4.0, 29.0] mm: RMS = 26.0 palette (\u2264 10 required), max |\u0394| = 88.8, bias = +8.8; sim peak-to-trough = 109.2 vs bench 14.1 (ratio 7.77, \u2264 1.5 required). Sim has depth-dependent brightness structure not present in bench data.",
+    "summary": "Sim vs bench mean palette over r \u2208 [4.0, 29.0] mm: RMS = 15.1 palette (\u2264 10 required), max |\u0394| = 51.5, bias = +10.6; sim peak-to-trough = 62.8 vs bench 14.1 (ratio 4.47, \u2264 1.5 required). Sim has depth-dependent brightness structure not present in bench data.",
     "detail": {
-      "rms_palette": 26.01607607219909,
-      "max_abs_palette": 88.76815602555871,
-      "bias_palette": 8.775346661388333,
-      "sim_peak_to_trough_palette": 109.23863220214844,
+      "rms_palette": 15.111740910016712,
+      "max_abs_palette": 51.458005879074335,
+      "bias_palette": 10.604461485886857,
+      "sim_peak_to_trough_palette": 62.761558532714844,
       "bench_peak_to_trough_palette": 14.055746980011463,
-      "sim_span_over_bench_span": 7.7718126512589905,
+      "sim_span_over_bench_span": 4.465188411684376,
       "rms_tolerance_palette": 10.0,
       "span_ratio_tolerance": 1.5,
       "rms_pass": false,
