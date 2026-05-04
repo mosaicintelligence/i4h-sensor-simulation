@@ -85,6 +85,29 @@ static __global__ void convolve_columns_kernel(const float* __restrict__ source,
   dst[offset] = sum;
 }
 
+// Pass 5: depth-dependent column convolution with CYCLIC angular wrap.
+//
+// IVUS images are intrinsically periodic in angle (360° = num_scanlines), so
+// the lateral PSF convolution must wrap around the angular boundary instead
+// of truncating at index.y == 0 / index.y == size.y - 1. Truncation produced
+// two depth-uniformity artifacts that the host-side kernel build (Pass 5
+// `update_psfs`) could not compensate for:
+//   * Boundary darkening within ~kernel_radius bins of the seam.
+//   * Loss of L1/L2 mass when the host-built kernel was wider than the
+//     truncation window, breaking the depth-dependent normalization that
+//     keeps the post-Hilbert envelope magnitude depth-invariant.
+//
+// The cyclic indexing here is paired with two host-side fixes (see
+// `raytracing_ultrasound_simulator.cpp` §`update_psfs`):
+//   1. `kernel_radius = num_scanlines / 2` so the kernel can span the full
+//      half-circumference at the most divergent (near-field) depth.
+//   2. L2 normalization (sum_sq = 1) so the post-Hilbert envelope mean
+//      becomes depth-invariant for random-scatter input — preserving the
+//      bench's flat in-water bg statistics.
+//
+// `convolve_columns_depth_dependent` is only called for IVUS today (the
+// host build only sets `psf_lat_2d_` for `PROBE_TYPE_IVUS`), so making the
+// indexing cyclic unconditionally is safe.
 static __global__ void convolve_columns_depth_dependent_kernel(const float* __restrict__ source,
                                                                uint3 size,
                                                                float* __restrict__ dst,
@@ -103,18 +126,26 @@ static __global__ void convolve_columns_depth_dependent_kernel(const float* __re
                                  : 0u;
   const float* kernel = kernel_2d + depth_bin * kernel_len;
 
-  const int k_min = -min(static_cast<int>(index.y), static_cast<int>(kernel_radius));
-  const int k_max = min(static_cast<int>(size.y - 1 - index.y), static_cast<int>(kernel_radius));
-  const int offset = ((index.z * size.y) + index.y) * size.x + index.x;
-  source += offset + k_min * size.x;
+  const int N = static_cast<int>(size.y);
+  const int radius = static_cast<int>(kernel_radius);
+  const int row_stride = static_cast<int>(size.x);
+  const int plane_offset = static_cast<int>(index.z * size.y * size.x);
+  const int col_offset = static_cast<int>(index.x);
+  const int dst_offset = plane_offset + static_cast<int>(index.y) * row_stride + col_offset;
 
   float sum = 0.f;
-  for (int k = k_min; k <= k_max; ++k) {
-    sum += *source * kernel[k + kernel_radius];
-    source += size.x;
+  // Cyclic sum over k in [-radius, +radius]; wrap source row index modulo N.
+  // The kernel is centred at k == 0 (kernel index == kernel_radius). The
+  // wrap math `((iy + k) % N + N) % N` handles negative k correctly under
+  // C/CUDA's truncated integer modulo semantics.
+  const int iy = static_cast<int>(index.y);
+  for (int k = -radius; k <= radius; ++k) {
+    const int srcy = ((iy + k) % N + N) % N;
+    const int src_offset = plane_offset + srcy * row_stride + col_offset;
+    sum += source[src_offset] * kernel[k + radius];
   }
 
-  dst[offset] = sum;
+  dst[dst_offset] = sum;
 }
 
 static __global__ void convolve_planes_kernel(const float* __restrict__ source, uint3 size,
