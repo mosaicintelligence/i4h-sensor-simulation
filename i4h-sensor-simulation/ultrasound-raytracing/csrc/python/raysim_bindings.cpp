@@ -544,6 +544,18 @@ rays emanate radially over 360° for a cross-sectional vessel image.
                      &raysim::RaytracingUltrasoundSimulator::SimParams::disable_scatter,
                      "If true, skip scatter accumulation entirely")
       .def_readwrite(
+          "scatter_angular_decorrelate",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::scatter_angular_decorrelate,
+          "Pass 5b: per-scanline pseudo-random scatter texture offset to break "
+          "near-field angular correlation (default True). Set False to compare "
+          "against the legacy correlated-scatter behaviour.")
+      .def_readwrite(
+          "frame_seed",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::frame_seed,
+          "Pass 5b: per-frame seed for the scatter decorrelation hash. "
+          "Increment between frames to draw independent speckle realizations "
+          "for temporal averaging; keep at 0 for frame-to-frame stable speckle.")
+      .def_readwrite(
           "ring_down",
           &raysim::RaytracingUltrasoundSimulator::SimParams::ring_down,
           "Pass 2: calibrated ring-down injection (RingDownParams). Enabled=False "
