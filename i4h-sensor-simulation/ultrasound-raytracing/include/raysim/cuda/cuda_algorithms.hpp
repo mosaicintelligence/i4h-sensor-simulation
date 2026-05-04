@@ -168,6 +168,59 @@ class CUDAAlgorithms {
   void scale_buffer(CudaMemory* buffer, uint2 size, float scale, cudaStream_t stream);
 
   /**
+   * Pass 6: additive Gaussian RF noise. Adds N(0, sigma^2) to every element
+   * of `buffer` using a per-element Box-Muller transform driven by a PCG
+   * hash of (linear_offset, seed).
+   *
+   * Intended pipeline placement: between the reference-gain stage
+   * (`scale_buffer` with `10^(gain_db/20)`) and Hilbert envelope detection,
+   * so the calibrated `processing.noise.sigma` (in RF amplitude units at the
+   * reference gain) is applied directly. The Hilbert transform of a
+   * wideband Gaussian RF stream is itself Gaussian with the same variance,
+   * so the post-Hilbert envelope of pure noise becomes Rayleigh(sigma) with
+   * mean = sigma * sqrt(pi/2). After log compression this lifts the per-
+   * pixel envelope distribution off the reject_palette clamp at 11 — see
+   * `ivus_implementation_writeup.md` for the bench-vs-sim histogram
+   * comparison that motivated this stage.
+   *
+   * Disabled (skipped) when `sigma <= 0`. Default-constructed SimParams
+   * leave `noise_sigma == 0.f` so default callers pay no launch cost.
+   *
+   * @param buffer [in,out] Row-major RF buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents in samples.
+   * @param sigma [in] Noise standard deviation in RF amplitude units.
+   *                   No-op when <= 0.
+   * @param seed [in] Per-frame seed mixed into the PCG hash so successive
+   *                  frames draw independent noise realizations
+   *                  (matches the convention from Pass 5b's
+   *                  `scatter_angular_decorrelate` / `frame_seed`).
+   * @param stream [in] CUDA stream.
+   */
+  void add_gaussian_noise(CudaMemory* buffer, uint2 size, float sigma, uint32_t seed,
+                          cudaStream_t stream);
+
+  /**
+   * @brief Zero the inner `dead_zone_samples` radial samples of every scanline.
+   *
+   * Used at the very end of the simulation pipeline (post log-compression,
+   * post display window) to reproduce the bench's catheter-sheath dead zone
+   * (the inner ~1.4 mm reads as solid black on the device because the
+   * catheter wall blocks signal acquisition entirely). Without this mask the
+   * Pass 6 additive-noise stage fills the dead zone with a noise floor,
+   * which differs visibly from the bench's solid-black inner zone.
+   *
+   * `dead_zone_samples` is the number of leading radial samples to zero
+   * (typically `int(catheter_dead_zone_mm / dr_mm)`). 0 disables the mask.
+   *
+   * @param buffer [in,out] Float buffer with shape `(num_elements, buffer_size)`.
+   * @param size [in] Buffer dimensions (size.x = depth samples, size.y = angular bins).
+   * @param dead_zone_samples [in] Number of leading radial samples to zero.
+   * @param stream [in] CUDA stream.
+   */
+  void zero_inner_radial(CudaMemory* buffer, uint2 size, uint32_t dead_zone_samples,
+                         cudaStream_t stream);
+
+  /**
    * In-place display window after log compression: clamp every element of
    * `buffer` to `[reject_palette, saturation_palette]` in palette units.
    *
@@ -284,6 +337,8 @@ class CUDAAlgorithms {
   const CudaLauncher mul_rows_launcher_;
   const CudaLauncher add_row_launcher_;
   const CudaLauncher scale_buffer_launcher_;
+  const CudaLauncher add_gaussian_noise_launcher_;
+  const CudaLauncher zero_inner_radial_launcher_;
   const CudaLauncher display_window_launcher_;
   const CudaLauncher median_clip_launcher_;
   const CudaLauncher scan_convert_curvilinear_launcher_;

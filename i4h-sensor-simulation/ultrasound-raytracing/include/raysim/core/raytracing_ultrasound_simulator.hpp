@@ -147,6 +147,49 @@ class RaytracingUltrasoundSimulator {
     bool scatter_angular_decorrelate = true;
     uint32_t frame_seed = 0u;
 
+    // Pass 6 — additive Gaussian RF noise floor.
+    //
+    // `noise_sigma > 0` adds N(0, noise_sigma^2) to every element of the
+    // post-gain RF buffer (just before Hilbert envelope detection), so the
+    // post-Hilbert envelope of a no-scatter region becomes Rayleigh-
+    // distributed with mean `sigma * sqrt(pi/2)`. After log compression
+    // and the post-log display window, this lifts low-envelope pixels
+    // (currently clamped at `reject_palette = 11`) up to a bench-like
+    // mean palette ~30-50 in a band-pass-saturated band, eliminating the
+    // bimodal sim distribution that the user observed in the wire-phantom
+    // ringdown zone.
+    //
+    // Units: RF amplitude at the reference gain (i.e. AFTER the calibrated
+    // `gain_db` scalar has been applied to the OptiX RF chain). The PV .035
+    // calibration sheet (`processing.noise.{type, sigma}` in the YAML)
+    // provides `sigma = 2.6347` in these units.
+    //
+    // Default `noise_sigma == 0.f` is a no-op; the host wrapper short-
+    // circuits on `sigma <= 0` so existing callers see no overhead.
+    //
+    // The frame seed for this stage is derived from `frame_seed` (the same
+    // field used by the Pass 5b scatter decorrelation), with a different
+    // domain-separation salt mixed in inside the CUDA host wrapper, so a
+    // single `frame_seed` increment per frame draws independent
+    // realizations of *both* the scatter pattern and the noise floor.
+    float noise_sigma = 0.f;
+
+    // Pass 6 v2 — catheter sheath dead-zone mask.
+    //
+    // `catheter_dead_zone_mm > 0` zeros the inner radial samples of the
+    // *final* (post log-compression, post display window) palette buffer
+    // for any sample with `r < catheter_dead_zone_mm`. On the bench, the
+    // catheter wall (OD ≈ 1.4-1.9 mm depending on probe) blocks any
+    // acquired signal, so the inner zone renders as solid black (palette 0
+    // -- *deeper* than the device's reject_palette = 11). Without this
+    // mask the Pass 6 additive-noise stage fills the dead zone with the
+    // calibrated noise floor, and any leaked ring-down energy raises it
+    // further -- both visible vs the bench's solid-black inner zone.
+    //
+    // Default `catheter_dead_zone_mm == 0.f` is a no-op (the kernel
+    // wrapper short-circuits on `dead_zone_samples == 0`).
+    float catheter_dead_zone_mm = 0.f;
+
     // -------------------------------------------------------------------------
     // Pass 2 plumbing.
     // -------------------------------------------------------------------------

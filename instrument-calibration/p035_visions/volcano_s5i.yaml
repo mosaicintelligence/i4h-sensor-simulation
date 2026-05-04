@@ -216,7 +216,7 @@ processing:
   # target alternative): median +83.6 dB.
   # To switch sliders, add (slider - 54) dB per the bench gain LUT
   # (gain_lut.json -> gain_db_table).
-  gain_db: 130.55                         # Pass 5c — renderer offset; post-clamp bg mean palette match after pre-focal beam clamp
+  gain_db: 73.92                          # Pass 6 — renderer offset; wire-peak palette median match (bg now anchored by additive noise.sigma; diagnostic render uses noise_sigma=0 to avoid noise-spike contamination of the wire-amp measurement)
   # Pass 3b — display window in palette units. The post-log palette is
   # already in absolute palette units (because log_compression uses the
   # calibrated log_multiplier / log_floor), so the display window only has
@@ -236,12 +236,39 @@ processing:
     # `noise.type` parameter refers to -- additive RF noise *before* envelope
     # detection).
     type: gaussian
-    # E7 conversion: at gain 64 (cleanest, no reject clipping):
-    #   envelope_mean_palette = 114.4
-    #   envelope_mean_amp     = 10^(114.4/112.3) = 10.6  (in log_floor=1 units)
-    #   sigma_complex(g64)    = 10.6 / sqrt(pi/2) = 8.46
-    #   sigma_complex(g54)    = 8.46 / 10^(10/20)  = 2.67  (gain reference)
-    sigma: 2.6347                         # E7 — RF noise std at gain-54 reference; std of complex Gaussian per quadrature
+    # E7 conversion at gain 64 gave sigma_complex(g54) = 2.67 by back-stepping
+    # the gain-64 envelope mean by an *assumed* 10 dB slider step. In practice
+    # that value over-shoots the gain-54 anechoic floor (mean palette 46.2),
+    # both because the 54->64 slider step is wider than 10 dB and because the
+    # E7 formula ignores the Jensen gap between log(E[env]) and E[log env].
+    #
+    # Pass 6 (derive_noise_sigma.py) re-derives sigma directly from the bench
+    # gain-54 anechoic ROI: bisects sigma so the simulator's anechoic
+    # post-clamp mean palette (rendered in pure ``water``, no scatter, full
+    # display window + log compression + median clip) matches 46.2. Result
+    # also matches bench median (45.5 vs 44) and bench std (19.4 vs 20.3),
+    # so the full Rayleigh distribution shape is preserved -- not just the
+    # mean. See P_035_PointScatter/derived/noise/noise_sigma_derivation.json.
+    # Pass 6 v2 (noise pre-PSF): the additive-noise stage was moved BEFORE
+    # the PSF convolution so the noise is bandlimited by the receive chain
+    # (matching the bench's coarse mottled speckle, not Pass 6 v1's per-
+    # pixel static). The pre-PSF sigma is therefore in INPUT-RF units (pre
+    # gain_db, pre TGC, pre PSF). Empirically the downstream amplification
+    # collapses sigma by ~3 orders of magnitude vs Pass 6 v1 -- the bench-
+    # matching value sits in the millis. derive_noise_sigma.py is pipeline-
+    # aware (renders an anechoic water world through the full sim) so the
+    # calibrated number stays correct under stage moves.
+    sigma: 0.000895                       # Pass 6 v2 — input-RF noise std (pre-PSF), fit to E5 anechoic palette mean+median+std
+  catheter:                               # Pass 6 v2 — catheter sheath dead-zone mask
+    # The PV .035 catheter outer diameter is 1.905 mm (manual p.4), so the
+    # catheter wall blocks any acquired signal for r < ~0.95 mm at the
+    # probe centre. The bench polar B-modes show solid black extending to
+    # r ≈ 1.4 mm before the ring-down peak emerges (visible in
+    # tier1_results/figures/ringdown_inner_zone_paired.png), which combines
+    # the catheter wall with the device's analog blanking during the
+    # transmit pulse. We use the observed bench dead-zone radius rather
+    # than the geometric catheter OD because that's what an operator sees.
+    dead_zone_mm: 1.4                     # observed bench dead zone (E6 inner-zone polar inspection)
   ring_down:                              # Manual p.190: caused by element crosstalk + crystal physics
     enabled: true                         # Pass 2 — turn the calibrated ring-down injector on (false = silent lumen)
     # E6 results from P_035_PointScatter (median-over-theta radial profile,

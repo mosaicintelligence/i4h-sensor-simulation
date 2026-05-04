@@ -530,6 +530,43 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
 
   // Process "RF data" into B - mode image
 
+  // 0.9 Additive Gaussian RF noise (Pass 6, moved pre-PSF in Pass 6 v2)
+  //
+  // Adds N(0, noise_sigma^2) per RF sample to the raw post-raytracing buffer,
+  // BEFORE the PSF convolutions. This models real bench behaviour where the
+  // electronic noise floor lives at the analog receiver and is bandlimited by
+  // the receive chain before digitization -- exactly what the lateral and
+  // axial PSFs represent in the sim. The Pass 6 v1 placement (post-gain,
+  // pre-Hilbert) added unfiltered noise per pixel, so the rendered anechoic
+  // bg looked like fine-grained "static" instead of the bench's coarse
+  // mottled speckle. Moving the stage here lets the PSF convolutions smooth
+  // the noise to its physical correlation length (~1 PSF FWHM in both axial
+  // and lateral directions), which produces visible speckle blobs matching
+  // the bench's appearance.
+  //
+  // Calibration consequence: noise_sigma now refers to the input-RF stage
+  // (pre-TGC, pre-gain_db, pre-PSF). The downstream pipeline (PSF + TGC +
+  // gain_db + Hilbert + log) is linear up to the Hilbert envelope, so the
+  // bench-output sigma is recovered up to a constant determined by the PSF
+  // L1 norm and gain_db. We re-derive noise_sigma against the bench gain-54
+  // anechoic palette directly (derive_noise_sigma.py); the script is
+  // pipeline-aware so the calibrated value stays correct.
+  //
+  // Default (`noise_sigma == 0.f`) is a no-op; the wrapper short-circuits
+  // on `sigma <= 0` so existing callers pay no overhead.
+  if (sim_params.noise_sigma > 0.f) {
+    CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Additive RF noise", sim_params.stream);
+    // Domain-separate the noise seed from the scatter-decorrelation seed by
+    // a large odd salt; both consume `frame_seed` but draw independent
+    // streams via different hash inputs (see add_gaussian_noise_kernel).
+    const uint32_t noise_seed = sim_params.frame_seed * 2246822519u + 1u;
+    cuda_algorithms_->add_gaussian_noise(d_scanlines.get(), plane_size, sim_params.noise_sigma,
+                                         noise_seed, sim_params.stream);
+    if (sim_params.write_debug_images) {
+      write_image(d_scanlines.get(), plane_size, "debug_images/0a_additive_noise_pre_psf.png");
+    }
+  }
+
   // 1. PSF Convolution
   if (sim_params.conv_psf) {
     {
@@ -632,6 +669,10 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
       write_image(d_scanlines.get(), plane_size, "debug_images/2a_reference_gain.png");
     }
   }
+
+  // (Additive Gaussian RF noise was moved to stage 0.9 above, pre-PSF, in
+  // Pass 6 v2 to give the noise its physical bandwidth via the same PSF
+  // convolution that bandlimits the scatter signal.)
 
   // 2. Envelope detection
   {
@@ -820,6 +861,34 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     }
     if (sim_params.write_debug_images) {
       write_image(d_scanlines.get(), plane_size, "debug_images/5_median_clip.png");
+    }
+  }
+
+  // 4.5 Catheter sheath dead-zone mask (Pass 6 v2)
+  //
+  // Zero the inner radial samples of the final palette buffer to reproduce
+  // the bench's solid-black catheter zone. The bench's catheter wall blocks
+  // any acquired signal for r < ~1.4 mm, so the device renders that region
+  // as palette 0 (deeper than `reject_palette = 11`). Without this mask the
+  // additive noise stage fills the dead zone with the calibrated noise
+  // floor, which differs visibly from the bench. We apply the mask AFTER
+  // log compression / display window / median clip so the masked palette is
+  // exactly 0 (not the reject_palette = 11 floor that the display window
+  // would otherwise enforce).
+  //
+  // dr_mm = t_far / buffer_size; dead_zone_samples = floor(dead_zone_mm / dr_mm).
+  // Default `catheter_dead_zone_mm == 0.f` is a no-op (host wrapper short-
+  // circuits on `dead_zone_samples == 0`).
+  if (sim_params.catheter_dead_zone_mm > 0.f) {
+    CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Catheter dead-zone", sim_params.stream);
+    const float dr_mm = sim_params.t_far / static_cast<float>(sim_params.buffer_size);
+    const uint32_t dead_zone_samples = (dr_mm > 0.f)
+        ? static_cast<uint32_t>(sim_params.catheter_dead_zone_mm / dr_mm)
+        : 0u;
+    cuda_algorithms_->zero_inner_radial(d_scanlines.get(), plane_size, dead_zone_samples,
+                                        sim_params.stream);
+    if (sim_params.write_debug_images) {
+      write_image(d_scanlines.get(), plane_size, "debug_images/5b_catheter_deadzone.png");
     }
   }
 

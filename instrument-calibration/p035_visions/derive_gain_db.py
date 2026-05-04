@@ -331,6 +331,15 @@ def derive_gain_db(n_frames: int = 30) -> dict[str, Any]:
     diag_params.saturation_palette = 0.0
     diag_params.median_clip_filter = False
     diag_params.gain_db = 0.0  # we are deriving this from a zero-gain render
+    # Pass 6: zero out the additive RF noise during the diagnostic measurement.
+    # If left at the YAML value (sigma ~2.27 RF amp units = envelope mean ~2.84),
+    # the noise envelope dominates the bg in the diagnostic-mode render and the
+    # 60x20-pixel "wire peak" max-search picks up noise spikes instead of the
+    # wire echo, biasing sim_envelope_amp_median_wire HIGH (we measured 7.57
+    # this way; the underlying wire-only amplitude is much smaller). gain_db
+    # then under-shoots and outer wires fall below the reject palette in the
+    # final render. Forcing noise off here gives a clean wire-only amp.
+    diag_params.noise_sigma = 0.0
 
     world, positions = build_wire_world(materials)
     probe = cfg.to_probe()
@@ -388,23 +397,38 @@ def derive_gain_db(n_frames: int = 30) -> dict[str, Any]:
     gain_db_wire = 20.0 * math.log10(bench_amp_median / sim_amp_median)
     gain_db_bg_amp_pure = 20.0 * math.log10(bench_bg_amp / sim_bg_amp)
 
-    gain_db_bg = _refine_gain_db_against_bg(
-        cfg=cfg, materials=materials, base_params=base_params,
-        target_palette=BENCH_BG_PALETTE_AT_54,
-        seed_gain_db=gain_db_bg_amp_pure,
-        n_frames=max(4, n_frames // 4),
-    )
+    # Pre-Pass-6 we bisected gain_db so the post-clamp anechoic mean palette
+    # matched the bench. That worked when scatter was the only thing
+    # contributing to the bg (noise.sigma = 0). Pass 6 re-anchors the bg
+    # floor on additive Gaussian RF noise (calibrated separately by
+    # derive_noise_sigma.py) -- so the bg palette is now noise-set and is
+    # essentially independent of gain_db. We therefore pivot the gain_db
+    # calibration onto the **wire-peak** target, which still scales with
+    # gain_db. Keep the bg-bracket bisection running as a diagnostic so we
+    # report the residual scatter contribution under the calibrated gain.
+    try:
+        gain_db_bg = _refine_gain_db_against_bg(
+            cfg=cfg, materials=materials, base_params=base_params,
+            target_palette=BENCH_BG_PALETTE_AT_54,
+            seed_gain_db=gain_db_bg_amp_pure,
+            n_frames=max(4, n_frames // 4),
+        )
+    except Exception as e:
+        print(f"[derive_gain_db] bg bisection failed (expected with noise on): {e}")
+        gain_db_bg = float("nan")
 
     # Contrast diagnostic.
     sim_contrast_db = 20.0 * math.log10(sim_amp_median / sim_bg_amp)
     bench_contrast_db = 20.0 * math.log10(bench_amp_median / bench_bg_amp)
     contrast_gap_db = bench_contrast_db - sim_contrast_db  # positive => sim under-contrasted
 
-    # Which calibration the YAML adopts: the bench background. This anchors
-    # the simulator's anechoic floor at the device's reject window so the
-    # display window's reject palette behaviour is preserved; wire peaks then
-    # saturate or under-shoot per the contrast gap above.
-    gain_db_calibrated = gain_db_bg
+    # Pass 6 calibration: use the wire-peak target. With additive RF noise
+    # anchoring the anechoic floor at the bench level, the wire-peak target
+    # is the right anchor for gain_db (the bg is already correct by
+    # construction). The contrast gap (bench_contrast_db - sim_contrast_db)
+    # is reported below as a diagnostic of residual scattering-strength
+    # mismatch the gain_db scalar cannot fix.
+    gain_db_calibrated = gain_db_wire
 
     # Per-wire breakdown (sim wires only — the bench has more wires than the sim,
     # and bench wires are at different angles, so we report the renderer's gain
@@ -435,10 +459,11 @@ def derive_gain_db(n_frames: int = 30) -> dict[str, Any]:
             "median clip OFF, gain_db=0) so post-log palette = log10(envelope amp). "
             "Two candidate calibrations are reported: matching the median bench "
             "wire amplitude (gain_db_wire) and matching the bench water-scatter "
-            "background (gain_db_bg). The YAML uses the *background* "
-            "calibration so the device's reject palette behaviour is preserved; "
-            "any residual wire-vs-bg contrast gap is a scattering-strength "
-            "problem the gain_db scalar cannot fix."
+            "background (gain_db_bg). Pass 6 (additive noise floor) shifted the "
+            "anechoic floor anchor onto noise.sigma (calibrated independently "
+            "via derive_noise_sigma.py), so the YAML now uses the **wire-peak** "
+            "calibration. Any residual wire-vs-bg contrast gap is a scattering-"
+            "strength problem the gain_db scalar cannot fix."
         ),
         "n_frames": n_frames,
         "log_multiplier_used": log_multiplier,
@@ -453,7 +478,7 @@ def derive_gain_db(n_frames: int = 30) -> dict[str, Any]:
         "gain_db_bg_target": gain_db_bg,
         "gain_db_bg_amp_pure": gain_db_bg_amp_pure,
         "gain_db_calibrated": gain_db_calibrated,
-        "calibration_target": "water_background_post_clamp_mean_palette",
+        "calibration_target": "wire_peak_palette_median",
         "wire_vs_bg_contrast_db": {
             "sim": sim_contrast_db,
             "bench": bench_contrast_db,

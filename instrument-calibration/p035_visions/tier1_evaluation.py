@@ -1217,18 +1217,109 @@ def test_ringdown(cfg, sim_params, materials, n_frames: int, out_dir: Path) -> T
     return TestResult("E. Ring-down (mean A-line)", status, summary, detail)
 
 
-def test_noise() -> TestResult:
-    """F — N/A: the simulator has no additive noise model in this Pass-2 build."""
+def test_noise(cfg, sim_params, materials, n_frames: int) -> TestResult:
+    """F — additive RF noise floor matches the bench (E5) gain-54 anechoic ROI.
+
+    Pass 6 added a Gaussian RF noise stage post-gain / pre-Hilbert, calibrated
+    by ``derive_noise_sigma.py`` against the bench's E5 reference. We now
+    actually render and compare.
+
+    Pass criteria (per the Tier 1 spec, §A.1.3 noise floor σ):
+
+    * |σ_sim − σ_bench| / σ_bench ≤ 20 % (palette units; equivalent up to
+      log_multiplier scaling because both are derived from the same log
+      compression).
+
+    We additionally report mean and median palette as supporting diagnostics
+    -- the Rayleigh shape is fully described by σ but humans care about the
+    DC offset too.
+
+    The simulator is rendered in **pure water** (no scatter, no wires) so the
+    measured palette comes purely from the additive noise stage. This mirrors
+    the bench E5 acquisition (anechoic water phantom).
+    """
+    import raysim as rs
+    from raysim.ray_sim_python import Sphere
+
     bench = json.loads(NOISE_STATS_PATH.read_text())["per_gain"]["54"]
-    return TestResult(
-        "F. Noise floor σ",
-        "n/a",
-        "Skipped — the simulator has no additive RF/envelope noise model in "
-        "this build (Pass 2 deliberately deferred noise per the handoff brief; "
-        "calibrated σ = 2.6347 RF amplitude units sits in the YAML but is not "
-        "wired). Bench reference at gain 54 is mean palette = 46.2, σ = 20.3.",
-        {"bench_gain_54": bench, "sim_noise_model": "none"},
+    bench_mean = float(bench["mean"])
+    bench_std = float(bench["std"])
+    bench_p50 = float(bench["p50"])
+
+    # Pure water = no scatter (Material(1.48, 0.0022, 1480, 0.f) has mu0 = mu1
+    # = sigma = 0). OptiX needs a primitive; place a tiny sphere outside FOV.
+    world = rs.World("water")
+    world.add(Sphere(np.array([0.0, 1000.0, 0.0], dtype=np.float32),
+                     0.001, materials.get_index("water")))
+
+    sim = rs.RaytracingUltrasoundSimulator(world, materials)
+    probe = cfg.to_probe()
+    params = cfg.to_sim_params()
+    rd_extent_mm = float(cfg.processing.ring_down.extent_mm)
+    band = []
+    for k in range(n_frames):
+        params.frame_seed = int(k + 1)
+        out = sim.simulate(probe, params)
+        f = b_mode_to_theta_r(np.array(out, copy=True), cfg)
+        n_r = f.shape[1]
+        dr = float(cfg.sim.t_far_mm) / n_r
+        # Sample the entire FOV past the ring-down extent so we have ≥10⁴ pixels.
+        r_lo = max(0, int((rd_extent_mm + 1.0) / dr))
+        r_hi = n_r
+        band.append(f[:, r_lo:r_hi].copy())
+    band = np.stack(band)
+
+    sim_mean = float(band.mean())
+    sim_std = float(band.std())
+    sim_p50 = float(np.median(band))
+    sim_p05 = float(np.percentile(band, 5))
+    sim_p95 = float(np.percentile(band, 95))
+
+    sigma_rel_err = abs(sim_std - bench_std) / max(bench_std, 1e-6)
+    sigma_pass = sigma_rel_err <= 0.20
+    mean_rel_err = abs(sim_mean - bench_mean) / max(bench_mean, 1e-6)
+
+    # Headline pass criterion is sigma; we also surface the mean for context
+    # (the calibration is anchored on mean, so mean should be very close).
+    status = "pass" if sigma_pass else "fail"
+
+    detail = {
+        "bench_gain_54": bench,
+        "sim": {
+            "mean_palette": sim_mean,
+            "std_palette": sim_std,
+            "p50_palette": sim_p50,
+            "p05_palette": sim_p05,
+            "p95_palette": sim_p95,
+            "n_frames": n_frames,
+            "n_pixels": int(band.size),
+            "world": "water (no scatter, anechoic)",
+            "noise_sigma_yaml": float(cfg.processing.noise.sigma),
+        },
+        "pass_criteria": {
+            "sigma_within_20pct": {
+                "sim_std": sim_std,
+                "bench_std": bench_std,
+                "rel_err": sigma_rel_err,
+                "ok": sigma_pass,
+            },
+            "mean_palette_diagnostic": {
+                "sim_mean": sim_mean,
+                "bench_mean": bench_mean,
+                "rel_err": mean_rel_err,
+                "note": "informational; calibration anchors mean directly so "
+                        "this should be ≪ 5%",
+            },
+        },
+    }
+    summary = (
+        f"sim std palette = {sim_std:.2f} vs bench {bench_std:.2f} "
+        f"(rel.err {sigma_rel_err*100:.1f}% / 20% tol); "
+        f"sim mean = {sim_mean:.2f} vs bench {bench_mean:.2f}; "
+        f"sim median = {sim_p50:.2f} vs bench {bench_p50:.2f}. "
+        f"Anechoic water render; noise.sigma = {cfg.processing.noise.sigma:.4f}."
     )
+    return TestResult("F. Noise floor σ", status, summary, detail)
 
 
 def test_log_compression(cfg, sim_params, materials, out_dir: Path) -> TestResult:
@@ -1468,9 +1559,20 @@ def test_depth_uniformity(cfg, sim_params, materials, n_frames: int,
     theta_deg, r_mm_sim, _, _ = polar_axes(cfg)
     n_r = len(r_mm_sim)
     stk = np.stack([b_mode_to_theta_r(f, cfg) for f in bg_frames])  # (N, n_theta, n_r)
-    sim_mean_per_r = stk.mean(axis=(0, 1))     # (n_r,) post-clamp post-display palette
-    sim_median_per_r = np.median(stk, axis=(0, 1))
-    sim_std_per_r = stk.std(axis=(0, 1))
+    # Apply the same wire-masking transform we use on the bench (clip top 30%
+    # of pixels per radial bin per frame, then mean) so the comparison is
+    # apples-to-apples. The sim has no wires but the noise+scatter speckle
+    # also has positive-tail outliers that the bench masking would remove,
+    # so we mirror the operation here. Without this, sim mean was biased
+    # ~+10 palette vs bench because the bench mean is wire-masked.
+    BENCH_PEAK_CLIP_PERCENTILE = 70.0  # must match _bench_depth_profile()
+    masked_stk = stk.astype(np.float64).copy()
+    thresh = np.percentile(masked_stk, BENCH_PEAK_CLIP_PERCENTILE,
+                           axis=1, keepdims=True)
+    masked_stk = np.where(masked_stk > thresh, np.nan, masked_stk)
+    sim_mean_per_r = np.nanmean(masked_stk, axis=(0, 1))
+    sim_median_per_r = np.nanmedian(masked_stk, axis=(0, 1))
+    sim_std_per_r = np.nanstd(masked_stk, axis=(0, 1))
 
     bench_r_mm, bench_mean_per_r, bench_std_per_r, bench_n_frames, mask_meta = (
         _bench_depth_profile()
@@ -1974,7 +2076,7 @@ def main() -> int:
     results.append(psf_axial)
     results.append(psf_lateral)
     results.append(test_ringdown(cfg, sim_params, materials, args.n_frames_anechoic, out_dir))
-    results.append(test_noise())
+    results.append(test_noise(cfg, sim_params, materials, args.n_frames_anechoic))
     results.append(test_log_compression(cfg, sim_params, materials, out_dir))
     results.append(test_tgc(cfg, sim_params))
     # Diagnostic: gain alignment finding (uses the calibrated wire frames PSF dropped on disk).

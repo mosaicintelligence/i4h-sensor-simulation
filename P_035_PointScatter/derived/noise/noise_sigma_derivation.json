@@ -1,0 +1,190 @@
+{
+  "method_summary": "Bisection of processing.noise.sigma so the simulator's anechoic post-clamp mean palette matches the bench gain-54 reference (E5: anechoic ROI mean palette 46.2, n=19 frames). The YAML's old value (2.6347, derived from gain-64 back-stepped 10 dB) was too large because the 54->64 slider step is wider than 10 dB and because the bench's 'noise floor' subsumes both electronic noise and any residual scatter; we calibrate against the *observed bench palette* directly to side-step both.",
+  "target_palette": 46.2,
+  "n_frames": 8,
+  "tol_palette": 0.3,
+  "calibrated_sigma": 0.0008950075531005859,
+  "previous_yaml_sigma": 2.2719,
+  "final_stats": {
+    "sigma": 0.0008950075531005859,
+    "mean_palette": 46.07090759277344,
+    "median_palette": 45.90517807006836,
+    "std_palette": 23.22810173034668,
+    "p05_palette": 11.0,
+    "p95_palette": 84.76226043701172,
+    "n_pixels": 1398784
+  },
+  "history": [
+    {
+      "sigma": 1e-05,
+      "mean_palette": 11.0,
+      "median_palette": 11.0,
+      "std_palette": 0.0,
+      "p05_palette": 11.0,
+      "p95_palette": 11.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 4.0,
+      "mean_palette": 238.99755859375,
+      "median_palette": 239.0,
+      "std_palette": 0.2490694224834442,
+      "p05_palette": 239.0,
+      "p95_palette": 239.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 2.000005,
+      "mean_palette": 238.9901123046875,
+      "median_palette": 239.0,
+      "std_palette": 0.4924699366092682,
+      "p05_palette": 239.0,
+      "p95_palette": 239.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 1.0000075,
+      "mean_palette": 238.96170043945312,
+      "median_palette": 239.0,
+      "std_palette": 0.9754205346107483,
+      "p05_palette": 239.0,
+      "p95_palette": 239.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.50000875,
+      "mean_palette": 238.84841918945312,
+      "median_palette": 239.0,
+      "std_palette": 1.9397554397583008,
+      "p05_palette": 239.0,
+      "p95_palette": 239.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.250009375,
+      "mean_palette": 238.40037536621094,
+      "median_palette": 239.0,
+      "std_palette": 3.9222371578216553,
+      "p05_palette": 239.0,
+      "p95_palette": 239.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.1250096875,
+      "mean_palette": 236.657958984375,
+      "median_palette": 239.0,
+      "std_palette": 8.123869895935059,
+      "p05_palette": 221.70628356933594,
+      "p95_palette": 239.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.06250984375,
+      "mean_palette": 230.3572235107422,
+      "median_palette": 239.0,
+      "std_palette": 16.34968376159668,
+      "p05_palette": 194.00277709960938,
+      "p95_palette": 239.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.031259921875,
+      "mean_palette": 212.4364776611328,
+      "median_palette": 219.13330078125,
+      "std_palette": 26.342418670654297,
+      "p05_palette": 160.4920654296875,
+      "p95_palette": 239.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.0156349609375,
+      "mean_palette": 181.65773010253906,
+      "median_palette": 185.41140747070312,
+      "std_palette": 29.833826065063477,
+      "p05_palette": 126.70227813720703,
+      "p95_palette": 224.266845703125,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.00782248046875,
+      "mean_palette": 147.96023559570312,
+      "median_palette": 151.63690185546875,
+      "std_palette": 29.777101516723633,
+      "p05_palette": 92.92882537841797,
+      "p95_palette": 190.4947052001953,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.003916240234375,
+      "mean_palette": 114.37715911865234,
+      "median_palette": 117.89354705810547,
+      "std_palette": 29.342998504638672,
+      "p05_palette": 59.60234451293945,
+      "p95_palette": 156.75135803222656,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.0019631201171874998,
+      "mean_palette": 81.3243179321289,
+      "median_palette": 84.21224975585938,
+      "std_palette": 27.98116111755371,
+      "p05_palette": 30.595199584960938,
+      "p95_palette": 123.070068359375,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.00098656005859375,
+      "mean_palette": 50.15790939331055,
+      "median_palette": 50.654422760009766,
+      "std_palette": 24.120637893676758,
+      "p05_palette": 11.0,
+      "p95_palette": 89.51219940185547,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.000498280029296875,
+      "mean_palette": 25.014089584350586,
+      "median_palette": 19.404403686523438,
+      "std_palette": 15.590897560119629,
+      "p05_palette": 11.0,
+      "p95_palette": 56.198402404785156,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.0007424200439453124,
+      "mean_palette": 38.604400634765625,
+      "median_palette": 36.82098388671875,
+      "std_palette": 21.21261215209961,
+      "p05_palette": 11.0,
+      "p95_palette": 75.64608764648438,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.0008644900512695311,
+      "mean_palette": 44.64493942260742,
+      "median_palette": 44.21460723876953,
+      "std_palette": 22.884641647338867,
+      "p05_palette": 11.0,
+      "p95_palette": 83.07027435302734,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.0009255250549316406,
+      "mean_palette": 47.46449661254883,
+      "median_palette": 47.540130615234375,
+      "std_palette": 23.54718017578125,
+      "p05_palette": 11.0,
+      "p95_palette": 86.39752197265625,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.0008950075531005859,
+      "mean_palette": 46.07090759277344,
+      "median_palette": 45.90517807006836,
+      "std_palette": 23.22810173034668,
+      "p05_palette": 11.0,
+      "p95_palette": 84.76226043701172,
+      "n_pixels": 1398784
+    }
+  ]
+}

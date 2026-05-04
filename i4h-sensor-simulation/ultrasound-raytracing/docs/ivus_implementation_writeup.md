@@ -717,6 +717,261 @@ so σ_mm == w0 for any depth r ≤ focal_length and the textbook expansion only 
 
 **Tier 1 test I result (Pass 5c):** RMS dropped from 26.0 (Pass 5b) to **15.1** (Pass 5c) — a further 41 % reduction. Max |Δ| dropped from 88.8 → 51.5, sim/bench span ratio from 7 → 4. The sim mean palette now closely tracks the bench bg curve from r ≈ 10 mm onward; the residual gap is the +20-30 palette excess at r ≈ 4-9 mm and the deep-field median dropout. Both close once the calibrated additive noise floor (test F, Pass 6) is wired.
 
+### 11.12 Additive RF noise floor + wire-target gain (Pass 6)
+
+**Motivation.** With the geometry, ring-down, and beam shape all calibrated, the
+simulator's pixel-value distribution still differed sharply from the bench: the
+sim had a **bimodal** histogram (lots of pixels at the reject palette = 11
+*and* lots saturated at the top end), while the bench distribution at slider
+54 in anechoic water is a clean unimodal log-Rayleigh with mean 46.2, std 20.3,
+median 44.3 (E5, n = 19 frames, 800k+ samples). The simulator had no electronic-
+noise model, so anechoic regions were sourced entirely from water-scatter
+speckle whose long left tail in log-space crashed through the device's reject
+floor.
+
+**Fix overview.**
+1. Add a Gaussian RF-noise stage to the pipeline (post-`gain_db`, pre-Hilbert).
+2. Re-derive `processing.noise.sigma` so the simulator's anechoic post-clamp
+   palette mean / median / std match the bench gain-54 reference.
+3. Pivot the `processing.gain_db` calibration onto the **wire-peak** target,
+   since the bg floor is now anchored on `noise.sigma` (independent of `gain_db`).
+
+**Implementation.** A new CUDA kernel `add_gaussian_noise_kernel` in
+`cuda_algorithms.cu` generates per-sample Gaussian noise via Box-Muller from a
+PCG-hashed `(row, col, seed)` triplet and adds `sigma * z` to the post-gain RF
+buffer. Placement *post-gain, pre-Hilbert* matches the YAML's "RF noise std at
+gain-54 reference" convention: noise observed at the analog output, not
+referred to the transducer (referred-to-input would scale with gain_db, which
+the bench measurement does not). The host-side glue exposes `SimParams::
+noise_sigma` and `SimParams::frame_seed` (the latter doubles as the scatter-
+decorrelation salt from Pass 5b). `IvusSimConfig.to_sim_params` wires
+`processing.noise.sigma` and `processing.noise.type` directly through to the
+new field.
+
+```cpp
+// Pass 6: add Gaussian RF noise post-gain / pre-Hilbert. Independent of
+// gain_db, mirrors how bench-measured noise.sigma is referenced (at the
+// analog output, not at the transducer).
+if (sim_params.noise_sigma > 0.f) {
+  cuda_algorithms_->add_gaussian_noise(
+      reflection_buffer_.get_data(),
+      reflection_buffer_.size(),
+      sim_params.noise_sigma,
+      sim_params.frame_seed * 2654435761u + 0x9E3779B9u,
+      stream);
+}
+```
+
+**Calibration.** Two new derivations, both committed under
+`P_035_PointScatter/derived/`:
+- `derive_noise_sigma.py` bisects `noise.sigma` so that the *full-pipeline*
+  anechoic mean palette in pure water (`Material("water")`, mu0 = mu1 = sigma
+  = 0 — matches the bench's electronic-noise-only acquisition) hits the bench
+  reference 46.2. Result: **σ = 2.2719** (was 2.6347, derived from the gain-64
+  back-step that over-shoots; see §11.12.1). The full distribution shape
+  matches: sim mean = 46.4 (target 46.2), median = 45.5 (bench 44.3), std =
+  19.4 (bench 20.3, 4.2 % rel.err).
+- `derive_gain_db.py` pivots from the bg-bracket target to the **wire-peak
+  target** (bench median wire envelope amplitude). With noise anchoring the
+  bg, `gain_db` drops from +130.55 dB → **+73.92 dB**. The bg-bracket
+  diagnostic still runs and correctly degrades to "could not bracket" because
+  noise dominates the floor regardless of `gain_db`. *Note:* an earlier Pass 6
+  iteration mistakenly left `noise_sigma` at its YAML value during the
+  diagnostic-mode wire-amp measurement; the noise envelope's max-of-window
+  spike (~12 amp units in a 60×20-pixel ROI) dominates the wire signal
+  (true amp ~0.01) and inflated `sim_envelope_amp_median_wire` from 0.011
+  to 7.6, biasing `gain_db` down to +17 dB and rendering the outer three
+  wires below the reject palette. The fix (force `noise_sigma = 0` in the
+  diagnostic-mode render) yields the correct +73.92 dB.
+
+The YAML changes are minimal:
+
+```yaml
+gain_db: 73.92             # Pass 6 — wire-peak match (bg now noise-anchored)
+noise:
+  type: gaussian
+  sigma: 2.2719            # Pass 6 — fit to E5 anechoic palette mean+median+std
+```
+
+**Tier 1 results (Pass 6):**
+- **Test F (noise floor σ): PASS** — sim std = 19.41 vs bench 20.27 (4.2 %
+  rel.err, ≤ 20 % tol), mean 46.41 vs 46.25 (0.36 % off), median 45.5 vs 44.3.
+  This is the first pass of test F since the simulator had no noise model.
+- **Test I (depth uniformity): PASS** — RMS palette difference dropped from
+  15.1 (Pass 5c) to **3.4** (Pass 6); max |Δ| from 51.5 → 8.4; bias from
+  +20-30 → +0.7. Sim mean palette now overlays the bench bg curve from r ≈ 4
+  mm to 29 mm. *Caveat:* in Pass 6 we also fixed an apples-to-oranges bias in
+  test I — the bench profile is wire-masked (bottom-70 % per radial bin) but
+  the sim profile was the full mean. The new test applies the same masking
+  to the sim. With pre-Pass-6 sigma = 0, the unmasked sim profile bias was
+  +20 palette; with Pass-6 sigma + masking-equalization, it is +0.7.
+
+The wire-phantom polar comparison (`tier1_results/figures/wire_phantom_polar_paired.png`)
+shows the dramatic visual improvement: before Pass 6 the sim's anechoic field
+was almost uniformly black with bright wires; after Pass 6 it shows the same
+fine-grained log-Rayleigh speckle texture as the bench, with wires standing
+out at appropriate contrast.
+
+#### 11.12.1 Why σ = 2.2719 not 2.6347
+
+The original YAML σ = 2.6347 was derived analytically from the bench gain-64
+mean palette (`σ_complex(g64) = envelope_amp / √(π/2)`) back-stepped 10 dB to
+gain 54 (assuming the slider step is exactly 10 dB). That calculation also
+implicitly assumed `mean(envelope) = mean(palette/log_mult * 10^(...))` = a
+log-domain transform that ignores Jensen's inequality between
+`log(E[envelope])` and `E[log envelope]`. Both effects bias σ high.
+
+A direct fit to the gain-54 reference — the slider we actually deploy — is
+both more honest and more accurate: the simulator's noise distribution after
+the full nonlinear pipeline (Hilbert → log-compression → display window →
+median clip) reproduces the bench's mean, median, **and** std simultaneously,
+which a pure-amplitude derivation cannot.
+
+#### 11.12.2 Wire-vs-bg contrast gap (residual diagnostic)
+
+After the noise-contamination fix, `derive_gain_db` reports a **−68.8 dB**
+contrast gap (sim has *more* wire-vs-bg contrast than the bench, +95.3 dB
+sim vs +26.4 dB bench). The over-contrast is exactly why the inner two wires
+saturate at 239 in the calibrated render (matching bench inner-wire
+saturation) while the outer three sit comfortably above the noise floor at
+palette 150-200. So the contrast magnitude is *fine*; the qualitative
+mismatch with the bench is now in **wire shape**, not amplitude:
+
+- *Bench*: wires render as bright **arcs** spanning 30-60° in angle —
+  apparently because the rotating element sees the wire reflection across
+  many transmit angles (extended angular response).
+- *Sim*: wires render as near-pixel-sized **dots**. Pass 5c's pre-focal
+  beam clamp made the lateral PSF very narrow at small radii (intentional,
+  to match bench wire FWHM at the focal length), so each wire only paints
+  one or two angular bins.
+
+Bench arc width is the next obvious target for a Pass 7 lateral-PSF
+refinement (a probe-specific angular-response model on top of the Gaussian
+focused-beam model). Out of scope for Pass 6, which is focused on the
+amplitude calibration / additive-noise stage.
+
+### 11.13 Texture (noise pre-PSF) + catheter dead-zone (Pass 6 v2)
+
+**Motivation.** Two visible mismatches remained after Pass 6 v1:
+
+1. **Texture.** The bench's anechoic-water background renders as **mottled
+   speckle** with blob-like correlation length ≈ 0.5 mm; the Pass 6 v1 sim
+   rendered the same region as **fine static noise** (essentially per-pixel
+   uncorrelated). Per-pixel noise is wrong both visually and physically —
+   real receiver noise is bandlimited by the receive chain *before*
+   digitisation, so it has the same spatial correlation length as any
+   coherent scatter signal (≈ one resolution cell).
+2. **Catheter dead-zone.** The bench renders the inner ~1.4 mm as **solid
+   black** (palette 0) because the catheter sheath physically blocks any
+   acquired signal. The Pass 6 v1 sim filled that region with the
+   calibrated noise floor + leaked ring-down energy, producing a visible
+   inner-zone disagreement.
+
+**Fix overview.**
+1. **Move the additive-noise stage from post-gain to pre-PSF.** The noise
+   now sees the same axial + lateral PSF convolutions as the scatter
+   signal, giving it the physical resolution-cell correlation length. (See
+   §12.4 for the physical justification.)
+2. **Add a `catheter.dead_zone_mm` mask** at the very end of the pipeline
+   (post log-compression / display window / median clip) that zeros the
+   inner radial samples to palette 0. Calibrated to the bench-observed
+   1.4 mm.
+3. **Re-derive `noise.sigma`** because the new placement applies the
+   PSF L2 norm and the gain_db amplification on top of the noise
+   variance, so the input-RF sigma needs to be much smaller than the v1
+   output-RF sigma.
+
+**Implementation.** No new pipeline conceptually — the existing
+`add_gaussian_noise_kernel` is moved up the call chain. A new
+`zero_inner_radial_kernel` zeros samples with `index.x < dead_zone_samples`
+(short-circuits when `dead_zone_samples == 0`). Plumbing additions:
+`SimParams::catheter_dead_zone_mm`, Python binding, `CatheterConfig` in
+`raysim.config`, and the YAML `processing.catheter.dead_zone_mm` knob.
+
+```cpp
+// New stage 0.9 (raytracing_ultrasound_simulator.cpp): noise pre-PSF
+if (sim_params.noise_sigma > 0.f) {
+  cuda_algorithms_->add_gaussian_noise(d_scanlines.get(), plane_size,
+                                       sim_params.noise_sigma, noise_seed,
+                                       sim_params.stream);
+}
+// Then existing PSF convolution (axial + lateral) smooths BOTH scatter and noise.
+
+// New stage 4.5: catheter dead-zone mask, post log + display window + median clip
+if (sim_params.catheter_dead_zone_mm > 0.f) {
+  const uint32_t dead_zone_samples = sim_params.catheter_dead_zone_mm /
+                                     (sim_params.t_far / sim_params.buffer_size);
+  cuda_algorithms_->zero_inner_radial(d_scanlines.get(), plane_size,
+                                      dead_zone_samples, sim_params.stream);
+}
+```
+
+**YAML changes.** σ shrinks by ~3 orders of magnitude; gain_db is
+unchanged because the wire signal path still goes scatter → PSF → TGC →
+gain_db (only the noise-floor amplification path differs).
+
+```yaml
+processing:
+  gain_db: 73.92                # unchanged from Pass 6 v1
+  noise:
+    type: gaussian
+    sigma: 0.000895             # Pass 6 v2 — input-RF (pre-PSF) noise std
+  catheter:
+    dead_zone_mm: 1.4           # observed bench dead-zone radius
+```
+
+**Tier 1 results (Pass 6 v2):**
+- **Test F (noise floor σ): PASS** — sim std = 22.91 vs bench 20.27
+  (13.0 % rel.err, ≤ 20 % tol); sim mean 43.25 vs bench 46.25; sim median
+  42.24 vs bench 44.29. Slightly noisier than v1 (which had 4 %), but
+  still well within tolerance and now with the correct *spatial structure*.
+- **Test I (depth uniformity): FAIL (regression).** RMS palette dropped
+  9.5 (within ≤ 10 limit), max |Δ| = 24.3, bias −2.2; **but** sim
+  peak-to-trough = 29.5 vs bench 14.1 (ratio 2.10, ≤ 1.5 required). The
+  failure is the **focal-zone hump**: convolving white noise with the
+  L1-normalized depth-dependent lateral PSF amplifies noise variance where
+  the kernel is narrowest (focal zone, r ≈ 15-20 mm). The bench's noise
+  variance is approximately depth-flat, so we now over-shoot by ~10
+  palette in the focal zone and under-shoot by ~10 palette at the
+  near/far edges.
+- All other tests unchanged from Pass 6 v1 (A, B, G, H, gain alignment
+  PASS; C, D, E pre-existing FAIL).
+
+**Visual evidence.**
+- `tier1_results/figures/ringdown_inner_zone_paired.png`: sim now has a
+  solid-black inner zone matching the bench, and the speckle texture is
+  visibly mottled (distinct blobs ≈ 0.2-0.3 mm) rather than per-pixel
+  static. The bench mottling is slightly larger (~0.5 mm) — see "Open
+  trade-offs" below.
+- `tier1_results/figures/wire_phantom_polar_paired.png`: the calibrated
+  sim panel shows wires standing out of the new mottled background with
+  the same dead-zone disk as the bench.
+
+**Open trade-offs.**
+1. *Test I focal-zone hump.* This is a fundamental consequence of using
+   an L1-normalized depth-dependent PSF on white noise. Three feasible
+   fixes for a future pass:
+   1. Per-row noise-sigma compensation `σ_in(r) = σ_const · ||k(r)||₂`
+      so that `σ_out(r) = σ_const` after convolution. Cleanest.
+   2. Use an L2-normalized PSF for noise and L1 for scatter (two PSF
+      stages). More invasive.
+   3. Move noise back to post-PSF and add a *separate* small-constant-
+      width smoothing kernel for noise only. Loses some physical fidelity
+      (noise gets a different correlation length than the resolution
+      cell) but is the simplest engineering fix.
+2. *Mottling correlation length.* Sim mottling (~0.2-0.3 mm) is finer
+   than bench (~0.5 mm). The sim's lateral PSF FWHM at 15 mm is ~0.3 mm
+   (calibrated against wire FWHM in test D). The bench's effective noise
+   correlation length is ~0.5 mm — a reasonable hypothesis is that the
+   bench probe's *receive-only* aperture is wider than its effective
+   transmit-receive product, so noise sees a wider kernel than scatter.
+   Modeling this requires separating TX and RX response, which is the
+   same architectural change as fix 1.2 above.
+3. *Gain-db unchanged.* The wire-target calibration was re-run and
+   landed on +73.92 dB exactly — the wire signal path is unchanged
+   (raytraced amplitude → PSF → TGC → gain_db → Hilbert → log), so this
+   is expected.
+
 
 
 The following are **missing elements** that could explain mismatches between simulation and real IVUS, plus **suggested next steps** to enhance the model.
@@ -733,7 +988,16 @@ There is **no model of the catheter or sheath**: no near-field ring-down, guided
 
 **Status (Pass 2 — implemented):** The ring-down injector in `simulate()` (stage 1.6, between TGC and envelope detection) now consumes the calibrated `processing.ring_down.{enabled, amplitude, extent_mm, decay, waveform_path, template_pitch_mm, template_speckle_floor_palette}` block. The `IvusSimConfig` loader resolves the `.npy` template relative to the workspace root, subtracts the speckle floor, converts palette → envelope amplitude using `log_multiplier`, and resamples from the device's display pitch (0.12 mm/sample for PV .035) onto the simulator's `t_far / buffer_size` pitch. With `enabled=false` the simulator emits no ring-down signal at all (silent lumen); with `enabled=true` it adds the residual that survives the device's Acoustic Reference subtraction. See §11.7 for the full implementation table and the acceptance numbers (peak at 1.787 mm vs the calibrated 1.80 mm).
 
-**Outstanding for ring-down:** the `subtract_reference` field is informational only (the device already does the AR subtraction; we model the residual). A simple dead-zone mask for the inner few hundred microns is not yet wired and may not be needed once the calibrated waveform template is doing the work; revisit if the inner-most ~0.2 mm shows residual artifacts in the comparison frames.
+**Status (Pass 6 v2 — implemented):** Catheter sheath dead-zone mask
+wired via `processing.catheter.dead_zone_mm` → `SimParams::
+catheter_dead_zone_mm` → `zero_inner_radial_kernel`. Applied at the very
+end of the pipeline (post log-compression / display window / median
+clip), so any sample at `r < dead_zone_mm` is set to palette 0 — deeper
+than `reject_palette = 11`, matching the bench's solid-black inner zone.
+Calibrated to 1.4 mm (observed bench dead-zone radius from
+`tier1_results/figures/ringdown_inner_zone_paired.png`). See §11.13.
+
+**Outstanding for ring-down:** the `subtract_reference` field is informational only (the device already does the AR subtraction; we model the residual).
 
 ### 12.3 Element directivity at transmit
 
@@ -745,9 +1009,27 @@ Ray intensity starts at 1.0; **element directivity is only applied in the latera
 
 There is **no noise model**. For SNR, contrast resolution, or detector-limited studies, at least a simple noise model is needed (e.g. additive Gaussian, or noise figure).
 
-**Schema status (Pass 1):** The YAML schema carries `processing.noise.{type, sigma}` (Gaussian / Rayleigh / none) and the calibration pipeline measures a baseline σ in palette units from anechoic ROIs. These are listed in `pending_fields()` because the C++ side is not yet implemented; per the Pass-2 plan, noise is intentionally deferred until after ring-down so that we can measure noise on a ring-down-subtracted simulator output rather than fitting a number that conflates noise with residual catheter signal.
+**Status (Pass 6 v2 — implemented).** A Gaussian RF-noise stage in
+`simulate()` consumes `processing.noise.{type, sigma}`. The stage was
+moved in Pass 6 v2 from post-gain (v1) to **pre-PSF** so the noise sees
+the same axial + lateral PSF convolutions as the scatter signal —
+matching the bench's bandlimited receiver noise (mottled speckle) instead
+of v1's per-pixel static. σ is now in **input-RF units** (pre-gain,
+pre-TGC, pre-PSF); calibrated to 0.000895 by `derive_noise_sigma.py`
+(pipeline-aware bisection against the bench gain-54 anechoic palette
+mean 46.2, std 20.3, median 44.3). Tier 1 test F PASS (sim std 22.91 vs
+bench 20.27, 13 % rel.err). Catheter dead-zone mask wired in same pass
+(see §12.2). See §11.13 for the v2 implementation, the depth-uniformity
+focal-zone hump trade-off (test I FAIL on peak-to-trough span), and
+proposed Pass 7 fixes.
 
-**Next step (Pass 2 follow-up):** Add an optional noise stage (e.g. post–log-compression Gaussian, or pre-compression with a simple noise figure) honoring the YAML schema fields above.
+**Outstanding for noise:**
+- The L1-normalized depth-dependent lateral PSF amplifies noise variance
+  in the focal zone (test I peak-to-trough fail). Three Pass 7 options
+  in §11.13 ("Open trade-offs").
+- Schema accepts `noise.type ∈ {gaussian, rayleigh, none}` but only
+  `gaussian` is wired.
+- Per-frequency noise scaling (`noise.sigma(f)`) is not modelled.
 
 ### 12.5 Rotation and motion
 
