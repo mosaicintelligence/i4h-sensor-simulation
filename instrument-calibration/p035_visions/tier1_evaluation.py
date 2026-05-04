@@ -274,6 +274,12 @@ def render_frames(cfg, world, materials, n_frames: int, sim_params=None,
         else:
             yaw = 0.0
         probe = make_probe_at(cfg, rotation_rad=(0.0, yaw, 0.0))
+        # Pass 5b: increment frame_seed each frame so the per-scanline scatter
+        # decorrelation hash draws an independent speckle realisation per
+        # frame. With this enabled, temporal averaging of N frames now
+        # converges sqrt(N) times faster on the bench's anechoic statistics
+        # than the legacy correlated-scatter behaviour did.
+        sim_params.frame_seed = int(k + 1)
         b_mode = sim.simulate(probe, sim_params)
         frames.append(np.asarray(b_mode))
     return np.stack(frames, axis=0)

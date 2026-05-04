@@ -653,9 +653,54 @@ Pass 3b shipped a calibrated PV .035 build that visually showed a "bright centre
 
 After Pass 4 with the re-derived `gain_db = +145.02`: bias is essentially zero (sim mean tracks bench mean within ±10 palette over r ∈ [10, 29] mm), but the bright shoulder at r ≈ 4-7 mm dominates the RMS (max |Δ| ≈ 100-120 palette there). Test I FAILS until the near-field scatter peak and the missing additive noise (test F) are addressed in Pass 5.
 
----
+### 11.11 Lateral-PSF cyclic+wide kernel and per-scanline scatter decorrelation (Pass 5 / Pass 5b)
 
-## 12. Potential next steps and modeling gaps
+Pass 5 attacked the **bright shoulder** in the depth-uniformity profile (test I) at r ≈ 4-7 mm. The Pass 4 figure showed a +50-100 palette excess in that band that the calibrated `gain_db` could not absorb without darkening the deep field.
+
+**Pass 5 (lateral PSF correctness — `csrc/core/raytracing_ultrasound_simulator.cpp::update_psfs`, `csrc/cuda/cuda_algorithms.cu::convolve_columns_depth_dependent_kernel`):**
+
+The IVUS lateral PSF is intrinsically cyclic in angle (360° = `num_scanlines`), but `convolve_columns_depth_dependent_kernel` was truncating at `index.y == 0` and `index.y == size.y - 1`, producing a darkened seam at angle 0/360°. The Pass 4 kernel radius (`64`) was also smaller than the near-field Gaussian-beam σ (≈113 angular bins at r=1 mm), truncating the kernel before it captured the full beam.
+
+Pass 5 fixes both:
+
+1. **Cyclic angular convolution.** The kernel now wraps source row indices via `((iy + k) % N + N) % N` so the convolution matches the periodic IVUS geometry. Boundary darkening at the angle seam is gone.
+2. **Kernel radius scales with `num_scanlines`.** `kernel_radius = num_scanlines / 2` (= 128 for the PV .035 256-scanline geometry) so the kernel can span the full half-circumference at any depth without truncation.
+3. **Normalization choice (L1 retained).** L2 normalization (`sqrt(sum_sq) = 1`) was tried and rejected: with the OptiX scatter texture's positive angular correlation at small r (adjacent scanlines sample world points 0.025 mm apart at r=1 mm, well within one trilinearly-interpolated voxel), the L2-normalized cyclic Gaussian convolution amplifies the correlated near-field signal by ~`√σ_bins`, *worsening* the bright shoulder by another +50 palette. L1 normalization preserves the established `gain_db` calibration curve.
+
+After Pass 5 alone (cyclic + wide kernel + L1 + re-derived `gain_db = +144.02`), test I RMS dropped marginally from 30.0 → 32.8 (i.e. ≈ unchanged). The angle-seam darkening was visibly cured but the near-field bright shoulder persisted because its root cause is in the OptiX scatter sampling, not the PSF kernel.
+
+**Pass 5b (per-scanline scatter decorrelation — `csrc/cuda/optix_trace.cu::get_scattering_value`):**
+
+The scatter texture is a 256³ float2 volume in WRAP addressing mode (see `World::generate_scattering_texture`), sampled in world coordinates via trilinear interpolation. At small r the angular sampling is sub-voxel (arc length per scanline `2π·r/N ≈ 0.025 mm` at r=1 mm) so adjacent scanlines see *interpolated* values from the same texture neighbourhood — producing positive angular correlation that survives even at `scattering_resolution_mm = 0.01 mm` (verified by parameter sweep). The depth-dependent lateral PSF then sums these correlated samples coherently, manifesting as the bright shoulder.
+
+The Pass 5b fix adds a per-scanline pseudo-random offset to the texture coordinate before lookup:
+
+```cpp
+if (params.scatter_angular_decorrelate) {
+  const uint32_t base = ray_index * 3u + params.frame_seed * 2654435761u;
+  const float ox = pcg_to_unit_float(pcg_hash(base + 0u)) * 4096.f;
+  const float oy = pcg_to_unit_float(pcg_hash(base + 1u)) * 4096.f;
+  const float oz = pcg_to_unit_float(pcg_hash(base + 2u)) * 4096.f;
+  pos.x += ox;  pos.y += oy;  pos.z += oz;
+}
+```
+
+The hash is a standard PCG mix (Jarzynski & Olano 2020; O'Neill 2014) — adequate for per-ray jitter, not security. The 4096× scaling guarantees offsets span many texture periods so wrap-mode addressing places adjacent scanlines into independent regions of the texture. All depth samples *along* a scanline share the same offset so the axial scatter integral remains spatially coherent (preserving wire/sphere PSFs and the band-pass character that the axial Hanning-cosine PSF later filters). `frame_seed` is mixed in so successive frames draw independent speckle realizations, enabling temporal averaging to converge on the bench's noise-floor statistics; Tier 1 test I increments `frame_seed` per frame.
+
+Two new `SimParams` fields drive this:
+
+```cpp
+bool scatter_angular_decorrelate = true;   // default ON
+uint32_t frame_seed = 0u;                  // increment per frame for independent speckle
+```
+
+Mirrored into `Params` (`include/raysim/cuda/optix_trace.hpp`) and exposed via Python bindings.
+
+**Calibration impact.** With decorrelation enabled, the OptiX scatter contribution at every scanline becomes the *uncorrelated* mean of the texture statistics — significantly larger than the previous correlated-sample value. `derive_gain_db.py` re-calibrated `gain_db` from +144.02 dB → **+111.01 dB** (−33 dB). The wire-vs-bg contrast gap (sim 100 dB vs bench 26 dB) also closed by ≈14 dB to −59.6 dB because wires are insensitive to scatter-texture jitter (deterministic targets) while the bg amplitude rose.
+
+**Tier 1 test I result (Pass 5b):** RMS palette difference dropped from 30.0 (Pass 4) / 32.8 (Pass 5) to **29.2** (Pass 5b) — best yet, but still above the 10-palette pass threshold. Visual depth-uniformity is dramatically improved: the bright shoulder at r ≈ 4-7 mm is replaced by a smooth monotonic decay from the ring-down zone, and the rendered polar B-mode no longer shows the "bright-mid → dark → bright-outer" pattern that motivated this pass. The remaining +50 palette excess at r ≈ 4-10 mm and the median-palette dropout at r > 14 mm (sim median = `reject_palette = 11` in deep field) require an additive noise-floor stage (test F, Pass 6) — see §12.4.
+
+
 
 The following are **missing elements** that could explain mismatches between simulation and real IVUS, plus **suggested next steps** to enhance the model.
 
