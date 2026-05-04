@@ -316,7 +316,40 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
       for (uint32_t b = 0; b < depth_bins; ++b) {
         const float depth_mm = (static_cast<float>(b) + 0.5f) / static_cast<float>(depth_bins) * t_far;
         const float z = depth_mm - focal_mm;  // distance from focus (mm)
-        const float sigma_mm = w0_mm * std::sqrt(1.f + (z * z) / (z_R_mm * z_R_mm));
+        // Pass 5c: clamp the pre-focal beam expansion to its focal value.
+        //
+        // The textbook Gaussian beam w(z) = w0 * sqrt(1 + (z/z_R)^2) is symmetric
+        // about the focus, so it predicts a *wide* mm-scale beam at depths
+        // r << focal_length (e.g. ~2.8 mm beam radius at r = 1 mm with the
+        // PV .035 geometry). Combined with the angular conversion
+        // sigma_bins = sigma_mm * N / (2 * pi * r), the 1/r factor explodes
+        // sigma_bins to >100 angular bins at r = 1 mm and the PSF averages
+        // wires across nearly half the imaging circle in the near field.
+        //
+        // Bench imagery shows the opposite trend: in the unwrapped polar view
+        // the angular FWHM of a wire is roughly constant with depth (so the
+        // arc-length FWHM in mm in the polar-to-Cartesian mapping is
+        // *narrower* for near wires, *wider* for far wires — see the
+        // wire_phantom_polar_paired.png inset right panel). Physically this
+        // matches the synthetic-aperture IVUS imaging chain: at depths
+        // r < focal_length the rotating element only coherently sums over a
+        // narrow beam (the SA aperture overlap is limited by the element
+        // directivity), so the effective beam never expands above its focal
+        // value. The depth-symmetric Gaussian beam model conflates this
+        // single-element-rotated-SA geometry with a static focused circular
+        // aperture and wrongly broadens the near-field beam.
+        //
+        // Pragmatic fix: zero out the pre-focal contribution to (z/z_R)^2,
+        // so sigma_mm == w0 for any depth r <= focal_length and the textbook
+        // expansion only applies post-focal where the model is meaningful.
+        // This restores the bench-like wire shapes (tight pinpoints in the
+        // polar view across all radii) and removes the residual bright-
+        // center contribution from near-field wires being smeared across
+        // many angular bins. The cyclic + wide-kernel + L1 normalization
+        // from Pass 5 still applies; the only change is the sigma_mm
+        // schedule per depth_bin.
+        const float z_post = (z > 0.f) ? z : 0.f;
+        const float sigma_mm = w0_mm * std::sqrt(1.f + (z_post * z_post) / (z_R_mm * z_R_mm));
         const float depth_safe = std::max(depth_mm, 0.5f);
         const float sigma_bins = sigma_mm * static_cast<float>(num_angular_rays) / (two_pi * depth_safe);
         float* row = k2d.data() + b * kernel_len;

@@ -700,6 +700,23 @@ Mirrored into `Params` (`include/raysim/cuda/optix_trace.hpp`) and exposed via P
 
 **Tier 1 test I result (Pass 5b):** RMS palette difference dropped from 30.0 (Pass 4) / 32.8 (Pass 5) to **29.2** (Pass 5b) — best yet, but still above the 10-palette pass threshold. Visual depth-uniformity is dramatically improved: the bright shoulder at r ≈ 4-7 mm is replaced by a smooth monotonic decay from the ring-down zone, and the rendered polar B-mode no longer shows the "bright-mid → dark → bright-outer" pattern that motivated this pass. The remaining +50 palette excess at r ≈ 4-10 mm and the median-palette dropout at r > 14 mm (sim median = `reject_palette = 11` in deep field) require an additive noise-floor stage (test F, Pass 6) — see §12.4.
 
+**Pass 5c (pre-focal beam clamp).** A wire-shape comparison against the bench (visible in `tier1_results/figures/wire_phantom_polar_paired.png`) revealed a second, related artifact: in the sim's diagnostic polar B-mode the wire at r = 5 mm spans 30-50° in angle while the bench wire at the same radius is a tight pinpoint. Root cause: the textbook Gaussian beam model `w(z) = w0 * sqrt(1 + (z/z_R)^2)` is symmetric about the focus and predicts a wide mm-scale beam at depths r << focal_length (≈ 2.8 mm beam radius at r = 1 mm with the PV .035 geometry). Combined with the angular conversion `sigma_bins = sigma_mm * N / (2π * r)` the `1/r` factor explodes σ_bins to >100 angular bins at r = 1 mm.
+
+Bench imagery shows the opposite: angular FWHM is approximately constant with depth, so the polar→Cartesian arc-length FWHM is *narrower* for near wires and *wider* for far wires (matching the synthetic-aperture IVUS chain — at depths r < focal_length the rotating element coherently sums over a narrow beam bounded by the element directivity, not the focused-aperture geometry). The depth-symmetric Gaussian model conflates static-focused-aperture behaviour with the SA-rotated-element geometry.
+
+Pass 5c clamps the pre-focal contribution to (z/z_R)² to zero in `update_psfs`:
+
+```cpp
+const float z_post = (z > 0.f) ? z : 0.f;
+const float sigma_mm = w0_mm * std::sqrt(1.f + (z_post * z_post) / (z_R_mm * z_R_mm));
+```
+
+so σ_mm == w0 for any depth r ≤ focal_length and the textbook expansion only applies post-focal where the model is meaningful. Wire pinpoint shape is restored across the full radial range.
+
+**Calibration impact.** `derive_gain_db` re-calibrated `gain_db` from +111.01 dB → **+130.55 dB** (+19.5 dB) because clamping the near-field beam removes coherent angular averaging that previously inflated near-field bg amplitude. Wire-vs-bg contrast gap moves slightly to −68.8 dB (was −59.6); the wire amplitude is unchanged (deterministic targets unaffected by σ_mm at depths < focal once the kernel is wider than the wire's geometric extent), only the bg dropped.
+
+**Tier 1 test I result (Pass 5c):** RMS dropped from 26.0 (Pass 5b) to **15.1** (Pass 5c) — a further 41 % reduction. Max |Δ| dropped from 88.8 → 51.5, sim/bench span ratio from 7 → 4. The sim mean palette now closely tracks the bench bg curve from r ≈ 10 mm onward; the residual gap is the +20-30 palette excess at r ≈ 4-9 mm and the deep-field median dropout. Both close once the calibrated additive noise floor (test F, Pass 6) is wired.
+
 
 
 The following are **missing elements** that could explain mismatches between simulation and real IVUS, plus **suggested next steps** to enhance the model.
