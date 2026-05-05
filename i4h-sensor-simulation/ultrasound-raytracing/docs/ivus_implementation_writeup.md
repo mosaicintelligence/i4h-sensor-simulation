@@ -972,6 +972,158 @@ processing:
    (raytraced amplitude → PSF → TGC → gain_db → Hilbert → log), so this
    is expected.
 
+### 11.14 Depth-weighted pre-PSF noise (Pass 7)
+
+**Motivation.** Pass 6 v2 closed the texture / dead-zone gaps but
+introduced a Tier 1 regression: the **focal-zone bg hump** in Test I
+(sim peak-to-trough = 29.5 vs bench 14.1; sim/bench span ratio 2.10
+vs ≤ 1.5 tolerance). Quantitative diagnostic
+(`scripts/diag_bench_depth.py`) traced the hump to the depth-dependent
+lateral PSF concentrating the pre-PSF white noise:
+
+```
+r(mm) | bench mean | Pass-6-v2 sim mean | delta
+   5  |   35.5     |      32.1          |  -3.4   ← matches
+  19  |   34.0     |      56.2          | +22.2   ← focal hump
+  28  |   41.4     |      36.4          |  -5.0   ← matches
+```
+
+The bench is essentially **flat at ~35 palette** across r ∈ [4, 29] mm.
+Sim matched the inner / outer wings but over-shoot by +22 palette at
+the focal length r = 19 mm — the same depth where the lateral Gaussian
+beam is narrowest (`sigma_bins(z_focal)` is the minimum across z, see
+`update_psfs` in `raytracing_ultrasound_simulator.cpp`). User-visible
+consequence: wires at r = 15 and r = 20 mm appeared "missing" in the
+calibrated polar B-mode because the elevated focal-zone bg (~57 palette)
+left them with `wire_peak − bg ≈ 100` palette of contrast vs ~207 at
+r = 5 mm — they were physically present but visually washed out.
+
+**Physics + fix.** For an L1-normalised lateral Gaussian PSF of std
+`sigma_bins(z)` (in angular-bin units) that convolves i.i.d. Gaussian
+input noise of std `sigma_pre`, the per-output-bin noise variance is
+
+> `var_post(z) = sigma_pre^2 · sum_k psf_k(z)^2`
+>             `≈ sigma_pre^2 / (2·sqrt(pi)·sigma_bins(z))`
+
+(continuous Gaussian L2-squared norm; valid for kernels well-resolved
+on the angular grid). Making `var_post(z)` uniform requires
+`sigma_pre(z) ∝ sqrt(sigma_bins(z))`. Taking the focal length as the
+reference depth keeps the YAML's `noise.sigma` bench-anchored:
+
+> `weight(z) = sqrt(sigma_bins(z) / sigma_bins(z_focal))`
+
+At `z = z_focal` the weight is 1; pre-focal (1/r factor inflates
+`sigma_bins`) and post-focal (Gaussian beam expansion inflates
+`sigma_mm`) the weight grows so the wider local kernel sums to the same
+post-PSF std as the narrow focal kernel. This is fix 1.1 from the
+Pass 6 v2 trade-offs above ("per-row noise-sigma compensation").
+
+**Implementation.**
+1. New CUDA kernel `add_gaussian_noise_depth_weighted_kernel` (same
+   Box-Muller draw as `add_gaussian_noise_kernel`, multiplies sigma by
+   `depth_weight[index.x]` per radial sample).
+2. New host method `CUDAAlgorithms::add_gaussian_noise_depth_weighted`.
+3. New `noise_depth_weight_` `CudaMemory` member on the simulator;
+   built in `update_psfs` alongside the depth-dependent lateral PSF
+   (same probe params drive both, same cache-invalidation keys).
+4. `update_psfs` is now called unconditionally (not gated on
+   `conv_psf`) so the noise-weight buffer is available to stage 0.9
+   even when PSF convolution is bypassed; the second call inside the
+   `conv_psf` block is a cheap cache hit.
+5. Stage 0.9 prefers the weighted variant when the buffer is built
+   (IVUS + valid focal/element params); falls back to the unweighted
+   `add_gaussian_noise` otherwise (non-IVUS probes or
+   ill-defined-beam configs).
+
+```cpp
+// Stage 0.9 (raytracing_ultrasound_simulator.cpp): depth-weighted noise.
+if (sim_params.noise_sigma > 0.f) {
+  const uint32_t noise_seed = sim_params.frame_seed * 2246822519u + 1u;
+  if (noise_depth_weight_ &&
+      noise_depth_weight_size_ == sim_params.buffer_size) {
+    cuda_algorithms_->add_gaussian_noise_depth_weighted(
+        d_scanlines.get(), plane_size, sim_params.noise_sigma,
+        noise_depth_weight_.get(), noise_seed, sim_params.stream);
+  } else {
+    cuda_algorithms_->add_gaussian_noise(d_scanlines.get(), plane_size,
+                                         sim_params.noise_sigma,
+                                         noise_seed, sim_params.stream);
+  }
+}
+```
+
+**YAML changes.** Only `noise.sigma` shifts (smaller because the
+off-focal weighting now adds extra noise where `sigma_bins(z) > sigma_bins(z_focal)`,
+so the focal-zone-anchored sigma must be lower to keep the global mean
+on target). `gain_db` is unchanged for the same reason as Pass 6 v2 —
+the wire signal path doesn't see the noise weight.
+
+```yaml
+processing:
+  gain_db: 73.92                # unchanged from Pass 6 v2
+  noise:
+    type: gaussian
+    sigma: 0.000712             # Pass 7 — input-RF noise std at z_focal
+                                # (depth-weighted pre-PSF; was 0.000895)
+```
+
+**Tier 1 results (Pass 7 vs Pass 6 v2):**
+
+| Test | Pass 6 v2 | Pass 7 |
+|---|---|---|
+| **I. Depth uniformity** | ❌ FAIL | **✅ PASS** |
+| RMS(sim − bench) palette | 9.52 | **3.53** |
+| Max \|Δ\| palette | 24.27 | **8.56** |
+| Bias (sim − bench) palette | -2.17 | **+0.18** |
+| Sim peak-to-trough | 29.46 | **6.46** |
+| Span ratio (sim / bench) | 2.10 | **0.46** |
+| F. Noise floor σ | ✅ PASS | ✅ PASS |
+| Other tests (A/B/C/D/E/G/H/gain) | unchanged | unchanged |
+
+Pass 7 lifts the Tier 1 score from **7/10 → 8/10**. The remaining FAILs
+(C axial PSF, D lateral PSF, E ring-down) are pre-existing physics-
+fidelity issues unrelated to noise weighting.
+
+**Wire-vs-bg contrast** (per-frame median wire peak minus per-frame
+local bg mean, palette units; `scripts/wire_visibility_diagnostic.py`):
+
+| r (mm) | Pass 6 v2 contrast | Pass 7 contrast |
+|---|---|---|
+| 5 | 207 (saturated wire) | 190 (saturated wire) |
+| 10 | 123 | 119 |
+| 15 *(focal)* | **100 ← lowest** | **105** |
+| 20 *(focal)* | 102 | **111** |
+| 25 | 93 ← lowest | 88 |
+
+The focal-zone wires (r = 15, 20 mm) are no longer the lowest-contrast
+pair. The bg mean is now uniform at ~48 palette across all five wire
+radii (was 32 → 57 in Pass 6 v2), so visual contrast tracks the wire
+amplitude alone. Closing the residual contrast gap (outer wires at
+~88-90 vs inner wires at ~190) is a scattering-strength problem
+(sphere-as-wire vs cylinder primitive, see §12.x in this writeup) —
+not addressable by noise weighting.
+
+**Visual evidence.**
+- `tier1_results/figures/depth_uniformity.png`: sim (red) and bench
+  (blue) curves now overlap from r = 4 mm onwards, both at ~38-45
+  palette across the full FOV. The Pass 6 v2 sim curve had a hump
+  centered at r ≈ 19 mm reaching 56+ palette; Pass 7 collapses that
+  hump entirely.
+- `tier1_results/figures/wire_phantom_polar_paired.png`: the
+  calibrated sim panel still has all five wires at consistent
+  brightness (no longer washed out at r = 15, 20 mm), with the same
+  uniform mottled bg the bench shows.
+
+**Diagnostic scripts.** New under `scripts/`:
+- `wire_visibility_diagnostic.py` — per-wire peak amp + hit rate +
+  local bg stats; ranks wires by SNR = (wire_med − bg_mean) / bg_std.
+- `diag_bench_depth.py` — sim vs bench depth-mean profile with
+  wire-masked bench, prints peak-to-trough comparison.
+- `diag_lumen_only.py`, `diag_scatter_scale.py` — exploratory scripts
+  used during Pass 7 design; preserved as documentation of the
+  alternative paths considered (boost lumen scatter, sweep
+  `scatter_integral_scale`) before settling on depth-weighted noise.
+
 
 
 The following are **missing elements** that could explain mismatches between simulation and real IVUS, plus **suggested next steps** to enhance the model.
@@ -1009,27 +1161,34 @@ Ray intensity starts at 1.0; **element directivity is only applied in the latera
 
 There is **no noise model**. For SNR, contrast resolution, or detector-limited studies, at least a simple noise model is needed (e.g. additive Gaussian, or noise figure).
 
-**Status (Pass 6 v2 — implemented).** A Gaussian RF-noise stage in
+**Status (Pass 7 — implemented).** A Gaussian RF-noise stage in
 `simulate()` consumes `processing.noise.{type, sigma}`. The stage was
 moved in Pass 6 v2 from post-gain (v1) to **pre-PSF** so the noise sees
 the same axial + lateral PSF convolutions as the scatter signal —
 matching the bench's bandlimited receiver noise (mottled speckle) instead
-of v1's per-pixel static. σ is now in **input-RF units** (pre-gain,
-pre-TGC, pre-PSF); calibrated to 0.000895 by `derive_noise_sigma.py`
+of v1's per-pixel static. **Pass 7 then wraps the pre-PSF noise in a
+per-depth weight `sqrt(sigma_bins(z) / sigma_bins(z_focal))`** so the
+post-PSF noise std is uniform across depth (the L1-normalised
+depth-dependent lateral PSF would otherwise amplify the focal-zone
+noise variance, producing a +22 palette focal-zone hump in Test I).
+σ is now in **input-RF units** at the focal depth (pre-gain, pre-TGC,
+pre-PSF); calibrated to 0.000712 by `derive_noise_sigma.py`
 (pipeline-aware bisection against the bench gain-54 anechoic palette
-mean 46.2, std 20.3, median 44.3). Tier 1 test F PASS (sim std 22.91 vs
-bench 20.27, 13 % rel.err). Catheter dead-zone mask wired in same pass
-(see §12.2). See §11.13 for the v2 implementation, the depth-uniformity
-focal-zone hump trade-off (test I FAIL on peak-to-trough span), and
-proposed Pass 7 fixes.
+mean 46.2, std 20.3, median 44.3). Tier 1 test F PASS (sim std 22.30 vs
+bench 20.27, 10 % rel.err) and Tier 1 **test I now PASS** (sim
+peak-to-trough 6.46 vs bench 14.1, span ratio 0.46 vs ≤ 1.5; was 2.10
+in Pass 6 v2). Catheter dead-zone mask still wired in Pass 6 v2 stage
+4.5 (see §12.2). See §11.14 for the depth-weighted noise derivation
+and Tier 1 numbers.
 
 **Outstanding for noise:**
-- The L1-normalized depth-dependent lateral PSF amplifies noise variance
-  in the focal zone (test I peak-to-trough fail). Three Pass 7 options
-  in §11.13 ("Open trade-offs").
 - Schema accepts `noise.type ∈ {gaussian, rayleigh, none}` but only
   `gaussian` is wired.
 - Per-frequency noise scaling (`noise.sigma(f)`) is not modelled.
+- The depth weight currently mirrors the *transmit/receive product*
+  Gaussian-beam model used by `psf_lat_2d_`. If a future pass separates
+  transmit and receive directivity (§12.3), the weight will need to
+  track the *receive-only* aperture, not the combined TX·RX product.
 
 ### 12.5 Rotation and motion
 

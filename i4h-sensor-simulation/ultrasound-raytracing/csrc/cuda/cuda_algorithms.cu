@@ -329,6 +329,32 @@ static __global__ void add_gaussian_noise_kernel(float* __restrict__ buffer, uin
   buffer[offset] += sigma * z;
 }
 
+// Pass 7: depth-weighted additive Gaussian noise. Same Box-Muller draw as
+// `add_gaussian_noise_kernel`, but `sigma` is multiplied per-bin by
+// `depth_weight[index.x]`, where `index.x` is the radial-sample index. The
+// weight equals sqrt(sigma_bins(z) / sigma_bins(z_focal)) so that after the
+// L1-normalised depth-dependent lateral PSF concentrates the focal-zone noise,
+// the post-PSF noise standard deviation is uniform across depth (matching the
+// bench's flat anechoic depth profile). See `raytracing_ultrasound_simulator.cpp`
+// for the weight derivation. Default: weighting always on for IVUS probes
+// where the focal/element parameters define a depth-dependent lateral PSF.
+static __global__ void add_gaussian_noise_depth_weighted_kernel(
+    float* __restrict__ buffer, uint2 size, float sigma_base,
+    const float* __restrict__ depth_weight, uint32_t seed) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  const uint32_t offset = index.y * size.x + index.x;
+  const uint32_t base = offset * 2u + seed * 2654435761u;
+  const float u1 = pcg_to_unit_float_noise(pcg_hash_noise(base + 0u)) + (1.f / 16777216.f);
+  const float u2 = pcg_to_unit_float_noise(pcg_hash_noise(base + 1u));
+  const float radius = sqrtf(-2.f * logf(u1));
+  const float z = radius * __cosf(6.28318530717958647692f * u2);
+  const float w = depth_weight[index.x];
+  buffer[offset] += sigma_base * w * z;
+}
+
 // Pass 6 v2: catheter dead-zone mask. Zero the inner radial samples where
 // the catheter sheath physically blocks any acquired signal -- on the bench
 // this region renders as pure black (palette 0) for r < ~1.4 mm. Without
@@ -703,6 +729,8 @@ CUDAAlgorithms::CUDAAlgorithms()
       add_row_launcher_((void*)&add_row_kernel),
       scale_buffer_launcher_((void*)&scale_buffer_kernel),
       add_gaussian_noise_launcher_((void*)&add_gaussian_noise_kernel),
+      add_gaussian_noise_depth_weighted_launcher_(
+          (void*)&add_gaussian_noise_depth_weighted_kernel),
       zero_inner_radial_launcher_((void*)&zero_inner_radial_kernel),
       display_window_launcher_((void*)&display_window_kernel),
       median_clip_launcher_((void*)&median_clip_kernel),
@@ -871,6 +899,24 @@ void CUDAAlgorithms::add_gaussian_noise(CudaMemory* buffer, uint2 size, float si
                                       size,
                                       sigma,
                                       seed);
+}
+
+void CUDAAlgorithms::add_gaussian_noise_depth_weighted(CudaMemory* buffer, uint2 size,
+                                                        float sigma_base,
+                                                        CudaMemory* depth_weight, uint32_t seed,
+                                                        cudaStream_t stream) {
+  // Same short-circuit as the unweighted variant. Also no-op if no weight
+  // buffer is supplied (caller falls back to add_gaussian_noise in that case).
+  if (!(sigma_base > 0.f) || depth_weight == nullptr) { return; }
+
+  add_gaussian_noise_depth_weighted_launcher_.launch(
+      size,
+      stream,
+      reinterpret_cast<float*>(buffer->get_ptr(stream)),
+      size,
+      sigma_base,
+      reinterpret_cast<const float*>(depth_weight->get_ptr(stream)),
+      seed);
 }
 
 void CUDAAlgorithms::zero_inner_radial(CudaMemory* buffer, uint2 size,

@@ -264,6 +264,7 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
     psf_ax_.reset();
     psf_lat_.reset();
     psf_lat_2d_.reset();
+    noise_depth_weight_.reset();
   }
 
   const ProbeType pt = probe->get_probe_type();
@@ -394,10 +395,79 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
       psf_lat_2d_depth_bins_ = depth_bins;
       psf_lat_2d_kernel_radius_ = kernel_radius;
     }
+
+    // Pass 7 — per-depth additive-noise weight cache.
+    //
+    // We multiply the additive-RF-noise sigma by a depth-dependent weight so
+    // that after the L1-normalised depth-dependent lateral PSF concentrates
+    // the focal-zone noise, the post-PSF noise standard deviation is uniform
+    // across depth (matching the bench's flat anechoic profile -- see
+    // `tier1_results/figures/depth_uniformity.png` and the regression
+    // analysis in `tier1_results.md` Test I).
+    //
+    // Derivation. For a Gaussian beam of std sigma_bins(z) (in angular-bin
+    // units) that is L1-normalised (sum_k psf_k = 1), the discrete kernel
+    // satisfies sum_k psf_k^2 ≈ 1 / (2*sqrt(pi)*sigma_bins) (continuous
+    // Gaussian L2 squared norm). After convolution with i.i.d. Gaussian
+    // input noise of std sigma_pre, the per-output-bin noise variance is
+    //   var_post(z) = sigma_pre(z)^2 * sum_k psf_k(z)^2
+    //              ≈ sigma_pre(z)^2 / (2*sqrt(pi)*sigma_bins(z))
+    // To make var_post(z) uniform we need sigma_pre(z) ∝ sqrt(sigma_bins(z)).
+    // Choosing the focal length (where sigma_bins is minimum) as the
+    // reference depth keeps the calibrated `noise.sigma` in the YAML
+    // bench-anchored:
+    //   weight(z) = sqrt(sigma_bins(z) / sigma_bins(z_focal))
+    // At z = z_focal the weight is 1; pre-focal (where the angular 1/r
+    // factor inflates sigma_bins) and post-focal (where the Gaussian beam
+    // expansion inflates sigma_mm) the weight grows.
+    if (!noise_depth_weight_ || noise_depth_weight_element_radius_ != el_radius ||
+        noise_depth_weight_focal_length_ != focal_mm ||
+        noise_depth_weight_buffer_size_ != buffer_size ||
+        noise_depth_weight_t_far_ != t_far ||
+        noise_depth_weight_num_angular_rays_ != probe->get_num_elements() ||
+        noise_depth_weight_lambda_mm_ != probe->get_wave_length()) {
+      noise_depth_weight_element_radius_ = el_radius;
+      noise_depth_weight_focal_length_ = focal_mm;
+      noise_depth_weight_buffer_size_ = buffer_size;
+      noise_depth_weight_t_far_ = t_far;
+      noise_depth_weight_num_angular_rays_ = probe->get_num_elements();
+      noise_depth_weight_lambda_mm_ = probe->get_wave_length();
+
+      const uint32_t num_angular_rays = probe->get_num_elements();
+      const float lambda_mm = probe->get_wave_length();
+      const float w0_mm = 0.5f * lambda_mm * focal_mm / el_radius;
+      const float z_R_mm = (lambda_mm > 0.f)
+                               ? (static_cast<float>(M_PI) * w0_mm * w0_mm / lambda_mm)
+                               : w0_mm;
+      const float two_pi = 6.28318530717958647692f;
+      const float dr_mm = t_far / static_cast<float>(buffer_size);
+      // sigma_bins at the focal length (minimum across depth):
+      const float sigma_bins_focal =
+          w0_mm * static_cast<float>(num_angular_rays) / (two_pi * std::max(focal_mm, 0.5f));
+      std::vector<float> w(buffer_size, 1.f);
+      for (uint32_t i = 0; i < buffer_size; ++i) {
+        const float depth_mm = (static_cast<float>(i) + 0.5f) * dr_mm;
+        // Same pre-focal clamp + post-focal expansion as the lateral PSF
+        // builder, so the noise weight tracks the actual kernel widths.
+        const float z_post = (depth_mm > focal_mm) ? (depth_mm - focal_mm) : 0.f;
+        const float sigma_mm = w0_mm * std::sqrt(1.f + (z_post * z_post) / (z_R_mm * z_R_mm));
+        const float depth_safe = std::max(depth_mm, 0.5f);
+        const float sigma_bins =
+            sigma_mm * static_cast<float>(num_angular_rays) / (two_pi * depth_safe);
+        const float ratio = (sigma_bins_focal > 0.f) ? (sigma_bins / sigma_bins_focal) : 1.f;
+        w[i] = std::sqrt(std::max(ratio, 0.f));
+      }
+      noise_depth_weight_ =
+          std::make_unique<CudaMemory>(w.size() * sizeof(float), stream);
+      noise_depth_weight_->upload(w.data(), stream);
+      noise_depth_weight_size_ = static_cast<uint32_t>(w.size());
+    }
   } else {
     psf_lat_2d_.reset();
     psf_lat_2d_depth_bins_ = 0;
     psf_lat_2d_kernel_radius_ = 0;
+    noise_depth_weight_.reset();
+    noise_depth_weight_size_ = 0;
   }
 
   if (!psf_ax_) {
@@ -530,38 +600,47 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
 
   // Process "RF data" into B - mode image
 
-  // 0.9 Additive Gaussian RF noise (Pass 6, moved pre-PSF in Pass 6 v2)
+  // PSF/noise-weight cache update -- moved out of the conv_psf gate (Pass 7)
+  // so the per-depth additive-noise weight built alongside the lateral PSF is
+  // available to stage 0.9 below. update_psfs() is idempotent: it only
+  // rebuilds when probe params change, so unconditional invocation has zero
+  // cost on the steady-state hot path.
+  update_psfs(probe, sim_params.stream, sim_params.buffer_size, sim_params.t_far);
+
+  // 0.9 Additive Gaussian RF noise (Pass 6, moved pre-PSF in Pass 6 v2,
+  //     depth-weighted in Pass 7)
   //
-  // Adds N(0, noise_sigma^2) per RF sample to the raw post-raytracing buffer,
-  // BEFORE the PSF convolutions. This models real bench behaviour where the
-  // electronic noise floor lives at the analog receiver and is bandlimited by
-  // the receive chain before digitization -- exactly what the lateral and
-  // axial PSFs represent in the sim. The Pass 6 v1 placement (post-gain,
-  // pre-Hilbert) added unfiltered noise per pixel, so the rendered anechoic
-  // bg looked like fine-grained "static" instead of the bench's coarse
-  // mottled speckle. Moving the stage here lets the PSF convolutions smooth
-  // the noise to its physical correlation length (~1 PSF FWHM in both axial
-  // and lateral directions), which produces visible speckle blobs matching
-  // the bench's appearance.
+  // Adds N(0, (noise_sigma * w(z))^2) per RF sample to the raw post-
+  // raytracing buffer, BEFORE the PSF convolutions. The depth weight w(z)
+  // (cached as `noise_depth_weight_`, see update_psfs) equals
+  // sqrt(sigma_bins(z) / sigma_bins(z_focal)) so that after the L1-
+  // normalised depth-dependent lateral PSF concentrates the focal-zone
+  // noise, the post-PSF noise standard deviation is uniform across depth.
+  // This matches the bench's flat anechoic depth profile (~35 palette,
+  // peak-to-trough 14 over r in [4, 29] mm; see Test I in tier1_results.md).
   //
-  // Calibration consequence: noise_sigma now refers to the input-RF stage
-  // (pre-TGC, pre-gain_db, pre-PSF). The downstream pipeline (PSF + TGC +
-  // gain_db + Hilbert + log) is linear up to the Hilbert envelope, so the
-  // bench-output sigma is recovered up to a constant determined by the PSF
-  // L1 norm and gain_db. We re-derive noise_sigma against the bench gain-54
-  // anechoic palette directly (derive_noise_sigma.py); the script is
-  // pipeline-aware so the calibrated value stays correct.
+  // Calibration consequence: noise_sigma in the YAML now refers to the
+  // input-RF stage AT THE FOCAL DEPTH (where w(z) = 1). The downstream
+  // pipeline (PSF + TGC + gain_db + Hilbert + log) is linear up to the
+  // Hilbert envelope, so derive_noise_sigma.py remains pipeline-aware: it
+  // bisects sigma against the bench gain-54 anechoic palette directly.
   //
-  // Default (`noise_sigma == 0.f`) is a no-op; the wrapper short-circuits
+  // For non-IVUS probes (no depth-dependent lateral PSF), or when the
+  // probe's focal/element params don't define a Gaussian-beam model, the
+  // weight buffer is null and we fall back to the unweighted variant.
+  // Default (`noise_sigma == 0.f`) is a no-op; both wrappers short-circuit
   // on `sigma <= 0` so existing callers pay no overhead.
   if (sim_params.noise_sigma > 0.f) {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Additive RF noise", sim_params.stream);
-    // Domain-separate the noise seed from the scatter-decorrelation seed by
-    // a large odd salt; both consume `frame_seed` but draw independent
-    // streams via different hash inputs (see add_gaussian_noise_kernel).
     const uint32_t noise_seed = sim_params.frame_seed * 2246822519u + 1u;
-    cuda_algorithms_->add_gaussian_noise(d_scanlines.get(), plane_size, sim_params.noise_sigma,
-                                         noise_seed, sim_params.stream);
+    if (noise_depth_weight_ && noise_depth_weight_size_ == sim_params.buffer_size) {
+      cuda_algorithms_->add_gaussian_noise_depth_weighted(
+          d_scanlines.get(), plane_size, sim_params.noise_sigma,
+          noise_depth_weight_.get(), noise_seed, sim_params.stream);
+    } else {
+      cuda_algorithms_->add_gaussian_noise(d_scanlines.get(), plane_size, sim_params.noise_sigma,
+                                           noise_seed, sim_params.stream);
+    }
     if (sim_params.write_debug_images) {
       write_image(d_scanlines.get(), plane_size, "debug_images/0a_additive_noise_pre_psf.png");
     }
@@ -571,7 +650,7 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   if (sim_params.conv_psf) {
     {
       CudaTiming cuda_timing(sim_params.enable_cuda_timing, "PSF Convolution", sim_params.stream);
-
+      // (update_psfs already called above; the cache hit makes this cheap.)
       update_psfs(probe, sim_params.stream, sim_params.buffer_size, sim_params.t_far);
 
       psf_tmp_.resize(d_scanlines->get_size(), sim_params.stream);

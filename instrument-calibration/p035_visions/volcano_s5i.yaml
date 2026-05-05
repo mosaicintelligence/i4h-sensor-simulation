@@ -258,7 +258,23 @@ processing:
     # matching value sits in the millis. derive_noise_sigma.py is pipeline-
     # aware (renders an anechoic water world through the full sim) so the
     # calibrated number stays correct under stage moves.
-    sigma: 0.000895                       # Pass 6 v2 — input-RF noise std (pre-PSF), fit to E5 anechoic palette mean+median+std
+    #
+    # Pass 7 (depth-weighted pre-PSF noise): the L1-normalised depth-
+    # dependent lateral PSF concentrates the focal-zone noise variance
+    # because sigma_bins(z_focal) is the minimum across z (the angular 1/r
+    # factor inflates sigma_bins pre-focal; the Gaussian-beam expansion
+    # inflates sigma_mm post-focal). Pass 6 v2 over-shot the bench by +22
+    # palette at r ~ 19 mm (Test I focal-zone hump, span ratio 2.10). The
+    # CUDA noise kernel now multiplies sigma per radial sample by
+    # weight(z) = sqrt(sigma_bins(z) / sigma_bins(z_focal)) so the post-PSF
+    # noise std is uniform across depth (Test I PASS, span ratio 0.46 in
+    # Pass 7). The YAML sigma below is therefore the input-RF std AT THE
+    # FOCAL DEPTH; the off-focal weighting raises sigma elsewhere. The
+    # sigma value drops slightly vs Pass 6 v2 (0.000895 -> 0.000712)
+    # because the off-focal weight extra-amplifies the wings, so the
+    # focal-anchored sigma must be lower to keep the global anechoic mean
+    # on the bench target (46.2). See implementation writeup s11.14.
+    sigma: 0.000712                       # Pass 7 — input-RF noise std at z_focal (depth-weighted pre-PSF), fit to E5 anechoic palette mean+median+std
   catheter:                               # Pass 6 v2 — catheter sheath dead-zone mask
     # The PV .035 catheter outer diameter is 1.905 mm (manual p.4), so the
     # catheter wall blocks any acquired signal for r < ~0.95 mm at the

@@ -27,7 +27,7 @@ With those three resolved, the *shape* checks (axial / lateral PSF, ring-down ex
 | | G. Log-compression mapping | ✅ PASS |
 | | H. TGC schedule | ✅ PASS |
 | | Gain alignment (calibration-sheet diagnostic) | ✅ PASS |
-| | I. Depth uniformity (anechoic ROI) | ❌ FAIL |
+| | I. Depth uniformity (anechoic ROI) | ✅ PASS |
 
 ## What we evaluated and what we couldn't
 * **Available bench data:** wire-phantom polar images at 3 gains × 3 imaging diameters (19 frames total), with derived axial / lateral PSF per wire (`derived/psf/`), ring-down per-gain templates and fits (`derived/ringdown/`), anechoic-ROI palette histograms (`derived/noise/`), and the operator's TGC ramp (`derived/tgc/`).
@@ -92,13 +92,13 @@ With those three resolved, the *shape* checks (axial / lateral PSF, ring-down ex
 
 ## E. Ring-down (mean A-line) — ❌ FAIL
 
-**Summary.** sim peak palette = 188.3 (bench 231.7, Δ=-43.4); RMS over r ∈ [0, 3] mm = 40.6 palette (≤5 required); sim extent = 3.03 mm (bench 3.84 mm).
+**Summary.** sim peak palette = 189.9 (bench 231.7, Δ=-41.8); RMS over r ∈ [0, 3] mm = 37.7 palette (≤5 required); sim extent = 3.03 mm (bench 3.84 mm).
 
 | Criterion | Sim | Bench | Pass? |
 |---|---:|---:|:--:|
-| Peak palette (r ≤ 3 mm) | 188.3 | 231.7 (±10%) | ❌ |
-| RMS vs template, r ∈ [0, 3] mm (raw) | 40.6 | ≤ 5 | ❌ |
-| RMS vs template, r ∈ [0, 3] mm (shape-only, baseline-subtracted) | 30.8 | ≤ 5 | ❌ |
+| Peak palette (r ≤ 3 mm) | 189.9 | 231.7 (±10%) | ❌ |
+| RMS vs template, r ∈ [0, 3] mm (raw) | 37.7 | ≤ 5 | ❌ |
+| RMS vs template, r ∈ [0, 3] mm (shape-only, baseline-subtracted) | 39.9 | ≤ 5 | ❌ |
 | Extent (5% of peak excess) | 3.03 mm | 3.84 mm (±0.3) | ❌ |
 
 The raw RMS includes the absolute baseline offset between the sim's lumen-scatter background and the bench template's reject-clipped anechoic floor. The shape-only RMS subtracts each curve's post-ringdown baseline first, so it isolates the ringdown waveform shape (independent of the gain alignment issue surfaced in the diagnostic test).
@@ -115,7 +115,7 @@ The raw RMS includes the absolute baseline offset between the sim's lumen-scatte
 
 ## F. Noise floor σ — ✅ PASS
 
-**Summary.** sim std palette = 22.91 vs bench 20.27 (rel.err 13.0% / 20% tol); sim mean = 43.25 vs bench 46.25; sim median = 42.24 vs bench 44.29. Anechoic water render; noise.sigma = 0.0009.
+**Summary.** sim std palette = 22.29 vs bench 20.27 (rel.err 10.0% / 20% tol); sim mean = 46.43 vs bench 46.25; sim median = 46.91 vs bench 44.29. Anechoic water render; noise.sigma = 0.0007.
 
 
 ## G. Log-compression mapping — ✅ PASS
@@ -143,31 +143,31 @@ Sim depth grid: 1024 samples over r ∈ [0.01, 29.99] mm; RMS = 0.0000 dB, max |
 
 ## Gain alignment (calibration-sheet diagnostic) — ✅ PASS
 
-**Summary.** Sim water-bg palette (mean across 8 clean frames, r ∈ [5.0, 25.0] mm) = 47.8 vs bench 46.2 (Δ = +1.6 palette ≈ +0.29 dB). Within ±10 palette tolerance — Pass 3b gain calibration on target.
+**Summary.** Sim water-bg palette (mean across 8 clean frames, r ∈ [5.0, 25.0] mm) = 48.1 vs bench 46.2 (Δ = +1.9 palette ≈ +0.34 dB). Within ±10 palette tolerance — Pass 3b gain calibration on target.
 
 | Quantity | Value |
 |---|---:|
-| Sim water-bg mean palette (mean over 8 frames, r ∈ [5.0, 25.0] mm) | 47.82 |
-| Sim water-bg per-frame std | 0.15 |
+| Sim water-bg mean palette (mean over 8 frames, r ∈ [5.0, 25.0] mm) | 48.12 |
+| Sim water-bg per-frame std | 0.14 |
 | Bench water-bg palette (slider 54 reference) | 46.20 |
-| Δ palette (sim − bench) | +1.62 |
-| Δ in dB (≈ Δ palette × 20 / log_multiplier) | +0.289 |
+| Δ palette (sim − bench) | +1.92 |
+| Δ in dB (≈ Δ palette × 20 / log_multiplier) | +0.342 |
 | Tolerance (palette) | ±10.0 |
 
 **Interpretation.** The calibrated bg matches the bench within tolerance, so the simulator's reject window will reproduce the device's reject palette directly. Wire-vs-bg contrast remains over-represented (simulator > bench by ~74 dB on the OptiX renderer), so the calibrated wires saturate at saturation_palette = 239 — consistent with how the bench renders saturated inner wires.
 
-## I. Depth uniformity (anechoic ROI) — ❌ FAIL
+## I. Depth uniformity (anechoic ROI) — ✅ PASS
 
-**Summary.** Sim vs bench mean palette over r ∈ [4.0, 29.0] mm: RMS = 9.5 palette (≤ 10 required), max |Δ| = 24.3, bias = -2.2; sim peak-to-trough = 29.5 vs bench 14.1 (ratio 2.10, ≤ 1.5 required). Sim has depth-dependent brightness structure not present in bench data.
+**Summary.** Sim vs bench mean palette over r ∈ [4.0, 29.0] mm: RMS = 3.5 palette (≤ 10 required), max |Δ| = 8.6, bias = +0.2; sim peak-to-trough = 6.5 vs bench 14.1 (ratio 0.46, ≤ 1.5 required). Sim depth uniformity matches bench within tolerance.
 
 | Quantity | Value | Tolerance |
 |---|---:|---:|
-| RMS(sim − bench) palette over r ∈ [4.0, 29.0] mm | 9.52 | ≤ 10 |
-| Max |Δ| palette | 24.27 | — |
-| Bias (sim − bench) palette | -2.17 | — |
-| Sim peak-to-trough palette | 29.46 | — |
+| RMS(sim − bench) palette over r ∈ [4.0, 29.0] mm | 3.53 | ≤ 10 |
+| Max |Δ| palette | 8.56 | — |
+| Bias (sim − bench) palette | +0.18 | — |
+| Sim peak-to-trough palette | 6.46 | — |
 | Bench peak-to-trough palette | 14.06 | — |
-| Sim span / bench span ratio | 2.10 | ≤ 1.5 |
+| Sim span / bench span ratio | 0.46 | ≤ 1.5 |
 | Sim frames / bench frames | 8 / 5 | — |
 
 ![Depth uniformity](figures/depth_uniformity.png)
