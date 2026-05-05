@@ -1,23 +1,23 @@
 {
   "method_summary": "Analytical re-derivation of processing.gain_db for the PV .035 / Volcano s5i. Renders the wire phantom in raw-envelope mode (log_multiplier=1, log_floor=1.0, ring-down OFF, display window OFF, median clip OFF, gain_db=0) so post-log palette = log10(envelope amp). Two candidate calibrations are reported: matching the median bench wire amplitude (gain_db_wire) and matching the bench water-scatter background (gain_db_bg). Pass 6 (additive noise floor) shifted the anechoic floor anchor onto noise.sigma (calibrated independently via derive_noise_sigma.py), so the YAML now uses the **wire-peak** calibration. Any residual wire-vs-bg contrast gap is a scattering-strength problem the gain_db scalar cannot fix.",
-  "n_frames": 6,
+  "n_frames": 30,
   "log_multiplier_used": 112.30000305175781,
   "bench_saturation_cutoff_palette": 220.0,
   "bench_unsaturated_wire_count": 7,
   "sim_envelope_amp_median_wire": 0.010899338143923106,
-  "sim_envelope_amp_water_bg_mean": 1.8811135692130445e-07,
+  "sim_envelope_amp_water_bg_mean": 1.8811486810677275e-07,
   "bench_envelope_amp_median_wire": 54.11324822137348,
   "bench_envelope_amp_water_bg_at_slider_54": 2.578683431097714,
   "bench_water_bg_palette_at_slider_54": 46.2,
   "gain_db_wire_target": 73.91806954750348,
-  "gain_db_bg_target": 73.55997277215263,
-  "gain_db_bg_amp_pure": 142.73966027215263,
+  "gain_db_bg_target": 73.55981064751884,
+  "gain_db_bg_amp_pure": 142.73949814751884,
   "gain_db_calibrated": 73.91806954750348,
   "calibration_target": "wire_peak_palette_median",
   "wire_vs_bg_contrast_db": {
-    "sim": 95.25970220565796,
+    "sim": 95.25954008102417,
     "bench": 26.438111481008786,
-    "gap_dB_bench_minus_sim": -68.82159072464917,
+    "gap_dB_bench_minus_sim": -68.82142860001538,
     "interpretation": "Positive gap means the bench has more wire-vs-background contrast than the simulator. With the background-calibrated gain_db, sim wires will undershoot the bench wire palette by ~-68.8 dB (-386.4 palette). Closing this gap requires increasing the wire's scattering strength (e.g. switching the sphere material to one with higher impedance contrast) or increasing the wire size \u2014 the gain_db scalar cannot."
   },
   "gain_db_distribution_dB": {
@@ -112,9 +112,9 @@
     ]
   },
   "sim_water_bg_diagnostic": {
-    "mean_palette_log10amp": -6.725584983825684,
+    "mean_palette_log10amp": -6.725576877593994,
     "median_palette_log10amp": -7.046034336090088,
-    "mean_envelope_amp": 1.8811135692130445e-07,
+    "mean_envelope_amp": 1.8811486810677275e-07,
     "median_envelope_amp": 8.994264684710582e-08,
     "n_pixels_per_frame": 157744
   },

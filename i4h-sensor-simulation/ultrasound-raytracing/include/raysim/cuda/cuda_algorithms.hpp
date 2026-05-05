@@ -200,6 +200,33 @@ class CUDAAlgorithms {
                           cudaStream_t stream);
 
   /**
+   * @brief Depth-weighted variant of `add_gaussian_noise` (Pass 7).
+   *
+   * Adds N(0, (sigma_base * depth_weight[r])^2) per RF sample, with the
+   * weight buffer indexed by the radial-sample index (`size.x` axis). The
+   * weight is built by the simulator from the lateral-PSF geometry as
+   * sqrt(sigma_bins(z) / sigma_bins(z_focal)) so that after the L1-normalised
+   * depth-dependent lateral PSF concentrates the focal-zone noise, the
+   * post-PSF noise standard deviation is uniform across depth (matching the
+   * bench's flat anechoic depth profile).
+   *
+   * No-op when `sigma_base <= 0` or `depth_weight == nullptr`.
+   *
+   * @param buffer [in,out] Row-major RF buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents (size.x = depth samples, size.y = scanlines).
+   * @param sigma_base [in] Noise standard deviation in RF amplitude units at
+   *                        the reference depth (z_focal). The per-bin sigma is
+   *                        `sigma_base * depth_weight[r_idx]`.
+   * @param depth_weight [in] Device buffer of length `size.x` (one float per
+   *                          radial sample).
+   * @param seed [in] Per-frame seed; same convention as `add_gaussian_noise`.
+   * @param stream [in] CUDA stream.
+   */
+  void add_gaussian_noise_depth_weighted(CudaMemory* buffer, uint2 size, float sigma_base,
+                                          CudaMemory* depth_weight, uint32_t seed,
+                                          cudaStream_t stream);
+
+  /**
    * @brief Zero the inner `dead_zone_samples` radial samples of every scanline.
    *
    * Used at the very end of the simulation pipeline (post log-compression,
@@ -338,6 +365,7 @@ class CUDAAlgorithms {
   const CudaLauncher add_row_launcher_;
   const CudaLauncher scale_buffer_launcher_;
   const CudaLauncher add_gaussian_noise_launcher_;
+  const CudaLauncher add_gaussian_noise_depth_weighted_launcher_;
   const CudaLauncher zero_inner_radial_launcher_;
   const CudaLauncher display_window_launcher_;
   const CudaLauncher median_clip_launcher_;

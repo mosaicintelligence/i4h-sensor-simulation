@@ -342,6 +342,20 @@ class RaytracingUltrasoundSimulator {
   uint32_t psf_lat_2d_buffer_size_ = 0;
   float psf_lat_2d_t_far_ = 0.f;
 
+  // Pass 7 — per-depth additive-noise weight = sqrt(sigma_bins(z) / sigma_bins(z_focal)).
+  // Built alongside the depth-dependent lateral PSF (same probe params drive
+  // both) and consumed by `add_gaussian_noise_depth_weighted` so the post-PSF
+  // noise standard deviation is uniform across depth (matching bench's flat
+  // anechoic profile). Cached fields mirror psf_lat_2d_'s invalidation keys.
+  std::unique_ptr<CudaMemory> noise_depth_weight_;
+  uint32_t noise_depth_weight_size_ = 0;
+  float noise_depth_weight_element_radius_ = 0.f;
+  float noise_depth_weight_focal_length_ = 0.f;
+  uint32_t noise_depth_weight_buffer_size_ = 0;
+  float noise_depth_weight_t_far_ = 0.f;
+  uint32_t noise_depth_weight_num_angular_rays_ = 0;
+  float noise_depth_weight_lambda_mm_ = 0.f;
+
   std::unique_ptr<CudaMemory> tgc_curve_;
   std::optional<ProbeType> tgc_probe_type_;  ///< Probe type used to build current TGC (for cache invalidation)
 
