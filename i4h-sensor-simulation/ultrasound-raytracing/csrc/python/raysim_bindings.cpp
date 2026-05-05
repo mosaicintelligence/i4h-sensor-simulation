@@ -552,9 +552,32 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite(
           "frame_seed",
           &raysim::RaytracingUltrasoundSimulator::SimParams::frame_seed,
-          "Pass 5b: per-frame seed for the scatter decorrelation hash. "
-          "Increment between frames to draw independent speckle realizations "
-          "for temporal averaging; keep at 0 for frame-to-frame stable speckle.")
+          "Pass 5b/6: per-frame seed for the scatter decorrelation hash AND "
+          "the additive-noise hash (the latter salted with a domain-separation "
+          "constant, so a single frame_seed increment per frame draws "
+          "independent realizations of both). Keep at 0 for frame-to-frame "
+          "stable speckle and noise.")
+      .def_readwrite(
+          "noise_sigma",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::noise_sigma,
+          "Pass 6: additive Gaussian RF noise standard deviation (RF "
+          "amplitude units, referred to the input of the receive chain). "
+          "When > 0, N(0, noise_sigma**2) is added per RF sample to the "
+          "raw post-raytracing buffer BEFORE the lateral and axial PSF "
+          "convolutions. Pass 6 v1 added the noise post-gain (per-pixel "
+          "white noise), but the resulting bg looked like fine static "
+          "instead of the bench's mottled speckle; Pass 6 v2 moved the "
+          "stage pre-PSF so the noise is bandlimited to the resolution "
+          "cell. Default 0 is a no-op. Calibrate via "
+          "instrument-calibration/p035_visions/derive_noise_sigma.py.")
+      .def_readwrite(
+          "catheter_dead_zone_mm",
+          &raysim::RaytracingUltrasoundSimulator::SimParams::catheter_dead_zone_mm,
+          "Pass 6 v2: catheter sheath dead-zone radius (mm). Zeros the "
+          "final palette buffer for r < catheter_dead_zone_mm so the "
+          "inner catheter region renders as solid black (palette 0), "
+          "matching the bench. Default 0 disables the mask; a typical "
+          "calibrated value is 1.4-1.9 mm depending on probe OD.")
       .def_readwrite(
           "ring_down",
           &raysim::RaytracingUltrasoundSimulator::SimParams::ring_down,

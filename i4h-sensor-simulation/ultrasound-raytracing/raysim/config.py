@@ -105,6 +105,19 @@ class NoiseConfig:
 
 
 @dataclass
+class CatheterConfig:
+    """Catheter sheath geometry (Pass 6 v2).
+
+    `dead_zone_mm` is the radial extent (mm) inside which any acquired signal
+    is blocked by the catheter wall. The simulator zeros the final palette
+    buffer for r < dead_zone_mm so the inner zone renders as solid black --
+    matching the bench, where the catheter sheath physically blocks signal
+    acquisition for the inner ~1.4-1.9 mm depending on probe.
+    """
+    dead_zone_mm: float = 0.0
+
+
+@dataclass
 class RingDownConfig:
     # When False (the default), the simulator emits no ring-down signal at all.
     # When True, it adds the calibrated residual that survives the device's
@@ -166,6 +179,7 @@ class ProcessingConfig:
     # --- Future ---
     compression_lut: Optional[str] = None
     noise: NoiseConfig = field(default_factory=NoiseConfig)
+    catheter: CatheterConfig = field(default_factory=CatheterConfig)
     ring_down: RingDownConfig = field(default_factory=RingDownConfig)
 
 
@@ -199,14 +213,14 @@ _FUTURE_PATHS: tuple[str, ...] = (
     "probe.synthetic_aperture",
     "sim.sampling_freq_mhz",
     "processing.compression_lut",
-    "processing.noise.type",
-    "processing.noise.sigma",
     # Pass 2 wired the ring-down stage. Pass 3a wired `processing.gain_db`
     # (reference gain) and Pass 3b replaced the dB-shift display window with
     # `processing.reject_palette` / `processing.saturation_palette` (direct
-    # palette clamp). `ring_down.subtract_reference` is informational only
-    # (the device already does the subtraction; we model the residual) and
-    # stays out of the wiring.
+    # palette clamp). Pass 6 wired `processing.noise.{type, sigma}` (the
+    # additive RF noise floor stage; see SimParams.noise_sigma).
+    # `ring_down.subtract_reference` is informational only (the device
+    # already does the subtraction; we model the residual) and stays out of
+    # the wiring.
 )
 
 # Likewise: Config rows that are in the schema but not yet exposed via SimParams
@@ -421,6 +435,33 @@ class IvusSimConfig:
         params.scattering_resolution_mm = float(proc.scattering_resolution_mm)
         params.scatter_integral_scale = float(proc.scatter_integral_scale)
 
+        # Pass 6 — additive Gaussian RF noise floor.
+        #
+        # The bench's calibrated RF noise std (in RF amplitude units at the
+        # reference gain) is forwarded directly; `SimParams.noise_sigma <= 0`
+        # is the no-op default. The YAML `processing.noise.type` is currently
+        # informational: the runtime equivalence between adding Gaussian RF
+        # noise pre-Hilbert (what the simulator does today) and observing
+        # Rayleigh noise on the post-Hilbert envelope (what the calibration
+        # measured) means a single Gaussian-RF stage reproduces both bench
+        # noise families with the given sigma. A future pass can add a
+        # per-type dispatch if the calibration sheet starts distinguishing
+        # them in a way that matters.
+        if proc.noise.type.lower() not in {"gaussian", "rayleigh", "none", ""}:
+            raise ValueError(
+                f"Unsupported processing.noise.type {proc.noise.type!r}; "
+                "expected one of 'gaussian', 'rayleigh', 'none'."
+            )
+        params.noise_sigma = float(proc.noise.sigma) if proc.noise.type.lower() != "none" else 0.0
+
+        # Pass 6 v2 — catheter sheath dead-zone mask.
+        #
+        # `processing.catheter.dead_zone_mm` (default 0) zeros the inner
+        # radial samples of the final palette buffer so the catheter region
+        # renders solid black, matching the bench (the catheter wall blocks
+        # signal acquisition for ~1.4-1.9 mm depending on probe).
+        params.catheter_dead_zone_mm = float(proc.catheter.dead_zone_mm)
+
         # ---- Pass 2: ring-down injection ------------------------------------
         # Off by default (RingDownConfig.enabled = False) => no signal at all.
         # When enabled and decay == "measured", load the palette template from
@@ -583,12 +624,14 @@ def _build_sim(d: dict[str, Any]) -> SimConfig:
 def _build_processing(d: dict[str, Any]) -> ProcessingConfig:
     median = d.pop("median_clip", None) if isinstance(d, dict) else None
     noise = d.pop("noise", None) if isinstance(d, dict) else None
+    catheter = d.pop("catheter", None) if isinstance(d, dict) else None
     ring_down = d.pop("ring_down", None) if isinstance(d, dict) else None
     if "tgc_control_points" in d and d["tgc_control_points"] is not None:
         d["tgc_control_points"] = [tuple(pt) for pt in d["tgc_control_points"]]
     return ProcessingConfig(
         median_clip=MedianClipConfig(**median) if isinstance(median, dict) else MedianClipConfig(),
         noise=NoiseConfig(**noise) if isinstance(noise, dict) else NoiseConfig(),
+        catheter=CatheterConfig(**catheter) if isinstance(catheter, dict) else CatheterConfig(),
         ring_down=RingDownConfig(**ring_down) if isinstance(ring_down, dict) else RingDownConfig(),
         **d,
     )
