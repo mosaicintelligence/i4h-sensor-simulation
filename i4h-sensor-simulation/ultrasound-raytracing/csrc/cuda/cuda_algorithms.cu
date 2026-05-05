@@ -277,6 +277,108 @@ static __global__ void scale_buffer_kernel(float* __restrict__ buffer, uint2 siz
   buffer[offset] *= scale;
 }
 
+// Pass 6: additive Gaussian RF noise.
+//
+// Per the calibration sheet (volcano_s5i.yaml processing.noise.{type, sigma})
+// the bench's measured noise is "complex Gaussian per quadrature" — i.e. the
+// underlying RF noise (BEFORE envelope detection) is Gaussian with the
+// calibrated sigma in RF-amplitude units at the reference gain. This kernel
+// adds N(0, sigma^2) to every element of the post-gain RF buffer, just before
+// Hilbert. The Hilbert transform of a Gaussian RF stream is itself Gaussian
+// with the same variance, so the post-Hilbert envelope of pure noise becomes
+// Rayleigh(sigma) with mean = sigma * sqrt(pi/2). After log compression the
+// noise floor lifts the per-pixel envelope distribution off the lower
+// rejection clamp (palette 11), which is the dominant contributor to the
+// bimodal sim-vs-bench palette histogram (test I residual + test F not
+// previously evaluated).
+//
+// Box-Muller transform on two PCG-hashed uniforms per buffer element (the
+// same hash family used by Pass 5b's scatter decorrelation, see
+// optix_trace.cu::pcg_hash; standard Jarzynski & Olano 2020 / O'Neill 2014
+// PCG mix — adequate for per-sample additive-noise jitter, not for any
+// security-sensitive use). u1 is clamped to (0, 1] by adding 1/2^24 so the
+// log term cannot overflow.
+//
+// Disabled (skipped) when sigma <= 0; default callers pay no cost.
+static __device__ uint32_t pcg_hash_noise(uint32_t x) {
+  uint32_t state = x * 747796405u + 2891336453u;
+  uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+
+static __device__ float pcg_to_unit_float_noise(uint32_t x) {
+  return (x >> 8) * (1.f / 16777216.f);
+}
+
+static __global__ void add_gaussian_noise_kernel(float* __restrict__ buffer, uint2 size,
+                                                 float sigma, uint32_t seed) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  const uint32_t offset = index.y * size.x + index.x;
+  const uint32_t base = offset * 2u + seed * 2654435761u;
+  // u1 in (0, 1] (avoid 0 to keep -2 ln u1 finite); u2 in [0, 1).
+  const float u1 = pcg_to_unit_float_noise(pcg_hash_noise(base + 0u)) + (1.f / 16777216.f);
+  const float u2 = pcg_to_unit_float_noise(pcg_hash_noise(base + 1u));
+  const float radius = sqrtf(-2.f * logf(u1));
+  // Single Gaussian sample per element; the second Box-Muller output (sin
+  // term) is discarded — we save one register and the work is dwarfed by
+  // the surrounding Hilbert/log-compression stages.
+  const float z = radius * __cosf(6.28318530717958647692f * u2);
+  buffer[offset] += sigma * z;
+}
+
+// Pass 7: depth-weighted additive Gaussian noise. Same Box-Muller draw as
+// `add_gaussian_noise_kernel`, but `sigma` is multiplied per-bin by
+// `depth_weight[index.x]`, where `index.x` is the radial-sample index. The
+// weight equals sqrt(sigma_bins(z) / sigma_bins(z_focal)) so that after the
+// L1-normalised depth-dependent lateral PSF concentrates the focal-zone noise,
+// the post-PSF noise standard deviation is uniform across depth (matching the
+// bench's flat anechoic depth profile). See `raytracing_ultrasound_simulator.cpp`
+// for the weight derivation. Default: weighting always on for IVUS probes
+// where the focal/element parameters define a depth-dependent lateral PSF.
+static __global__ void add_gaussian_noise_depth_weighted_kernel(
+    float* __restrict__ buffer, uint2 size, float sigma_base,
+    const float* __restrict__ depth_weight, uint32_t seed) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  const uint32_t offset = index.y * size.x + index.x;
+  const uint32_t base = offset * 2u + seed * 2654435761u;
+  const float u1 = pcg_to_unit_float_noise(pcg_hash_noise(base + 0u)) + (1.f / 16777216.f);
+  const float u2 = pcg_to_unit_float_noise(pcg_hash_noise(base + 1u));
+  const float radius = sqrtf(-2.f * logf(u1));
+  const float z = radius * __cosf(6.28318530717958647692f * u2);
+  const float w = depth_weight[index.x];
+  buffer[offset] += sigma_base * w * z;
+}
+
+// Pass 6 v2: catheter dead-zone mask. Zero the inner radial samples where
+// the catheter sheath physically blocks any acquired signal -- on the bench
+// this region renders as pure black (palette 0) for r < ~1.4 mm. Without
+// this mask the additive noise stage (and any leaking ring-down energy)
+// fills the dead zone with a noise floor, which differs visibly from the
+// bench's solid-black inner zone.
+//
+// Applied at the very end of the pipeline (post log-compression, post
+// display window) so the masked palette is exactly 0, deeper than the
+// device's reject_palette (11). This matches the bench appearance.
+//
+// `dead_zone_samples` is the number of leading radial samples to zero.
+// Default (dead_zone_samples == 0) is a no-op; the wrapper short-circuits.
+static __global__ void zero_inner_radial_kernel(float* __restrict__ buffer, uint2 size,
+                                                uint32_t dead_zone_samples) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+  if (index.x < dead_zone_samples) {
+    const uint32_t offset = index.y * size.x + index.x;
+    buffer[offset] = 0.f;
+  }
+}
+
 // Pass 3b: post-log display window. Direct clamp to
 // `[reject_palette, saturation_palette]` in palette units. This reproduces
 // the device's reject / saturation palette behaviour: any amplitude whose
@@ -626,6 +728,10 @@ CUDAAlgorithms::CUDAAlgorithms()
       mul_rows_launcher_((void*)&mul_rows_kernel),
       add_row_launcher_((void*)&add_row_kernel),
       scale_buffer_launcher_((void*)&scale_buffer_kernel),
+      add_gaussian_noise_launcher_((void*)&add_gaussian_noise_kernel),
+      add_gaussian_noise_depth_weighted_launcher_(
+          (void*)&add_gaussian_noise_depth_weighted_kernel),
+      zero_inner_radial_launcher_((void*)&zero_inner_radial_kernel),
       display_window_launcher_((void*)&display_window_kernel),
       median_clip_launcher_((void*)&median_clip_kernel),
       scan_convert_curvilinear_launcher_((void*)&scan_convert_curvilinear_kernel),
@@ -779,6 +885,51 @@ void CUDAAlgorithms::scale_buffer(CudaMemory* buffer, uint2 size, float scale,
                                 reinterpret_cast<float*>(buffer->get_ptr(stream)),
                                 size,
                                 scale);
+}
+
+void CUDAAlgorithms::add_gaussian_noise(CudaMemory* buffer, uint2 size, float sigma,
+                                        uint32_t seed, cudaStream_t stream) {
+  // Disabled (skipped) when sigma <= 0; default callers (which leave
+  // SimParams::noise_sigma == 0.f) pay no kernel-launch cost.
+  if (!(sigma > 0.f)) { return; }
+
+  add_gaussian_noise_launcher_.launch(size,
+                                      stream,
+                                      reinterpret_cast<float*>(buffer->get_ptr(stream)),
+                                      size,
+                                      sigma,
+                                      seed);
+}
+
+void CUDAAlgorithms::add_gaussian_noise_depth_weighted(CudaMemory* buffer, uint2 size,
+                                                        float sigma_base,
+                                                        CudaMemory* depth_weight, uint32_t seed,
+                                                        cudaStream_t stream) {
+  // Same short-circuit as the unweighted variant. Also no-op if no weight
+  // buffer is supplied (caller falls back to add_gaussian_noise in that case).
+  if (!(sigma_base > 0.f) || depth_weight == nullptr) { return; }
+
+  add_gaussian_noise_depth_weighted_launcher_.launch(
+      size,
+      stream,
+      reinterpret_cast<float*>(buffer->get_ptr(stream)),
+      size,
+      sigma_base,
+      reinterpret_cast<const float*>(depth_weight->get_ptr(stream)),
+      seed);
+}
+
+void CUDAAlgorithms::zero_inner_radial(CudaMemory* buffer, uint2 size,
+                                       uint32_t dead_zone_samples, cudaStream_t stream) {
+  // No-op when there's no dead zone (default SimParams::catheter_dead_zone_mm
+  // == 0.f maps to dead_zone_samples == 0); existing callers pay no cost.
+  if (dead_zone_samples == 0u) { return; }
+
+  zero_inner_radial_launcher_.launch(size,
+                                     stream,
+                                     reinterpret_cast<float*>(buffer->get_ptr(stream)),
+                                     size,
+                                     dead_zone_samples);
 }
 
 void CUDAAlgorithms::apply_display_window(CudaMemory* buffer, uint2 size, float reject_palette,
