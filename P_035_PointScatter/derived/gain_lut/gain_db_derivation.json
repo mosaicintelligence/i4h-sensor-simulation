@@ -1,5 +1,5 @@
 {
-  "method_summary": "Analytical re-derivation of processing.gain_db for the PV .035 / Volcano s5i. Renders the wire phantom in raw-envelope mode (log_multiplier=1, log_floor=1.0, ring-down OFF, display window OFF, median clip OFF, gain_db=0) so post-log palette = log10(envelope amp). Two candidate calibrations are reported: matching the median bench wire amplitude (gain_db_wire) and matching the bench water-scatter background (gain_db_bg). The YAML uses the *background* calibration so the device's reject palette behaviour is preserved; any residual wire-vs-bg contrast gap is a scattering-strength problem the gain_db scalar cannot fix.",
+  "method_summary": "Analytical re-derivation of processing.gain_db for the PV .035 / Volcano s5i. Renders the wire phantom in raw-envelope mode (log_multiplier=1, log_floor=1.0, ring-down OFF, display window OFF, median clip OFF, gain_db=0) so post-log palette = log10(envelope amp). Two candidate calibrations are reported: matching the median bench wire amplitude (gain_db_wire) and matching the bench water-scatter background (gain_db_bg). Pass 6 (additive noise floor) shifted the anechoic floor anchor onto noise.sigma (calibrated independently via derive_noise_sigma.py), so the YAML now uses the **wire-peak** calibration. Any residual wire-vs-bg contrast gap is a scattering-strength problem the gain_db scalar cannot fix.",
   "n_frames": 30,
   "log_multiplier_used": 112.30000305175781,
   "bench_saturation_cutoff_palette": 220.0,
@@ -10,10 +10,10 @@
   "bench_envelope_amp_water_bg_at_slider_54": 2.578683431097714,
   "bench_water_bg_palette_at_slider_54": 46.2,
   "gain_db_wire_target": 73.91806954750348,
-  "gain_db_bg_target": 130.55199814751884,
+  "gain_db_bg_target": 73.55981064751884,
   "gain_db_bg_amp_pure": 142.73949814751884,
-  "gain_db_calibrated": 130.55199814751884,
-  "calibration_target": "water_background_post_clamp_mean_palette",
+  "gain_db_calibrated": 73.91806954750348,
+  "calibration_target": "wire_peak_palette_median",
   "wire_vs_bg_contrast_db": {
     "sim": 95.25954008102417,
     "bench": 26.438111481008786,
