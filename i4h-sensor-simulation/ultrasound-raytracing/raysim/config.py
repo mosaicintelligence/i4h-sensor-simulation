@@ -120,16 +120,26 @@ class CatheterConfig:
 @dataclass
 class RingDownConfig:
     # When False (the default), the simulator emits no ring-down signal at all.
-    # When True, it adds the calibrated residual that survives the device's
-    # Acoustic Reference subtraction (per the s5i private tag 0x00291006).
-    # Default is False so existing configs that omit `ring_down` keep their
-    # silent-lumen behavior.
+    # When True, it adds the catheter ring-down on top of scatter.
+    #
+    # AR-mode policy (corrected 2026-05-12 after ivus_test_0508 paired-
+    # capture cross-check):
+    #
+    # The s5i AR-on/off state lives in private tag 0x00291007 (NOT
+    # 0x00291006, which is a capability flag and is always 1). 18 of 19
+    # P_035 frames are AR-OFF and the bench template
+    # `ringdown_template_g54_d60.npy` is therefore the RAW ring-down, not
+    # the AR residual. Set `subtract_reference = False` to match P_035
+    # and the wire-phantom frames in ivus_test_0508; flip to True to
+    # render a clinical-default AR-on image, in which case the template
+    # at `waveform_path` should be an AR-on residual template (TBD; will
+    # be derived from CASE0000 paired captures in ivus_test_0508).
     enabled: bool = False
     amplitude: float = 0.0
     extent_mm: float = 0.5
     decay: str = "exponential"  # exponential | hanning | measured
     waveform_path: Optional[str] = None
-    subtract_reference: bool = True
+    subtract_reference: bool = False
     # Pitch (mm per sample) of the file at `waveform_path`. Calibration
     # templates are typically saved at the device's *display* pitch (e.g.
     # 0.12 mm/pixel for the PV .035), which is much coarser than the

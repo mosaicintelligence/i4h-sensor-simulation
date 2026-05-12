@@ -785,9 +785,18 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   // the inner 3 mm. Test I (depth uniformity) caught this directly.
   //
   // Provenance of the calibration numbers consumed here is in
-  // `instrument-calibration/p035_visions/volcano_s5i.yaml` (E6 / E7) and the
-  // residual is what survives the device's Acoustic Reference subtraction
-  // (private DICOM tag 0x00291006 = 1 in all PV .035 frames).
+  // `instrument-calibration/p035_visions/volcano_s5i.yaml` (E6 / E7).
+  //
+  // AR-mode caveat (corrected 2026-05-12): the bench template was
+  // originally documented as "the AR residual" because private tag
+  // 0x00291006 was thought to be the AR-on flag. It is in fact a
+  // capability flag (always 1); the AR-on/off state lives in 0x00291007
+  // and is 0 (AR-OFF) on every P_035 frame except FILE0013. So the
+  // template is the RAW ring-down. Set
+  // `sim_params.ring_down.subtract_reference = false` to match P_035
+  // and the ivus_test_0508 wire-phantom frames; flip to true (with an
+  // AR-on residual template at waveform_path) to render the clinical
+  // AR-on default.
   if (sim_params.ring_down.enabled) {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Ring-down", sim_params.stream);
     const auto& rd = sim_params.ring_down;
