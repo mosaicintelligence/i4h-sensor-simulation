@@ -1,2 +1,11 @@
 tier1_results/arrays/
 tier1_results/figures/
+
+# Python bytecode produced when running the extract_*.py scripts.
+__pycache__/
+*.pyc
+
+# Diagnostic PNGs / sim renders that live next to the script outputs.
+# (Covered by the top-level .gitignore for */derived/ but listed here so
+# this folder's gitignore is self-explanatory.)
+*.bak

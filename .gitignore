@@ -1,0 +1,108 @@
+# =============================================================================
+# Top-level .gitignore for ivus-sim
+#
+# Goal: keep the repo as just source + small calibration artifacts. Raw bench
+# data and regenerable diagnostic plots live on disk locally; large files are
+# distributed out-of-band (not via git).
+#
+# Sub-tree .gitignores still apply on top of this file:
+#   - i4h-sensor-simulation/.gitignore                (Python defaults)
+#   - i4h-sensor-simulation/ultrasound-raytracing/.gitignore  (sim-specific)
+#   - instrument-calibration/p035_visions/.gitignore  (per-folder)
+# =============================================================================
+
+# --- OS / editor noise --------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# --- Python bytecode / build artifacts ---------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Editor / IDE config ------------------------------------------------------
+.vscode/
+.idea/
+.cursor/
+.cursorrules
+plans/
+
+# --- C++ / CUDA build artifacts ----------------------------------------------
+build/
+build-*/
+_deps/
+CMakeFiles/
+CMakeCache.txt
+*.dSYM/
+
+# --- Python virtualenvs -------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+
+# =============================================================================
+# Bench bulk data — KEEP ON DISK, DO NOT TRACK
+# =============================================================================
+# The raw multi-frame DICOM clips from the s5i bench dumps are 10-26 MB each
+# and dominate push/pull cost. Symlinked subsets land under
+# ivus_test_0508/raw/<sweep>/ (those symlinks ARE tracked and are tiny). The
+# CASE* folders that hold the source DICOMs are not tracked.
+ivus_test_0508/CASE*/
+
+# Vendor's s5i playback application (Viewer.exe, DLLs, CHM/OCX, etc.) that
+# shipped with the bench data dump. Not source.
+ivus_test_0508/Viewer/
+# The autorun shell that goes with that viewer (DICOMDIR + the launcher
+# + Volcano's CD readme/help/license).
+ivus_test_0508/DICOMDIR
+ivus_test_0508/Show_Studies.exe
+ivus_test_0508/ViewHelp.chm
+ivus_test_0508/autorun.inf
+ivus_test_0508/README_VIEWER.txt
+ivus_test_0508/VOLCANO_VIEWER_LICENSE.rtf
+
+# Top-level diagnostic plots produced by the gain-curve comparison scripts.
+# (Summary CSVs / pooled JSON stay tracked; only the rendered PNG comparisons
+# are regenerable diagnostics.)
+ivus_test_0508/gain_curve_comparison.png
+ivus_test_0508/gain_curve_wire_comparison.png
+
+# =============================================================================
+# Regenerable diagnostic artifacts under */derived/
+# =============================================================================
+# Annotation-grid / fit-overlay PNGs, gain-curve plots, AR-template overview
+# PNGs. All produced by the scripts in scripts/ and
+# instrument-calibration/p035_visions/. Re-runnable; not source.
+**/derived/**/*.png
+**/derived/**/*.pdf
+**/derived/**/*.svg
+
+# Per-frame polar arrays produced by unwrap.py (~1 MB each, regenerable).
+# Canonical calibration templates are kept (allowlisted explicitly below).
+**/derived/polar/
+
+# Tier 1 sim-render outputs (regenerable on the CUDA host).
+instrument-calibration/p035_visions/tier1_results/arrays/
+instrument-calibration/p035_visions/tier1_results/figures/
+
+# =============================================================================
+# Allowlisted exceptions (always tracked even if matched by the patterns above)
+# =============================================================================
+# Canonical bench templates that the simulator (volcano_s5i.yaml) consumes
+# directly. They are tiny (~kB) and need to be in the repo so a clone can run
+# the simulator without re-running the bench pipeline.
+!P_035_PointScatter/derived/ringdown/ringdown_template_*.npy
+!ivus_test_0508/raw/c_take2_water/derived/ar_template/ar_template_canonical.npy
+!ivus_test_0508/raw/c_take2_water/derived/ar_template/ar_template_by_pair.npy
