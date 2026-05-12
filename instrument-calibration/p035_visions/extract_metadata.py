@@ -18,8 +18,25 @@ Tag map (verified empirically across the 19 captures):
     (0029,1001) FD       gain_slider     -- {44, 54, 64} in this dataset
     (0029,1002) US       constant 3      -- unknown (display fmt?), kept for completeness
     (0029,1003) FD       diameter_mm     -- {35, 40, 60} in this dataset
-    (0029,1006) US       ar_enabled?     -- =1 in all frames; presumed Acoustic-Ref ON
-    (0029,1007) US       mode_flag?      -- =0 except FILE0013 = 1; flagged as suspect
+    (0029,1006) US       ar_capability   -- =1 in EVERY frame across BOTH P_035 AND
+                                            ivus_test_0508 datasets (regardless of
+                                            actual AR-on/off state). Capability flag,
+                                            NOT the AR-on/off state. Originally
+                                            mislabelled "ar_enabled" -- corrected
+                                            2026-05-12 after ivus_test_0508 paired-
+                                            capture cross-check (see calibration_delta).
+    (0029,1007) US       ar_state        -- AR-on/off state. Verified empirically on
+                                            ivus_test_0508 paired captures: when this
+                                            flips 0 -> 1 the catheter ringdown disc
+                                            collapses from palette ~100 (raw) to
+                                            palette ~10 (subtracted). Mapping:
+                                              0 -> AR-OFF (raw ringdown visible)
+                                              1 -> AR-ON  (ringdown subtracted)
+                                            Originally named "mode_flag" / "suspect"
+                                            because P_035 has =0 on every frame except
+                                            FILE0013 -- which now correctly reads as
+                                            "P_035 was captured AR-OFF except for one
+                                            stray AR-ON frame".
     (0029,1008) US       =5 in all       -- TGC slot? unverified
     (0029,1015) US       frame_index     -- 1..19, matches ImageComments
 
@@ -42,8 +59,8 @@ PRIVATE_TAGS: list[tuple[tuple[int, int], str]] = [
     ((0x0029, 0x1001), "gain_slider"),
     ((0x0029, 0x1002), "priv_1002"),
     ((0x0029, 0x1003), "diameter_mm"),
-    ((0x0029, 0x1006), "ar_enabled"),
-    ((0x0029, 0x1007), "mode_flag"),
+    ((0x0029, 0x1006), "ar_capability"),
+    ((0x0029, 0x1007), "ar_state"),
     ((0x0029, 0x1008), "priv_1008"),
     ((0x0029, 0x1009), "priv_1009"),
     ((0x0029, 0x1015), "frame_index"),
@@ -73,9 +90,11 @@ def extract_one(path: Path) -> dict[str, str]:
         else:
             row[name] = ""
 
-    # FILE0013 is the only frame with mode_flag=1 in this dataset; mark it
-    # so downstream stats can choose to exclude it from group-level fits.
-    row["mode_flag_anomaly"] = "1" if row.get("mode_flag", "") not in ("", "0") else "0"
+    # ar_state=1 means AR-ON (ringdown subtracted). In P_035 this is true
+    # only for FILE0013, while every other frame is AR-OFF (raw ringdown).
+    # Downstream stats may want to stratify on this rather than treat the
+    # AR-ON outlier as suspect.
+    row["ar_state_anomaly"] = "1" if row.get("ar_state", "") not in ("", "0") else "0"
     return row
 
 
@@ -150,9 +169,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  by gain  : {dict(sorted(by_gain.items()))}")
     print(f"  by diam  : {dict(sorted(by_diam.items()))}")
     print(f"  by (g,D) : {dict(sorted(by_pair.items()))}")
-    anomalies = [r["file"] for r in rows if r["mode_flag_anomaly"] == "1"]
+    anomalies = [r["file"] for r in rows if r["ar_state_anomaly"] == "1"]
     if anomalies:
-        print(f"  mode_flag anomalies (priv 0x1007 != 0): {anomalies}")
+        print(f"  AR-ON frames (ar_state = 1, priv 0x1007 != 0): {anomalies}")
     return 0
 
 

@@ -338,7 +338,13 @@ def load_bench_polar(name: str = "FILE0000") -> tuple[np.ndarray, dict]:
                         "depth_mm": float(row["depth_mm"]),
                         "gain_slider": float(row["gain_slider"]),
                         "theta0_deg": float(row["theta0_deg"]),
-                        "ar_enabled": bool(int(row["ar_enabled"])),
+                        # priv (0x0029,0x1007) is the actual AR-on/off state on
+                        # this firmware (1 = AR-ON, 0 = AR-OFF). The (0x1006)
+                        # tag is a capability flag (always 1) and is not what
+                        # we want here. Original column was named "ar_enabled"
+                        # and read from (0x1006); corrected 2026-05-12.
+                        "ar_state": bool(int(row.get("ar_state",
+                                                       row.get("mode_flag", "0")))),
                     })
                     break
     return arr, meta
