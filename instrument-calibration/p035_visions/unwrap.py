@@ -118,12 +118,23 @@ def read_dicom_array(path: Path) -> np.ndarray:
     256-entry grayscale palette where palette[k] = (k, k, k) on this
     dataset, so the index IS the brightness. We return that index plane
     as uint8.
+
+    Handles single-frame stills (P_035: shape (H,W) or (H,W,C)) and the
+    multi-frame video clips in ivus_test_0508 (shape (N,H,W) or
+    (N,H,W,C)). Multi-frame clips are collapsed to the median across N
+    to denoise speckle and average the SA-orientation brightness
+    variability that the catheter's continuous rotation produces.
     """
     ds = pydicom.dcmread(str(path))
     arr = ds.pixel_array
-    if arr.ndim == 3:
-        # Already palette-applied somehow; collapse identical channels.
+    if arr.ndim == 4 and arr.shape[-1] in (3, 4):
+        arr = arr[..., 0]  # palette channels are identical on this scanner
+    if arr.ndim == 3 and arr.shape[-1] in (3, 4):
         arr = arr[..., 0]
+    elif arr.ndim == 3:
+        arr = np.median(arr, axis=0)
+    if arr.ndim != 2:
+        raise RuntimeError(f"Unexpected pixel_array shape {arr.shape} in {path}")
     return arr.astype(np.uint8)
 
 

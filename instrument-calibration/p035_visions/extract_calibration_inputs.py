@@ -186,14 +186,31 @@ class FrameInfo:
 
 
 def load_frame(path: Path) -> FrameInfo:
-    """Read a single P_035 DICOM and return its grayscale array + metadata."""
+    """Read a P_035 / ivus_test_0508 DICOM and return its grayscale array.
+
+    Handles four pixel_array shapes that show up across the bench captures:
+      (H, W)            - single-frame grayscale (P_035 stills)
+      (H, W, C)         - single-frame PALETTE COLOR decoded to RGB(A)
+      (N, H, W)         - multi-frame grayscale clip (ivus_test_0508)
+      (N, H, W, C)      - multi-frame PALETTE COLOR clip
+
+    Color is collapsed to BT.601 luma. Multi-frame clips are collapsed to a
+    median across N: the catheter is rotating but the apparatus is fixed, so
+    the median both denoises speckle and averages out the wire-orientation
+    brightness variability of SA beamforming -- exactly what we want for
+    click annotation and downstream PSF/gain-curve anchors.
+    """
     ds = pydicom.dcmread(str(path), stop_before_pixels=False)
     arr = ds.pixel_array
+    if arr.ndim == 4 and arr.shape[-1] in (3, 4):
+        arr = (0.299 * arr[..., 0] + 0.587 * arr[..., 1] + 0.114 * arr[..., 2])
     if arr.ndim == 3 and arr.shape[-1] in (3, 4):
-        # PALETTE COLOR is decoded as RGB by pydicom; collapse to luma.
-        arr = (0.299 * arr[..., 0] + 0.587 * arr[..., 1] + 0.114 * arr[..., 2]).astype(np.uint8)
-    elif arr.ndim != 2:
+        arr = (0.299 * arr[..., 0] + 0.587 * arr[..., 1] + 0.114 * arr[..., 2])
+    elif arr.ndim == 3:
+        arr = np.median(arr, axis=0)
+    if arr.ndim != 2:
         raise RuntimeError(f"Unexpected pixel_array shape {arr.shape} in {path}")
+    arr = arr.astype(np.uint8)
 
     # PhysicalDeltaX is in cm in the IVUS region descriptor; PixelSpacing is in mm.
     pixel_spacing_mm: float | None = None
