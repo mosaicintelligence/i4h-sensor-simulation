@@ -1,0 +1,3 @@
+case,file,experiment,take,apparatus,phantom,diameter_mm,gain_slider,mode_flag,ar_state,sweep_role,frames,patient_name,patient_id,acq_time,notes,staged_file
+CASE0007,FILE0000,E6,pilot,original,water_only,60,44,0,off,c_pilot_pair,93,test0508-e2b^^,T1E2,20020509201200,Capture C pilot AR-off; superseded scope by CASE0000,FILE0000.dcm
+CASE0007,FILE0001,E6,pilot,original,water_only,60,44,1,on,c_pilot_pair,110,test0508-e2b^^,T1E2,20020509201301,Capture C pilot AR-on,FILE0001.dcm

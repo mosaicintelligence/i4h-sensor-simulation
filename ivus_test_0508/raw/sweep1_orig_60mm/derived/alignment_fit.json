@@ -1,0 +1,410 @@
+{
+  "schema_version": 2,
+  "frames": [
+    {
+      "file": "FILE0006.dcm",
+      "pixel_spacing_mm": 0.12,
+      "apparatus_center_px": [
+        245.53468732752052,
+        234.16130749911733
+      ],
+      "apparatus_offset_from_image_center_mm": [
+        -0.5358375206975381,
+        1.9006431001059205
+      ],
+      "device_center_px": [
+        250.0,
+        250.0
+      ],
+      "apparatus_minus_device_mm": [
+        -0.5358375206975381,
+        1.9006431001059205
+      ],
+      "apparatus_wiggle_mm": 1.9747318913127243,
+      "theta0_deg": 288.3996175327986,
+      "chirality": -1,
+      "radial_scale": 1.0755636803156903,
+      "implied_sound_speed_m_per_s": 1656.368067686163,
+      "wire_offset": 0,
+      "first_visible_wire": 2,
+      "n_clicks_used": 5,
+      "excluded_user_wire_indices": [],
+      "rms_residual_mm": 0.6081197097851982,
+      "max_residual_mm": 0.885612726212603,
+      "used_design_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "per_click_residual_mm": [
+        0.28600725491105644,
+        0.6037531201630671,
+        0.30421266238415334,
+        0.885612726212603,
+        0.7251721743097965
+      ]
+    },
+    {
+      "file": "FILE0007.dcm",
+      "pixel_spacing_mm": 0.12,
+      "apparatus_center_px": [
+        245.83239310581658,
+        233.10929377962745
+      ],
+      "apparatus_offset_from_image_center_mm": [
+        -0.5001128273020106,
+        2.026884746444706
+      ],
+      "device_center_px": [
+        250.0,
+        250.0
+      ],
+      "apparatus_minus_device_mm": [
+        -0.5001128273020106,
+        2.026884746444706
+      ],
+      "apparatus_wiggle_mm": 2.087672056478754,
+      "theta0_deg": 288.01299331494863,
+      "chirality": -1,
+      "radial_scale": 1.0757745837264243,
+      "implied_sound_speed_m_per_s": 1656.6928589386935,
+      "wire_offset": 0,
+      "first_visible_wire": 2,
+      "n_clicks_used": 5,
+      "excluded_user_wire_indices": [],
+      "rms_residual_mm": 0.5713122235197542,
+      "max_residual_mm": 0.9270788468386022,
+      "used_design_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "per_click_residual_mm": [
+        0.06378351720534298,
+        0.5665231156908598,
+        0.22178408230866453,
+        0.9270788468386022,
+        0.6311165808431716
+      ]
+    },
+    {
+      "file": "FILE0008.dcm",
+      "pixel_spacing_mm": 0.12,
+      "apparatus_center_px": [
+        247.04089976293443,
+        232.07383471477974
+      ],
+      "apparatus_offset_from_image_center_mm": [
+        -0.3550920284478684,
+        2.1511398342264316
+      ],
+      "device_center_px": [
+        250.0,
+        250.0
+      ],
+      "apparatus_minus_device_mm": [
+        -0.3550920284478684,
+        2.1511398342264316
+      ],
+      "apparatus_wiggle_mm": 2.180250658769065,
+      "theta0_deg": 287.1505476781051,
+      "chirality": -1,
+      "radial_scale": 1.0760799033060648,
+      "implied_sound_speed_m_per_s": 1657.1630510913399,
+      "wire_offset": 0,
+      "first_visible_wire": 2,
+      "n_clicks_used": 5,
+      "excluded_user_wire_indices": [],
+      "rms_residual_mm": 0.3785677742652285,
+      "max_residual_mm": 0.5810883458771089,
+      "used_design_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "per_click_residual_mm": [
+        0.1399804970373471,
+        0.3900921561887998,
+        0.21992561121396909,
+        0.5810883458771089,
+        0.3984600714096242
+      ]
+    },
+    {
+      "file": "FILE0009.dcm",
+      "pixel_spacing_mm": 0.12,
+      "apparatus_center_px": [
+        246.21994855539293,
+        232.93782321477107
+      ],
+      "apparatus_offset_from_image_center_mm": [
+        -0.45360617335284814,
+        2.0474612142274715
+      ],
+      "device_center_px": [
+        250.0,
+        250.0
+      ],
+      "apparatus_minus_device_mm": [
+        -0.45360617335284814,
+        2.0474612142274715
+      ],
+      "apparatus_wiggle_mm": 2.097106574370899,
+      "theta0_deg": 287.83398790201045,
+      "chirality": -1,
+      "radial_scale": 1.0756705150392416,
+      "implied_sound_speed_m_per_s": 1656.532593160432,
+      "wire_offset": 0,
+      "first_visible_wire": 2,
+      "n_clicks_used": 5,
+      "excluded_user_wire_indices": [],
+      "rms_residual_mm": 0.5172018670704505,
+      "max_residual_mm": 0.727934903413221,
+      "used_design_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "per_click_residual_mm": [
+        0.2608493239622448,
+        0.727934903413221,
+        0.33586350492392436,
+        0.632869976292583,
+        0.47563490436958755
+      ]
+    },
+    {
+      "file": "FILE0010.dcm",
+      "pixel_spacing_mm": 0.12,
+      "apparatus_center_px": [
+        246.86004714725019,
+        232.24260396956046
+      ],
+      "apparatus_offset_from_image_center_mm": [
+        -0.37679434232997777,
+        2.1308875236527443
+      ],
+      "device_center_px": [
+        250.0,
+        250.0
+      ],
+      "apparatus_minus_device_mm": [
+        -0.37679434232997777,
+        2.1308875236527443
+      ],
+      "apparatus_wiggle_mm": 2.163944457436652,
+      "theta0_deg": 287.3066921848068,
+      "chirality": -1,
+      "radial_scale": 1.0758435734825764,
+      "implied_sound_speed_m_per_s": 1656.7991031631677,
+      "wire_offset": 0,
+      "first_visible_wire": 2,
+      "n_clicks_used": 5,
+      "excluded_user_wire_indices": [],
+      "rms_residual_mm": 0.5847275840112902,
+      "max_residual_mm": 0.7872863659297563,
+      "used_design_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "per_click_residual_mm": [
+        0.15602660665532816,
+        0.6802216660251694,
+        0.4669386329120777,
+        0.7872863659297563,
+        0.6201890128979122
+      ]
+    },
+    {
+      "file": "FILE0011.dcm",
+      "pixel_spacing_mm": 0.12,
+      "apparatus_center_px": [
+        244.92177393667995,
+        231.6003659640418
+      ],
+      "apparatus_offset_from_image_center_mm": [
+        -0.6093871275984054,
+        2.207956084314984
+      ],
+      "device_center_px": [
+        250.0,
+        250.0
+      ],
+      "apparatus_minus_device_mm": [
+        -0.6093871275984054,
+        2.207956084314984
+      ],
+      "apparatus_wiggle_mm": 2.290507092664459,
+      "theta0_deg": 288.1224957481345,
+      "chirality": -1,
+      "radial_scale": 1.0781355633979408,
+      "implied_sound_speed_m_per_s": 1660.3287676328289,
+      "wire_offset": 0,
+      "first_visible_wire": 2,
+      "n_clicks_used": 5,
+      "excluded_user_wire_indices": [],
+      "rms_residual_mm": 0.6497512322742581,
+      "max_residual_mm": 1.0548566881871182,
+      "used_design_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "per_click_residual_mm": [
+        0.180741329174425,
+        0.6054556292245351,
+        0.20021357817874844,
+        1.0548566881871182,
+        0.7475501740204038
+      ]
+    },
+    {
+      "file": "FILE0012.dcm",
+      "pixel_spacing_mm": 0.12,
+      "apparatus_center_px": [
+        243.8527854751384,
+        231.06736339570352
+      ],
+      "apparatus_offset_from_image_center_mm": [
+        -0.7376657429833915,
+        2.271916392515577
+      ],
+      "device_center_px": [
+        250.0,
+        250.0
+      ],
+      "apparatus_minus_device_mm": [
+        -0.7376657429833915,
+        2.271916392515577
+      ],
+      "apparatus_wiggle_mm": 2.3886721924433734,
+      "theta0_deg": 288.285126535264,
+      "chirality": -1,
+      "radial_scale": 1.0913691872580038,
+      "implied_sound_speed_m_per_s": 1680.7085483773258,
+      "wire_offset": 0,
+      "first_visible_wire": 2,
+      "n_clicks_used": 5,
+      "excluded_user_wire_indices": [],
+      "rms_residual_mm": 0.6300949790599361,
+      "max_residual_mm": 0.8209689291813865,
+      "used_design_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "per_click_residual_mm": [
+        0.26899958423477954,
+        0.7398192652164145,
+        0.4260642393735692,
+        0.8209689291813865,
+        0.7140618831198428
+      ]
+    },
+    {
+      "file": "FILE0013.dcm",
+      "pixel_spacing_mm": 0.12,
+      "apparatus_center_px": [
+        246.2942698104766,
+        233.93054366432017
+      ],
+      "apparatus_offset_from_image_center_mm": [
+        -0.4446876227428072,
+        1.9283347602815797
+      ],
+      "device_center_px": [
+        250.0,
+        250.0
+      ],
+      "apparatus_minus_device_mm": [
+        -0.4446876227428072,
+        1.9283347602815797
+      ],
+      "apparatus_wiggle_mm": 1.9789446757125038,
+      "theta0_deg": 287.2882818744504,
+      "chirality": -1,
+      "radial_scale": 1.0746499149678588,
+      "implied_sound_speed_m_per_s": 1654.9608690505024,
+      "wire_offset": 0,
+      "first_visible_wire": 2,
+      "n_clicks_used": 5,
+      "excluded_user_wire_indices": [],
+      "rms_residual_mm": 0.442293219969766,
+      "max_residual_mm": 0.6089385680479729,
+      "used_design_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "per_click_residual_mm": [
+        0.19028756751118542,
+        0.6004591945397361,
+        0.18723391385150204,
+        0.6089385680479729,
+        0.4189190152607292
+      ]
+    },
+    {
+      "file": "FILE0014.dcm",
+      "pixel_spacing_mm": 0.12,
+      "apparatus_center_px": [
+        243.9798615680452,
+        231.2561249269295
+      ],
+      "apparatus_offset_from_image_center_mm": [
+        -0.722416611834575,
+        2.2492650087684614
+      ],
+      "device_center_px": [
+        250.0,
+        250.0
+      ],
+      "apparatus_minus_device_mm": [
+        -0.722416611834575,
+        2.2492650087684614
+      ],
+      "apparatus_wiggle_mm": 2.362430706015466,
+      "theta0_deg": 287.91840710388374,
+      "chirality": -1,
+      "radial_scale": 1.085270896960511,
+      "implied_sound_speed_m_per_s": 1671.3171813191868,
+      "wire_offset": 0,
+      "first_visible_wire": 2,
+      "n_clicks_used": 5,
+      "excluded_user_wire_indices": [],
+      "rms_residual_mm": 0.587952988355625,
+      "max_residual_mm": 0.8627153107546032,
+      "used_design_indices": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "per_click_residual_mm": [
+        0.05155439364715253,
+        0.6729020105346691,
+        0.3859912194851245,
+        0.8627153107546032,
+        0.6162156135360399
+      ]
+    }
+  ]
+}

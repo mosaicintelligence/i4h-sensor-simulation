@@ -1,0 +1,2 @@
+case,file,experiment,take,apparatus,phantom,diameter_mm,gain_slider,mode_flag,ar_state,sweep_role,frames,patient_name,patient_id,acq_time,notes,staged_file
+CASE0008,FILE0000,E6,1,n/a,water_only,60,44,0,off,c_pilot_partial,19,test0508-e6^^,T1E6,20020509175009,E6 take1 incomplete; superseded by CASE0000,FILE0000.dcm

@@ -1,0 +1,7 @@
+case,file,experiment,take,apparatus,phantom,diameter_mm,gain_slider,mode_flag,ar_state,sweep_role,frames,patient_name,patient_id,acq_time,notes,staged_file
+CASE0000,FILE0000,E6,2,n/a,water_only,30,50,0,off,c_grid,54,TEST0508E6^^,T1E6-TAKE2,20020509213515,E6 take2 D30 g50 AR-off,FILE0000.dcm
+CASE0000,FILE0001,E6,2,n/a,water_only,30,50,1,on,c_grid,45,TEST0508E6^^,T1E6-TAKE2,20020509213548,E6 take2 D30 g50 AR-on,FILE0001.dcm
+CASE0000,FILE0004,E6,2,n/a,water_only,60,40,0,off,c_grid,40,TEST0508E6^^,T1E6-TAKE2,20020509213652,E6 take2 D60 g40 AR-off,FILE0002.dcm
+CASE0000,FILE0005,E6,2,n/a,water_only,60,40,1,on,c_grid,41,TEST0508E6^^,T1E6-TAKE2,20020509213706,E6 take2 D60 g40 AR-on,FILE0003.dcm
+CASE0000,FILE0002,E6,2,n/a,water_only,60,50,0,off,c_grid,42,TEST0508E6^^,T1E6-TAKE2,20020509213614,E6 take2 D60 g50 AR-off,FILE0004.dcm
+CASE0000,FILE0003,E6,2,n/a,water_only,60,50,1,on,c_grid,39,TEST0508E6^^,T1E6-TAKE2,20020509213631,E6 take2 D60 g50 AR-on,FILE0005.dcm
