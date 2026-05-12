@@ -1,0 +1,5 @@
+sweep,anchor_method,n_total,n_usable,log_multiplier_canonical,log_multiplier_iqr,reject_palette_observed,saturation_palette_observed,dynamic_range_db,reference_slider
+sweep1_orig_60mm,wire,9,5,133.19,26.63,11.0,239.0,33.66,32.0
+sweep2_new_60mm,wire,10,7,110.74,170.44,11.0,239.0,39.65,28.0
+sweep3_new_30mm,wire,12,8,137.38,42.65,11.0,239.0,33.03,22.0
+POOLED(sweep1+sweep3),wire,12,8,137.38,42.65,11.0,239.0,33.03,22.0

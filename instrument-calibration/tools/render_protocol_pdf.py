@@ -1,29 +1,17 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""Render docs/ivus_calibration_protocol.md to a PDF.
+"""Render the IVUS calibration / acceptance protocol markdown docs to PDF.
 
 Pipeline: Markdown -> HTML (python-markdown w/ tables, fenced_code, toc, codehilite,
 pymdownx.tilde, pymdownx.tasklist, pymdownx.magiclink) -> PDF (xhtml2pdf).
 
 Run:
-    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py
+    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py            # render all docs
+    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py tier1      # only the Tier 1 calibration protocol
+    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py tier2      # only the Tier 2 / Tier 3 acceptance protocol
 """
 from __future__ import annotations
 
-import os
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import markdown
@@ -32,8 +20,38 @@ from reportlab.pdfbase.ttfonts import TTFont
 from xhtml2pdf import pisa
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "docs" / "ivus_calibration_protocol.md"
-OUT = ROOT / "docs" / "ivus_calibration_protocol.pdf"
+DOCS_DIR = ROOT / "docs"
+
+
+@dataclass(frozen=True)
+class DocSpec:
+    name: str
+    src: Path
+    out: Path
+    title: str          # HTML allowed
+    subtitle: str       # HTML allowed
+    footer_label: str   # plain text
+
+
+DOCS: dict[str, DocSpec] = {
+    "tier1": DocSpec(
+        name="tier1",
+        src=DOCS_DIR / "ivus_calibration_protocol.md",
+        out=DOCS_DIR / "ivus_calibration_protocol.pdf",
+        title="IVUS Calibration &amp; Characterization Protocol",
+        subtitle="Volcano s5i / Eagle Eye Gold &nbsp;·&nbsp; bench protocol for E1–E9",
+        footer_label="IVUS Calibration & Characterization Protocol — Volcano s5i",
+    ),
+    "tier2": DocSpec(
+        name="tier2",
+        src=DOCS_DIR / "tier2_acceptance_protocol.md",
+        out=DOCS_DIR / "tier2_acceptance_protocol.pdf",
+        title="IVUS Tier 2 / Tier 3 Acceptance Protocol",
+        subtitle="Visions PV .035 &nbsp;·&nbsp; bench protocol for T2-E1 – T2-E4",
+        footer_label="IVUS Tier 2 / Tier 3 Acceptance Protocol — Visions PV .035",
+    ),
+}
+
 
 UNICODE_FONT_CANDIDATES = [
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
@@ -68,6 +86,7 @@ def _register_fonts() -> tuple[str, str]:
         mono_name = "Mono"
         pdfmetrics.registerFont(TTFont(mono_name, mono_path))
     return sans_name, mono_name
+
 
 CSS_TEMPLATE = """
 @page {
@@ -196,25 +215,37 @@ a { color: #0b5394; text-decoration: none; }
 }
 """
 
-FOOTER_HTML = (
-    '<div id="footer_content" class="footer">'
-    'IVUS Calibration & Characterization Protocol — Volcano s5i &nbsp;·&nbsp; '
-    'page <pdf:pagenumber> of <pdf:pagecount>'
-    '</div>'
-)
+
+def _footer_html(footer_label: str) -> str:
+    # html-escape the footer label since it's plain text
+    safe = (
+        footer_label.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    return (
+        '<div id="footer_content" class="footer">'
+        f"{safe} &nbsp;·&nbsp; "
+        "page <pdf:pagenumber> of <pdf:pagecount>"
+        "</div>"
+    )
 
 
-def _link_callback(uri: str, rel: str) -> str:
-    """Resolve `<img src="...">` paths to absolute filesystem paths for xhtml2pdf."""
-    if uri.startswith(("http://", "https://", "data:")):
+def _link_callback_for(spec: DocSpec):
+    """Resolve `<img src="...">` paths relative to the markdown file's directory."""
+    base = spec.src.parent.resolve()
+
+    def _link_callback(uri: str, rel: str) -> str:
+        if uri.startswith(("http://", "https://", "data:")):
+            return uri
+        if uri.startswith("file://"):
+            return uri[7:]
+        candidate = (base / uri).resolve()
+        if candidate.exists():
+            return str(candidate)
         return uri
-    if uri.startswith("file://"):
-        return uri[7:]
-    base = (ROOT / "docs").resolve()
-    candidate = (base / uri).resolve()
-    if candidate.exists():
-        return str(candidate)
-    return uri
+
+    return _link_callback
 
 
 PRE_MD_SUBSTITUTIONS = {
@@ -248,11 +279,10 @@ def _substitute(text: str, table: dict[str, str]) -> str:
     return text
 
 
-def main() -> None:
-    sans, mono = _register_fonts()
-    print(f"  using fonts: sans={sans!r}, mono={mono!r}")
+def _render_one(spec: DocSpec, sans: str, mono: str) -> None:
+    print(f"[{spec.name}] {spec.src.relative_to(ROOT)} -> {spec.out.relative_to(ROOT)}")
     css = CSS_TEMPLATE.replace("{sans}", sans).replace("{mono}", mono)
-    md_text = SRC.read_text(encoding="utf-8")
+    md_text = spec.src.read_text(encoding="utf-8")
     md_text = _substitute(md_text, PRE_MD_SUBSTITUTIONS)
     md = markdown.Markdown(
         extensions=[
@@ -276,21 +306,43 @@ def main() -> None:
     full = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><style>{css}</style></head>
 <body>
-{FOOTER_HTML}
+{_footer_html(spec.footer_label)}
 <div class="title-block">
-  <h1 class="no-break">IVUS Calibration &amp; Characterization Protocol</h1>
-  <div class="subtitle">Volcano s5i / Eagle Eye Gold &nbsp;·&nbsp; bench protocol for E1–E9</div>
+  <h1 class="no-break">{spec.title}</h1>
+  <div class="subtitle">{spec.subtitle}</div>
 </div>
 {body_html}
 </body></html>"""
 
-    out_path = OUT
-    with open(out_path, "wb") as fp:
-        result = pisa.CreatePDF(full, dest=fp, encoding="utf-8",
-                                link_callback=_link_callback)
+    with open(spec.out, "wb") as fp:
+        result = pisa.CreatePDF(
+            full,
+            dest=fp,
+            encoding="utf-8",
+            link_callback=_link_callback_for(spec),
+        )
     if result.err:
-        raise SystemExit(f"xhtml2pdf reported {result.err} error(s)")
-    print(f"  wrote {out_path}  ({out_path.stat().st_size / 1024:.0f} KiB)")
+        raise SystemExit(f"xhtml2pdf reported {result.err} error(s) for {spec.name}")
+    print(f"  wrote {spec.out.relative_to(ROOT)}  ({spec.out.stat().st_size / 1024:.0f} KiB)")
+
+
+def main(argv: list[str] | None = None) -> None:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        targets = list(DOCS.values())
+    else:
+        unknown = [a for a in argv if a not in DOCS]
+        if unknown:
+            raise SystemExit(
+                f"unknown protocol name(s): {unknown}. "
+                f"valid: {sorted(DOCS)}"
+            )
+        targets = [DOCS[a] for a in argv]
+
+    sans, mono = _register_fonts()
+    print(f"  using fonts: sans={sans!r}, mono={mono!r}")
+    for spec in targets:
+        _render_one(spec, sans, mono)
 
 
 if __name__ == "__main__":

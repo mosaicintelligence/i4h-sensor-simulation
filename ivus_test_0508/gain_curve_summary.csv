@@ -1,0 +1,4 @@
+sweep,n_total,n_usable,g_clean_min,g_clean_max,log_mult_canonical,log_mult_iqr,log_mult_min,log_mult_max,log_mult_max_at_g,reject_palette_observed,saturation_palette_observed,dynamic_range_db
+sweep1_orig_60mm,18,9,20,52,124.8,47.3,70.0,179.4,40,12.0,239.0,34.1
+sweep2_new_60mm,18,11,12,52,111.5,119.6,0.0,175.0,40,11.0,239.0,38.4
+sweep3_new_30mm,18,9,12,44,125.1,51.1,70.0,179.4,32,12.0,239.0,33.9

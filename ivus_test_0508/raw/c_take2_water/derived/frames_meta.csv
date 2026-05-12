@@ -1,0 +1,7 @@
+file,catheter,model,depth_mm,rows,cols,pixel_spacing_mm,comment,gain_slider,priv_1002,diameter_mm,ar_capability,ar_state,priv_1008,priv_1009,frame_index,priv_1030,ar_state_anomaly
+FILE0000.dcm,"Visions PV .035, 88901, 597243",s5,15,500,500,0.060000,VL1:,50.0,3,30.0,1,0,5,0,,2,0
+FILE0001.dcm,"Visions PV .035, 88901, 597243",s5,15,500,500,0.060000,VL2:,50.0,3,30.0,1,1,5,0,,2,1
+FILE0002.dcm,"Visions PV .035, 88901, 597243",s5,30,500,500,0.120000,VL5:,40.0,3,60.0,1,0,5,0,,2,0
+FILE0003.dcm,"Visions PV .035, 88901, 597243",s5,30,500,500,0.120000,VL6:,40.0,3,60.0,1,1,5,0,,2,1
+FILE0004.dcm,"Visions PV .035, 88901, 597243",s5,30,500,500,0.120000,VL3:,50.0,3,60.0,1,0,5,0,,2,0
+FILE0005.dcm,"Visions PV .035, 88901, 597243",s5,30,500,500,0.120000,VL4:,50.0,3,60.0,1,1,5,0,,2,1
