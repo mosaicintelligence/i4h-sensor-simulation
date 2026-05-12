@@ -2,11 +2,24 @@
 """E6 — Ring-down extraction from the polar P_035_PointScatter arrays.
 
 Goal: populate the `processing.ring_down.*` block of the simulator
-config from this dataset. The s5's "Acoustic Reference" feature is
-already ON in every frame (private tag 0x00291006 = 1), so what we see
-in these images is the RESIDUAL ring-down after AR subtraction --
-which is exactly what the simulator should reproduce when
-`subtract_reference: true` (the device default).
+config from this dataset.
+
+AR-mode caveat (corrected 2026-05-12 from ivus_test_0508 paired-capture
+analysis):
+
+  Private tag 0x00291006 was originally read as the AR-on/off flag. It
+  is in fact a *capability* flag (=1 on every frame regardless of AR
+  state). The actual AR-on/off state lives in 0x00291007 ("ar_state" in
+  the new extract_metadata.py). 18 of 19 P_035 frames have ar_state = 0
+  (AR-OFF, raw ringdown visible); only FILE0013 has ar_state = 1
+  (AR-ON, ringdown subtracted).
+
+  So the ringdown profile measured here is the RAW ringdown (AR-OFF) for
+  every frame except FILE0013 -- not the AR residual as originally
+  documented. The simulator's matching mode is therefore
+  `subtract_reference: false` against this template; flipping to `true`
+  also requires a separately-derived AR-on residual template (to be
+  measured from CASE0000 in ivus_test_0508 in the upcoming re-fit).
 
 Method
 ------

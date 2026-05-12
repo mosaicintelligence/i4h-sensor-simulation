@@ -26,39 +26,48 @@
 probe:
   type: ivus                              # ivus | curvilinear | linear_array | phased_array
   frequency_mhz: 10.0                     # PV .035 catheter family (Manual p.165). Verify with E1 (FFT peak in ring-down).
-  # E2 results from P_035_PointScatter (per-wire 2D -6 dB FWHM in polar
-  # space, gains {44, 54}, D=60, n=18 wires; full table in
-  # derived/psf/per_wire_psf.csv):
+  # E2 PSF results -- UPDATED 2026-05-12 from ivus_test_0508 wire-anchored
+  # fits (30 clean alignments across three sweeps, two apparatus, three
+  # catheter orientations). Pre-update values were from the P_035 dataset
+  # alone (D=60 only); the new values include Sweep #3 (D=30 mm) which
+  # has finer axial sampling (60 um/pixel vs 120 um/pixel) and wires that
+  # straddle the focal zone, so the PSF fits are well-conditioned in
+  # both axial and lateral.
   #
   # AXIAL PSF (radial direction, sets pulse_duration_cycles)
-  #   Median -6 dB FWHM = 95-154 um across clean wires (peak <= 230).
-  #   The displayed image's radial pixel pitch is 120 um (= 0.12 mm), so
-  #   the axial PSF is at the SAMPLING LIMIT -- the true pulse may be
-  #   narrower. Best lower bound: FWHM ~ lambda = 154 um => 2 cycles.
-  #   N_cycles = 2 * FWHM_axial / lambda, lambda = c/f = 1.54/10 = 0.154 mm.
+  #   Sweep #3 (D=30, 4 frames, 20 clean wires): median axial FWHM =
+  #     149 um (= 1.93 cycles at lambda = 154 um).
+  #   Sweep #1/#2 at D=60 (120 um/pixel) under-sample the axial PSF,
+  #     so their narrower FWHMs (58, 116 um) are aliasing artefacts.
+  #     Sweep #3 is the canonical value.
+  #   See ivus_test_0508/raw/sweep3_new_30mm/derived/psf/.
   #
   # LATERAL PSF (angular direction, sets element_radius / focal_length)
-  #   The s5 uses synthetic-aperture beamforming with dynamic focusing,
-  #   so the device's lateral PSF is much flatter across depth than a
-  #   single-element Gaussian beam. Inner wires (r<10 mm) are also all
-  #   near saturation at the available gain settings, which clips the
-  #   PSF top and biases -6 dB FWHM low. Restricting to clean deep
-  #   wires (r>=10 mm, peak<=230, n=5) gives a Gaussian-beam fit:
-  #     w_0  = 0.32 +/- 0.07 mm   (FWHM at focus = 0.53 mm)
-  #     z_f  = 19.2 +/- 0.8  mm   (focal_length_mm)
-  #     a    = 4.6  mm            (element_radius_mm; mathematical
-  #                                effective SA aperture, NOT the
-  #                                physical 0.09 mm element)
-  #   The deep-wire data alone places the focus somewhere in 12-19 mm
-  #   with FWHM_focus ~ 0.5-1.0 mm. The values below are the strict-
-  #   filter Gaussian-beam fit; they reproduce the observed lateral
-  #   resolution in the simulator's single-element model. They do not
-  #   correspond to the physical element geometry of the catheter
-  #   (0.09 mm pitch, 64 elements on a 1.9 mm OD circumference).
-  pulse_duration_cycles: 2                # E2 — axial FWHM ~ 1 lambda; rounded up from sampling-limited measurement (range 1.1-2.0)
+  #   Gaussian-beam fit on Sweep #3 (11 clean wires at r = 4-14 mm,
+  #   straddling the focal zone):
+  #     w_0  = 0.264 +/- 0.061 mm   (FWHM at focus = 0.44 mm)
+  #     z_f  =  9.55 +/- 0.35  mm   (focal_length_mm)
+  #     a    =  2.79 mm             (element_radius_mm; effective SA
+  #                                  aperture, NOT the physical
+  #                                  0.09 mm element)
+  #   Cross-check: Sweep #1 (orig apparatus, gains 32-40) and Sweep #2
+  #   (new apparatus, both orientations) give a = 2.64 / 2.81 mm --
+  #   element_radius_mm agrees to +/- 0.07 mm across all three sweeps.
+  #   focal_length_mm in Sweep #1/#2 fits 16.7-18.1 mm but is a far-
+  #   field extrapolation (no wires in focal zone); Sweep #3's value
+  #   is the well-constrained one.
+  #
+  # ORIENTATION caveat: Sweep #2's mid-sweep ~77 deg catheter rotation
+  # provides two orientations on the new apparatus, with the median
+  # wire-peak palette dropping ~4-5 dB-equivalent across the rotation
+  # (see processing.log_multiplier comment). Lateral PSF FWHM is
+  # therefore likely biased by ~+/- 0.05 mm depending on which
+  # SA-element-pitch lobe each wire sits in; the multi-wire median
+  # fit averages this out.
+  pulse_duration_cycles: 1.93             # E2 — axial FWHM = 149 um at lambda 154 um (Sweep #3, 20 clean wires)
   num_scanlines: 256                      # SA reconstructs ~256 A-lines from 64 elements (Manual p.135). Verify by counting unique angular samples in unwrap.
-  element_radius_mm: 4.6                  # E2 — effective SA aperture in single-element Gaussian-beam approximation (sigma ~ 1.5 mm fit uncertainty)
-  focal_length_mm: 19.2                   # E2 — depth of minimum lateral FWHM from clean deep wires (sigma = 0.8 mm)
+  element_radius_mm: 2.79                 # E2 — Gaussian-beam fit, Sweep #3 (n=11 clean wires straddling focus); cross-checks Sweep #1 (2.64) and Sweep #2 (2.81) to +/- 0.07 mm
+  focal_length_mm: 9.55                   # E2 — depth of minimum lateral FWHM, Sweep #3 (sigma = 0.35 mm). Sweep #1/#2 extrapolations give 16.7-18.1 mm but have no wires in focal zone.
   elevational_height_mm: 0.0              # 0 = single 2D plane; PV .035 transducer assembly is ~2.5 mm long
   num_elevational_samples: 1
   speed_of_sound_mm_per_us: 1.54          # s5 calibrates assuming 1540 m/s tissue (Manual p.110). DO NOT change to in-water value — device convention.
@@ -149,7 +158,29 @@ processing:
   # (noise.sigma, ring_down.amplitude, scatter intensities) are at the
   # SIMULATOR REFERENCE GAIN = slider 54. To produce a different gain,
   # scale all amplitudes by 10^((g - 54) / 20).
-  log_multiplier: 112.3                   # E7 — palette per log10(envelope_amp). +/- 1.4 internal sigma; ~12% spread vs noise-std method
+  # log_multiplier UPDATED 2026-05-12 from ivus_test_0508 wire-anchored
+  # E7 fit (was 112.3 from the 3-point cross-gain inference on P_035 alone).
+  # Sweep #3 (12 frames, 5-12 wires/frame, gains 8-52, single orientation,
+  # new apparatus, D=30): 137.4 +/- IQR 26.6 palette/dB.
+  # Cross-check Sweep #1 (orig apparatus, D=60, 5 frames, gains 24-44):
+  # 133.2 +/- 26.6 -- 3% agreement.
+  # Sweep #2 quantified the SA orientation lobing as ~4-5 dB-equivalent
+  # signal drop across a 77 deg catheter rotation (between gain 28 at
+  # orient 142 deg and gain 32 at orient 65 deg; the median wire-peak
+  # palette actually drops by 2.7 despite the +4-step gain increase).
+  # See ivus_test_0508/raw/sweep3_new_30mm/derived/gain_curve_wire/
+  # and the cross-sweep comparison at
+  # ivus_test_0508/gain_curve_wire_comparison.png.
+  #
+  # ALL log_multiplier-dependent fields below (gain_db, noise.sigma,
+  # ring_down.amplitude) were calibrated against the OLD log_multiplier=
+  # 112.3 and need re-derivation against 137.4 before sim renders match
+  # the bench again. As a deterministic shortcut, the ringdown.amplitude
+  # below is recomputed analytically from the same bench peak_palette_
+  # excess (187.1) using the new log_multiplier; gain_db and noise.sigma
+  # need a sim-in-the-loop bisection (derive_gain_db.py /
+  # derive_noise_sigma.py) on a CUDA host.
+  log_multiplier: 137.4                   # E7 — palette per log10(envelope_amp). Wire-anchored, +/- IQR 26.6, n=8 usable frames in canonical (Sweep #3)
   log_floor: 1.0                          # E7 — convention; amp=1 -> pixel=0. The device's reject palette (11) is reproduced by setting noise.sigma at the level below.
   median_clip:
     size: 5
@@ -216,7 +247,19 @@ processing:
   # target alternative): median +83.6 dB.
   # To switch sliders, add (slider - 54) dB per the bench gain LUT
   # (gain_lut.json -> gain_db_table).
-  gain_db: 73.92                          # Pass 6 — renderer offset; wire-peak palette median match (bg now anchored by additive noise.sigma; diagnostic render uses noise_sigma=0 to avoid noise-spike contamination of the wire-amp measurement)
+  # STALE 2026-05-12: this value was tuned with log_multiplier=112.3 and
+  # the old PSF (a=4.6, z_f=19.2). It needs re-derivation against the new
+  # log_multiplier=137.4 + new PSF (a=2.79, z_f=9.55) before tier1 bg
+  # tests (F, I) will pass. First-order linearised correction: a
+  # log_multiplier of 137.4/112.3 = 1.224x larger requires the upstream
+  # envelope amplitude to shrink by 10^(46.2/137.4 - 46.2/112.3) = 0.84
+  # to keep the anechoic palette mean at 46.2. Equivalently, gain_db
+  # should drop by ~1.5 dB to ~72.4 dB AS A STARTING POINT for the
+  # bisection. PSF area changed too (focus moved 19->9.55 mm and effective
+  # aperture roughly halved), so the focal-zone amplification factor is
+  # different and the true new gain_db could be ~+/- 6 dB from this
+  # linearised estimate. Re-run derive_gain_db.py on the CUDA host.
+  gain_db: 73.92                          # Pass 6 (STALE) — needs re-derivation against new log_multiplier=137.4 + new PSF
   # Pass 3b — display window in palette units. The post-log palette is
   # already in absolute palette units (because log_compression uses the
   # calibrated log_multiplier / log_floor), so the display window only has
@@ -274,7 +317,15 @@ processing:
     # because the off-focal weight extra-amplifies the wings, so the
     # focal-anchored sigma must be lower to keep the global anechoic mean
     # on the bench target (46.2). See implementation writeup s11.14.
-    sigma: 0.000712                       # Pass 7 — input-RF noise std at z_focal (depth-weighted pre-PSF), fit to E5 anechoic palette mean+median+std
+    # STALE 2026-05-12: this sigma was tuned with log_multiplier=112.3
+    # and the old PSF (focal_length=19.2, a=4.6). Under the new
+    # log_multiplier=137.4 the same input-RF sigma will produce an
+    # anechoic palette mean of ~56 instead of the bench target 46.2
+    # (a +10 palette shift in the bg floor). The PSF change also moves
+    # the focal weighting peak from 19.2 to 9.55 mm so the depth-
+    # weighted RMS will redistribute. Re-run derive_noise_sigma.py on
+    # the CUDA host AFTER gain_db is refit.
+    sigma: 0.000712                       # Pass 7 (STALE) — needs re-derivation against new log_multiplier=137.4 + new PSF
   catheter:                               # Pass 6 v2 — catheter sheath dead-zone mask
     # The PV .035 catheter outer diameter is 1.905 mm (manual p.4), so the
     # catheter wall blocks any acquired signal for r < ~0.95 mm at the
@@ -295,22 +346,70 @@ processing:
     #   palette slope     = 88-180 palette/mm post-peak (gain-dependent; full table in derived/ringdown/ringdown_fit.json)
     #   speckle floor     = 14 / 45 / 119 palette at gain {44,54,64} (gain 44 reject-clipped; cross-gain delta gives effective log_multiplier ~ 60-130)
     #   peak saturates    at gain 64 (palette ceiling 239) — drop from amplitude calibration
-    # The s5 has Acoustic-Reference subtraction ON in all frames (private tag
-    # 0x00291006 = 1) so what we measured is the AR RESIDUAL — exactly what
-    # the simulator should produce when subtract_reference: true.
-    # E7 conversion: at gain 54, D=60:
-    #   peak_palette_excess = 187.1 (above local speckle floor)
-    #   envelope_amp_excess = 10^(187.1/112.3) = 46.4  (at gain 54 ref)
-    # This is the envelope amplitude of the ringdown that the simulator
-    # adds on top of the in-water scatter response. Equivalent dB above
-    # noise: 187.1 * 20 / 112.3 = 33.3 dB above the speckle floor.
-    amplitude: 46.37                      # E7 — envelope amp at gain-54 reference; ~33 dB above noise (peak excess in palette / log_multiplier * 20)
+    # AR-mode policy (correction logged 2026-05-12 from ivus_test_0508):
+    # - Private tag 0x00291006 was originally read as the AR-on/off flag;
+    #   it is actually a *capability* flag (=1 on every frame in BOTH P_035
+    #   AND ivus_test_0508 regardless of AR state). The ACTUAL AR-on/off
+    #   state lives in 0x00291007 (named ar_state in extract_metadata.py).
+    # - Verified empirically on 4 paired captures in ivus_test_0508 where
+    #   ar_state flips 0->1 between consecutive frames at identical
+    #   gain/diameter: the inner ringdown disc collapses from palette
+    #   ~80-140 (raw) to palette ~10-13 (subtracted) while mid- and outer-
+    #   disc means do not change. So:
+    #     ar_state = 0  ->  AR-OFF  (raw ringdown visible)
+    #     ar_state = 1  ->  AR-ON   (ringdown subtracted; clinical default)
+    # - Cross-checking P_035 with this interpretation: 18 of 19 frames are
+    #   AR-OFF and FILE0013 is the only AR-ON frame. The bench template
+    #   stored at ringdown_template_g54_d60.npy below is therefore the
+    #   RAW ringdown (AR-OFF), not the AR residual.
+    #
+    # E7 conversion -- UPDATED 2026-05-12 with the new log_multiplier
+  # (137.4). At gain 54, D=60:
+  #   peak_palette_excess = 187.1 (above local speckle floor; unchanged
+  #                                bench measurement)
+  #   envelope_amp_excess = 10^(187.1/137.4) = 23.0  (at gain 54 ref)
+  # This is the envelope amplitude of the RAW ringdown that the simulator
+  # adds on top of the in-water scatter response. Equivalent dB above
+  # noise: 187.1 * 20 / 137.4 = 27.2 dB above the speckle floor (vs
+  # 33.3 dB under the old log_multiplier).
+    amplitude: 23.0                       # E7 — envelope amp at gain-54 ref recomputed under new log_multiplier=137.4 (was 46.37 under 112.3)
     extent_mm: 3.0                        # E6 — palette-excess drops below 5% of peak by r = 3 mm, all gains
     decay: measured                       # exponential | hanning | measured — physics is exponential-in-RF; we have the measured template, prefer it
-    waveform_path: P_035_PointScatter/derived/ringdown/ringdown_template_g54_d60.npy  # canonical mean A-line at gain 54, D 60 mm, n=5; in PALETTE units, simulator should convert via amp = 10^(palette/log_multiplier) and subtract the local speckle floor (~45 palette at gain 54). Path is resolved relative to the simulator's CWD (workspace root).
+    # AR-OFF (current default) waveform: raw ringdown template from P_035
+    # at slider 54, D=60 mm, n=5 frames.
+    waveform_path: P_035_PointScatter/derived/ringdown/ringdown_template_g54_d60.npy  # canonical RAW (AR-OFF) mean A-line at gain 54, D 60 mm, n=5; in PALETTE units, simulator should convert via amp = 10^(palette/log_multiplier) and subtract the local speckle floor (~45 palette at gain 54). Path is resolved relative to the simulator's CWD (workspace root).
     template_pitch_mm: 0.12               # E6 — template was sampled at the device's display pitch (D=60 mm displayed across 500 px => 0.12 mm/px). Loader resamples to the simulator's RF rate (~0.0193 mm/sample at 40 MHz).
     template_speckle_floor_palette: 45.0  # E5/E6 — anechoic-ROI mean palette at gain 54 (subtract before palette->amp so the "no ringdown" parts of the template map to amp 0 instead of constant background).
-    subtract_reference: true              # device default — confirmed from private tag 0x00291006 = 1 in all frames
+    # AR-ON (clinical default) residual template -- DERIVED 2026-05-12 from
+    # ivus_test_0508/raw/c_take2_water (CASE0000 paired AR-on/AR-off captures
+    # at 3 (gain, diameter) combos: (40, 60), (50, 30), (50, 60)). Canonical
+    # is the median over the gain-50 pairs after scaling each pair onto a
+    # common envelope-amplitude reference. To switch the simulator to AR-ON
+    # rendering: set `subtract_reference: true` AND swap `waveform_path` /
+    # `template_speckle_floor_palette` to the AR-residual values below.
+    #   ar_residual_waveform_path: ivus_test_0508/raw/c_take2_water/derived/ar_template/ar_template_canonical.npy
+    #   ar_residual_template_pitch_mm: 0.12      # same 0.12 mm/pixel grid as raw template
+    #   ar_residual_template_speckle_floor_palette: 38.5  # mean of speckle_floor_on across the two gain-50 pairs
+    #   ar_residual_canonical_gain: 50           # gain slider at which the AR-residual was derived (vs 54 for raw); add (54-50)=4 slider steps when comparing to raw ringdown numbers
+    # AR-residual peak palette = 212.25 at r = 2.16 mm (vs raw peak 232 at
+    # r = 1.8 mm) -- the AR subtraction reduces the inner ringdown disc but
+    # does NOT fully cancel it; this is the residual visible on a clinical
+    # AR-ON image. The simulator currently has no separate AR-residual
+    # waveform field on the schema; when subtract_reference is wired through
+    # to the C++ side, add an `ar_residual_waveform_path` to RingDownConfig
+    # in raysim/config.py and route it through SimParams.
+    # Runtime knob (decided 2026-05-12). Default = false = AR-OFF, which
+    # matches:
+    #   * 18 of 19 frames in P_035 (the corpus all current calibration
+    #     numbers were fit against)
+    #   * all 54 wire-phantom frames in ivus_test_0508 (every E2 sweep)
+    #   * the 3 AR-OFF water-only frames in ivus_test_0508 E6 (mode_flag=0)
+    # Set to true to render an AR-residual image matching the clinical
+    # default (FILE0013 in P_035 + the AR-on frames in CASE0000); when
+    # true the simulator should add the raw template AND subtract a stored
+    # AR-on residual template (to be derived from CASE0000 AR-on/AR-off
+    # pairs in the upcoming re-fit).
+    subtract_reference: false             # AR-OFF default; flip to true once ar_residual_template_path is wired
 
 # Material catalog. The simulator currently ships with these names hard-coded in
 # material.cpp (Materials::Materials()); values are listed here for reference and
