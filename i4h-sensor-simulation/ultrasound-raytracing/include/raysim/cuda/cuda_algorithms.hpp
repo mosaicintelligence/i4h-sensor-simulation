@@ -1,0 +1,401 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+#ifndef CPP_CUDA_ALGORITHMS
+#define CPP_CUDA_ALGORITHMS
+
+#include <array>
+
+#include "cuda_helper.hpp"
+
+namespace raysim {
+
+class CUDAAlgorithms {
+ public:
+  /**
+   * Construct a new CUDAAlgorithms object
+   */
+  CUDAAlgorithms();
+
+  /**
+   * Normalize a buffer in place.
+   *
+   * @param buffer [in] buffer data
+   * @param size [in] buffer data size
+   * @param buffer_min_max [in] min max buffer
+   * @param stream [in] CUDA stream
+   */
+  void normalize(CudaMemory* buffer, uint2 size, CudaMemory* buffer_min_max, cudaStream_t stream);
+
+  /**
+   * Row convolution filter.
+   *
+   * @param source [in] source buffer data
+   * @param size [in] buffer size
+   * @param dst [in] destination buffer data
+   * @param kernel [in] kernel buffer
+   * @param stream [in] CUDA stream
+   */
+  void convolve_rows(CudaMemory* source, uint3 size, CudaMemory* dst, CudaMemory* kernel,
+                     cudaStream_t stream);
+
+  /**
+   * Column convolution filter.
+   *
+   * @param source [in] source buffer data
+   * @param size [in] buffer size
+   * @param dst [in] destination buffer data
+   * @param kernel [in] kernel buffer
+   * @param stream [in] CUDA stream
+   */
+  void convolve_columns(CudaMemory* source, uint3 size, CudaMemory* dst, CudaMemory* kernel,
+                        cudaStream_t stream);
+
+  /**
+   * Depth-dependent column convolution (lateral PSF varies with row/depth).
+   * For each row index.x, uses kernel from kernel_2d[depth_bin], where depth_bin = index.x * depth_bins / size.x.
+   *
+   * @param source [in] source buffer (size.x = depth, size.y = lateral/angle)
+   * @param size [in] buffer size (uint3: depth, lateral, planes)
+   * @param dst [out] destination buffer
+   * @param kernel_2d [in] 2D kernel: depth_bins rows × (2*kernel_radius+1) columns, row-major
+   * @param depth_bins [in] number of depth bins
+   * @param kernel_radius [in] half-width of each 1D kernel
+   * @param stream [in] CUDA stream
+   */
+  void convolve_columns_depth_dependent(CudaMemory* source, uint3 size, CudaMemory* dst,
+                                        CudaMemory* kernel_2d, uint32_t depth_bins,
+                                        uint32_t kernel_radius, cudaStream_t stream);
+
+  /**
+   * Plane convolution filter.
+   *
+   * @param source [in] source buffer data
+   * @param size [in] buffer size
+   * @param dst [in] destination buffer data
+   * @param kernel [in] kernel buffer
+   * @param stream [in] CUDA stream
+   */
+  void convolve_planes(CudaMemory* source, uint3 size, CudaMemory* dst, CudaMemory* kernel,
+                       cudaStream_t stream);
+
+  /**
+   * Compute the arithmetic mean along planes.
+   *
+   * @param source [in] source buffer data
+   * @param size [in] buffer size
+   * @param dst [in] destination buffer data
+   * @param stream [in] CUDA stream
+   */
+  void mean_planes(CudaMemory* source, uint3 size, CudaMemory* dst, cudaStream_t stream);
+
+  /**
+   * Log compression in place (Pass 3b / K2v2 spec mapping):
+   *
+   *   buffer[i] = mutliplicator * log10(max(buffer[i], eps) / max(minimum, eps))
+   *
+   * `minimum` is the calibration anchor (`log_floor`): amp == minimum maps to
+   * pixel 0; amp == 10*minimum maps to pixel == mutliplicator; amp < minimum
+   * maps to a *negative* palette (which `apply_display_window` clamps to the
+   * device's reject palette). The kernel applies a tiny epsilon clamp so
+   * amp == 0 / `minimum == 0` produce a finite, very-negative palette value
+   * instead of NaN/-inf.
+   *
+   * @param buffer [in,out] envelope buffer; replaced by post-log palette in place.
+   * @param size [in] (samples, lines).
+   * @param mutliplicator [in] palette per log10(amplitude) (e.g. 20 = 1 palette/dB).
+   * @param minimum [in] calibration anchor `log_floor` (envelope amplitude
+   *                     mapped to palette 0).
+   * @param stream [in] CUDA stream.
+   */
+  void log_compression(CudaMemory* buffer, uint2 size, float mutliplicator, float minimum,
+                       cudaStream_t stream);
+
+  /**
+   * Multiply each row with values from multiplicator array.
+   *
+   * @param buffer [in]
+   * @param size [in]
+   * @param multiplicator [in]
+   * @param stream [in] CUDA stream
+   */
+  void mul_row(CudaMemory* buffer, uint2 size, CudaMemory* multiplicator, cudaStream_t stream);
+
+  /**
+   * Add a per-depth vector to every row of the buffer in place
+   * (`buffer[y, x] += scale * addend[x]` for x < addend_size, else 0).
+   *
+   * Used by the ring-down injection stage to add a depth-only waveform to every
+   * angular A-line between TGC and envelope detection. `addend_size` may be
+   * smaller than `size.x` (samples past the addend are left untouched).
+   *
+   * @param buffer [in,out] Row-major buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents in samples.
+   * @param addend [in] Per-depth addend, length addend_size <= size.x.
+   * @param addend_size [in] Number of valid samples in `addend`.
+   * @param scale [in] Multiplier applied before adding.
+   * @param stream [in] CUDA stream.
+   */
+  void add_row(CudaMemory* buffer, uint2 size, CudaMemory* addend, uint32_t addend_size,
+               float scale, cudaStream_t stream);
+
+  /**
+   * Multiply every element of `buffer` by a scalar in place.
+   *
+   * Used by the Pass 3 reference-gain stage between envelope detection and
+   * log compression: `amp <- amp * 10^(gain_db / 20)`. When `scale == 1.f`
+   * the call is a no-op (kernel skipped), so default callers pay no cost.
+   *
+   * @param buffer [in,out] Row-major buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents in samples.
+   * @param scale [in] Multiplier applied to every element.
+   * @param stream [in] CUDA stream.
+   */
+  void scale_buffer(CudaMemory* buffer, uint2 size, float scale, cudaStream_t stream);
+
+  /**
+   * Pass 6: additive Gaussian RF noise. Adds N(0, sigma^2) to every element
+   * of `buffer` using a per-element Box-Muller transform driven by a PCG
+   * hash of (linear_offset, seed).
+   *
+   * Intended pipeline placement: between the reference-gain stage
+   * (`scale_buffer` with `10^(gain_db/20)`) and Hilbert envelope detection,
+   * so the calibrated `processing.noise.sigma` (in RF amplitude units at the
+   * reference gain) is applied directly. The Hilbert transform of a
+   * wideband Gaussian RF stream is itself Gaussian with the same variance,
+   * so the post-Hilbert envelope of pure noise becomes Rayleigh(sigma) with
+   * mean = sigma * sqrt(pi/2). After log compression this lifts the per-
+   * pixel envelope distribution off the reject_palette clamp at 11 — see
+   * `ivus_implementation_writeup.md` for the bench-vs-sim histogram
+   * comparison that motivated this stage.
+   *
+   * Disabled (skipped) when `sigma <= 0`. Default-constructed SimParams
+   * leave `noise_sigma == 0.f` so default callers pay no launch cost.
+   *
+   * @param buffer [in,out] Row-major RF buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents in samples.
+   * @param sigma [in] Noise standard deviation in RF amplitude units.
+   *                   No-op when <= 0.
+   * @param seed [in] Per-frame seed mixed into the PCG hash so successive
+   *                  frames draw independent noise realizations
+   *                  (matches the convention from Pass 5b's
+   *                  `scatter_angular_decorrelate` / `frame_seed`).
+   * @param stream [in] CUDA stream.
+   */
+  void add_gaussian_noise(CudaMemory* buffer, uint2 size, float sigma, uint32_t seed,
+                          cudaStream_t stream);
+
+  /**
+   * @brief Depth-weighted variant of `add_gaussian_noise` (Pass 7).
+   *
+   * Adds N(0, (sigma_base * depth_weight[r])^2) per RF sample, with the
+   * weight buffer indexed by the radial-sample index (`size.x` axis). The
+   * weight is built by the simulator from the lateral-PSF geometry as
+   * sqrt(sigma_bins(z) / sigma_bins(z_focal)) so that after the L1-normalised
+   * depth-dependent lateral PSF concentrates the focal-zone noise, the
+   * post-PSF noise standard deviation is uniform across depth (matching the
+   * bench's flat anechoic depth profile).
+   *
+   * No-op when `sigma_base <= 0` or `depth_weight == nullptr`.
+   *
+   * @param buffer [in,out] Row-major RF buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents (size.x = depth samples, size.y = scanlines).
+   * @param sigma_base [in] Noise standard deviation in RF amplitude units at
+   *                        the reference depth (z_focal). The per-bin sigma is
+   *                        `sigma_base * depth_weight[r_idx]`.
+   * @param depth_weight [in] Device buffer of length `size.x` (one float per
+   *                          radial sample).
+   * @param seed [in] Per-frame seed; same convention as `add_gaussian_noise`.
+   * @param stream [in] CUDA stream.
+   */
+  void add_gaussian_noise_depth_weighted(CudaMemory* buffer, uint2 size, float sigma_base,
+                                          CudaMemory* depth_weight, uint32_t seed,
+                                          cudaStream_t stream);
+
+  /**
+   * @brief Zero the inner `dead_zone_samples` radial samples of every scanline.
+   *
+   * Used at the very end of the simulation pipeline (post log-compression,
+   * post display window) to reproduce the bench's catheter-sheath dead zone
+   * (the inner ~1.4 mm reads as solid black on the device because the
+   * catheter wall blocks signal acquisition entirely). Without this mask the
+   * Pass 6 additive-noise stage fills the dead zone with a noise floor,
+   * which differs visibly from the bench's solid-black inner zone.
+   *
+   * `dead_zone_samples` is the number of leading radial samples to zero
+   * (typically `int(catheter_dead_zone_mm / dr_mm)`). 0 disables the mask.
+   *
+   * @param buffer [in,out] Float buffer with shape `(num_elements, buffer_size)`.
+   * @param size [in] Buffer dimensions (size.x = depth samples, size.y = angular bins).
+   * @param dead_zone_samples [in] Number of leading radial samples to zero.
+   * @param stream [in] CUDA stream.
+   */
+  void zero_inner_radial(CudaMemory* buffer, uint2 size, uint32_t dead_zone_samples,
+                         cudaStream_t stream);
+
+  /**
+   * In-place display window after log compression: clamp every element of
+   * `buffer` to `[reject_palette, saturation_palette]` in palette units.
+   *
+   * Pass 3b semantics: the post-log palette produced by `log_compression`
+   * is already in absolute palette units (because `log_compression` uses
+   * the calibrated `log_multiplier` / `log_floor`), so the display window
+   * only has to enforce the device's reject floor and saturation ceiling.
+   * No re-zeroing or shift is applied — palette 0 stays palette 0,
+   * palette 100 stays palette 100, and the device's reject/saturation
+   * values reproduce exactly when the calibrated palette anchors are used.
+   *
+   * Disabled (skipped) when `saturation_palette <= reject_palette`. Default
+   * SimParams leave both at 0.f so default callers pay no cost.
+   *
+   * @param buffer [in,out] Row-major buffer of shape (size.y, size.x) in palette.
+   * @param size [in] Buffer extents.
+   * @param reject_palette [in] Reject floor in palette units (e.g. 11 for PV .035).
+   * @param saturation_palette [in] Saturation ceiling in palette units
+   *                                (e.g. 239 for PV .035).
+   * @param stream [in] CUDA stream.
+   */
+  void apply_display_window(CudaMemory* buffer, uint2 size, float reject_palette,
+                            float saturation_palette, cudaStream_t stream);
+
+  /**
+   * Apply hilbert transform to each row.
+   *
+   * @param buffer  [in]
+   * @param size  [in]
+   * @param stream [in] CUDA stream
+   */
+  void hilbert_row(CudaMemory* buffer, uint2 size, cudaStream_t stream);
+
+  /**
+   * Apply median clip filter (median filter with clamping).
+   *
+   * Applies a vertical median filter and clamps the center pixel to be within
+   * a range of [median-d_min, median+d_max].
+   *
+   * @param source [in] source buffer data
+   * @param size [in] buffer size
+   * @param dst [out] destination buffer data
+   * @param filter_size [in] size of the vertical filter kernel (must be odd and <= 11)
+   * @param d_min [in] minimum distance from median (lower bound)
+   * @param d_max [in] maximum distance from median (upper bound)
+   * @param stream [in] CUDA stream
+   */
+  void median_clip_filter(CudaMemory* source, uint2 size, CudaMemory* dst, uint32_t filter_size,
+                          float d_min, float d_max, cudaStream_t stream);
+
+  /**
+   * Convert curvilinear scan data to Cartesian coordinates for display
+   *
+   * @param scan_lines 2D array where each row is a scan line (shape: n_angles x n_depths)
+   * @param size Size of scan line array
+   * @param sector_angle Field of view in degrees
+   * @param radius Radius of curvature of the transducer in mm
+   * @param far Far depth for samples along scan lines
+   * @param output_size Width and height of output image in pixels
+   * @param stream [in] CUDA stream
+   */
+  std::unique_ptr<CudaMemory> scan_convert_curvilinear(CudaMemory* scan_lines, uint2 size,
+                                                       float sector_angle, float radius, float far,
+                                                       uint2 output_size, cudaStream_t stream);
+
+  /**
+   * Convert linear array scan data to display format
+   * For linear arrays, this is mostly a pass-through with optional aspect ratio correction
+   *
+   * @param scan_lines 2D array where each row is a scan line (shape: n_elements x n_depths)
+   * @param size Size of scan line array
+   * @param width Width of the linear array in mm
+   * @param far Far depth for samples along scan lines
+   * @param output_size Width and height of output image in pixels
+   * @param stream [in] CUDA stream
+   */
+  std::unique_ptr<CudaMemory> scan_convert_linear(CudaMemory* scan_lines, uint2 size, float width,
+                                                  float far, uint2 output_size,
+                                                  cudaStream_t stream);
+
+  /**
+   * Convert phased array sector scan data to Cartesian coordinates for display
+   *
+   * @param scan_lines 2D array where each row is a scan line (shape: n_angles x n_depths)
+   * @param size Size of scan line array
+   * @param sector_angle Field of view in degrees
+   * @param far Far depth for samples along scan lines
+   * @param output_size Width and height of output image in pixels
+   * @param stream [in] CUDA stream
+   */
+  std::unique_ptr<CudaMemory> scan_convert_phased(CudaMemory* scan_lines, uint2 size,
+                                                  float sector_angle, float far, uint2 output_size,
+                                                  cudaStream_t stream);
+
+  /**
+   * Convert IVUS polar scan data to unwrapped display (angle horizontal, depth vertical)
+   *
+   * @param scan_lines 2D array (depth samples x angular rays)
+   * @param size Size of scan line array (buffer_size, num_angular_rays)
+   * @param output_size Width and height of output image in pixels (angle, depth)
+   * @param stream [in] CUDA stream
+   */
+  std::unique_ptr<CudaMemory> scan_convert_ivus(CudaMemory* scan_lines, uint2 size,
+                                                uint2 output_size, cudaStream_t stream);
+
+ private:
+  const CudaLauncher normalize_launcher_;
+  const CudaLauncher convolve_rows_launcher_;
+  const CudaLauncher convolve_columns_launcher_;
+  const CudaLauncher convolve_columns_depth_dependent_launcher_;
+  const CudaLauncher convolve_planes_launcher_;
+  const CudaLauncher mean_planes_launcher_;
+  const CudaLauncher log_compression_launcher_;
+  const CudaLauncher mul_rows_launcher_;
+  const CudaLauncher add_row_launcher_;
+  const CudaLauncher scale_buffer_launcher_;
+  const CudaLauncher add_gaussian_noise_launcher_;
+  const CudaLauncher add_gaussian_noise_depth_weighted_launcher_;
+  const CudaLauncher zero_inner_radial_launcher_;
+  const CudaLauncher display_window_launcher_;
+  const CudaLauncher median_clip_launcher_;
+  const CudaLauncher scan_convert_curvilinear_launcher_;
+  const CudaLauncher scan_convert_linear_launcher_;
+  const CudaLauncher scan_convert_phased_launcher_;
+  const CudaLauncher scan_convert_ivus_launcher_;
+
+  static const size_t NUM_SUB_STREAMS =
+      2;  //< Some algorithms run parallel operations in sub-streams
+
+  UniqueCudaEvent sub_event_;
+  std::array<UniqueCudaStream, NUM_SUB_STREAMS> sub_streams_;
+
+  // Pass 3 (K2): the log-compression kernel no longer needs scratch buffers
+  // for the per-frame quantile sort. The members are kept (zero-sized) to
+  // avoid touching the constructor's member-initialiser list, but no longer
+  // resized at runtime.
+  CudaMemory log_compression_sorted_;
+  CudaMemory temp_log_compression_;
+  std::shared_ptr<CudaArray> scan_convert_curvilinear_array_;
+  std::unique_ptr<CudaTexture> scan_convert_curvilinear_texture_;
+  std::shared_ptr<CudaArray> scan_convert_linear_array_;
+  std::unique_ptr<CudaTexture> scan_convert_linear_texture_;
+  std::shared_ptr<CudaArray> scan_convert_phased_array_;
+  std::unique_ptr<CudaTexture> scan_convert_phased_texture_;
+  std::shared_ptr<CudaArray> scan_convert_ivus_array_;
+  std::unique_ptr<CudaTexture> scan_convert_ivus_texture_;
+};
+
+}  // namespace raysim
+
+#endif /* CPP_CUDA_ALGORITHMS */

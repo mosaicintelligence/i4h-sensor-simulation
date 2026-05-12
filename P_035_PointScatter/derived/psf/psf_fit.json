@@ -1,0 +1,140 @@
+{
+  "gain_sliders": [
+    44.0,
+    54.0
+  ],
+  "diameter_mm": 60.0,
+  "frequency_mhz": 10.0,
+  "sound_speed_mm_per_us": 1.54,
+  "wavelength_mm": 0.154,
+  "n_wires_used": 18,
+  "n_wires_for_lateral_fit": 5,
+  "axial_fwhm_mm_median": 0.088,
+  "axial_fwhm_mm_std": 0.04948736370697743,
+  "axial_fwhm_n_clean_wires": 12,
+  "axial_fwhm_mm_per_wire": [
+    {
+      "wire": 4,
+      "r_mm": 21.12,
+      "axial_fwhm_mm": 0.128,
+      "peak_palette": 228.05
+    },
+    {
+      "wire": 4,
+      "r_mm": 20.88,
+      "axial_fwhm_mm": 0.1599,
+      "peak_palette": 224.08
+    },
+    {
+      "wire": 5,
+      "r_mm": 26.04,
+      "axial_fwhm_mm": 0.1601,
+      "peak_palette": 233.8
+    },
+    {
+      "wire": 5,
+      "r_mm": 26.28,
+      "axial_fwhm_mm": 0.1721,
+      "peak_palette": 233.18
+    },
+    {
+      "wire": 1,
+      "r_mm": 3.84,
+      "axial_fwhm_mm": 0.1708,
+      "peak_palette": 233.46
+    },
+    {
+      "wire": 3,
+      "r_mm": 16.68,
+      "axial_fwhm_mm": 0.0601,
+      "peak_palette": 175.6
+    },
+    {
+      "wire": 4,
+      "r_mm": 22.92,
+      "axial_fwhm_mm": 0.1975,
+      "peak_palette": 37.24
+    },
+    {
+      "wire": 1,
+      "r_mm": 4.68,
+      "axial_fwhm_mm": 0.0952,
+      "peak_palette": 234.94
+    },
+    {
+      "wire": 3,
+      "r_mm": 15.48,
+      "axial_fwhm_mm": 0.0698,
+      "peak_palette": 203.63
+    },
+    {
+      "wire": 4,
+      "r_mm": 21.36,
+      "axial_fwhm_mm": 0.0545,
+      "peak_palette": 194.65
+    },
+    {
+      "wire": 1,
+      "r_mm": 4.92,
+      "axial_fwhm_mm": 0.1914,
+      "peak_palette": 223.46
+    },
+    {
+      "wire": 2,
+      "r_mm": 10.56,
+      "axial_fwhm_mm": 0.092,
+      "peak_palette": 232.46
+    },
+    {
+      "wire": 3,
+      "r_mm": 16.2,
+      "axial_fwhm_mm": 0.0941,
+      "peak_palette": 234.8
+    },
+    {
+      "wire": 4,
+      "r_mm": 21.84,
+      "axial_fwhm_mm": 0.0769,
+      "peak_palette": 177.3
+    },
+    {
+      "wire": 5,
+      "r_mm": 26.28,
+      "axial_fwhm_mm": 0.0876,
+      "peak_palette": 202.23
+    },
+    {
+      "wire": 4,
+      "r_mm": 23.16,
+      "axial_fwhm_mm": 0.075,
+      "peak_palette": 220.04
+    },
+    {
+      "wire": 1,
+      "r_mm": 3.72,
+      "axial_fwhm_mm": 0.1531,
+      "peak_palette": 205.77
+    },
+    {
+      "wire": 4,
+      "r_mm": 22.44,
+      "axial_fwhm_mm": 0.0884,
+      "peak_palette": 223.21
+    }
+  ],
+  "pulse_duration_cycles": 1.1428571428571428,
+  "gaussian_beam_fit": {
+    "w0_mm": 0.3206519232519358,
+    "w0_err_mm": 0.06729964684552221,
+    "z_f_mm": 19.168724287541867,
+    "z_f_err_mm": 0.8035582631877948,
+    "z_R_mm": 2.0974752752477843,
+    "lateral_fwhm_at_focus_mm": 0.5339204745599667
+  },
+  "derived": {
+    "focal_length_mm": 19.168724287541867,
+    "element_radius_mm": 4.603096576411422,
+    "pulse_duration_cycles": 1.1428571428571428
+  },
+  "method": "E2 \u2014 PSF extraction from per-wire echoes in the polar arrays."
+}

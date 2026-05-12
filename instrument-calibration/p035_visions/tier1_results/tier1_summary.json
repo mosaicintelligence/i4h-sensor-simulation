@@ -1,0 +1,628 @@
+[
+  {
+    "name": "A. Configuration-sheet round-trip",
+    "status": "pass",
+    "summary": "Every probe / processing / TGC / ring-down parameter in the YAML appears in SimParams with the identical value (no rounding).",
+    "detail": {
+      "probe.frequency_mhz": {
+        "yaml": 10.0,
+        "sim_params": 10.0,
+        "abs_diff": 0.0,
+        "tol": 0.0001,
+        "ok": true
+      },
+      "probe.pulse_duration_cycles": {
+        "yaml": 2.0,
+        "sim_params": 2.0,
+        "abs_diff": 0.0,
+        "tol": 2e-05,
+        "ok": true
+      },
+      "probe.element_radius_mm": {
+        "yaml": 4.6,
+        "sim_params": 4.6,
+        "abs_diff": 0.0,
+        "tol": 4.6e-05,
+        "ok": true
+      },
+      "probe.focal_length_mm": {
+        "yaml": 19.2,
+        "sim_params": 19.2,
+        "abs_diff": 0.0,
+        "tol": 0.000192,
+        "ok": true
+      },
+      "probe.speed_of_sound_mm_per_us": {
+        "yaml": 1.54,
+        "sim_params": 1.54,
+        "abs_diff": 0.0,
+        "tol": 1.54e-05,
+        "ok": true
+      },
+      "processing.log_multiplier": {
+        "yaml": 112.3,
+        "sim_params": 112.30000305175781,
+        "abs_diff": 3.051757815342171e-06,
+        "tol": 0.0011230000305175781,
+        "ok": true
+      },
+      "processing.log_floor": {
+        "yaml": 1.0,
+        "sim_params": 1.0,
+        "abs_diff": 0.0,
+        "tol": 1e-05,
+        "ok": true
+      },
+      "processing.reject_palette": {
+        "yaml": 11.0,
+        "sim_params": 11.0,
+        "abs_diff": 0.0,
+        "tol": 0.00011,
+        "ok": true
+      },
+      "processing.saturation_palette": {
+        "yaml": 239.0,
+        "sim_params": 239.0,
+        "abs_diff": 0.0,
+        "tol": 0.00239,
+        "ok": true
+      },
+      "processing.gain_db": {
+        "yaml": 73.92,
+        "sim_params": 73.91999816894531,
+        "abs_diff": 1.8310546892053026e-06,
+        "tol": 0.0007392000000000001,
+        "ok": true
+      },
+      "ring_down.enabled": {
+        "yaml": 1.0,
+        "sim_params": 1.0,
+        "abs_diff": 0.0,
+        "tol": 1e-05,
+        "ok": true
+      },
+      "ring_down.amplitude": {
+        "yaml": 46.37,
+        "sim_params": 46.369998931884766,
+        "abs_diff": 1.0681152318170462e-06,
+        "tol": 0.0004637,
+        "ok": true
+      },
+      "ring_down.extent_mm": {
+        "yaml": 3.0,
+        "sim_params": 3.0,
+        "abs_diff": 0.0,
+        "tol": 3.0000000000000004e-05,
+        "ok": true
+      },
+      "tgc_control_points": {
+        "yaml": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.7,
+            0.0
+          ],
+          [
+            1.5,
+            0.0
+          ],
+          [
+            2.2,
+            0.98
+          ],
+          [
+            2.9,
+            2.05
+          ]
+        ],
+        "sim_params": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.699999988079071,
+            0.0
+          ],
+          [
+            1.5,
+            0.0
+          ],
+          [
+            2.200000047683716,
+            0.9800000190734863
+          ],
+          [
+            2.9000000953674316,
+            2.049999952316284
+          ]
+        ],
+        "ok": true
+      }
+    }
+  },
+  {
+    "name": "B. Configuration self-consistency",
+    "status": "pass",
+    "summary": "All 15 round-tripped fields match across IvusSimConfig.to_dict \u2194 from_dict.",
+    "detail": {
+      "fields_checked": [
+        "probe.frequency_mhz",
+        "probe.pulse_duration_cycles",
+        "probe.element_radius_mm",
+        "probe.focal_length_mm",
+        "probe.speed_of_sound_mm_per_us",
+        "processing.tgc_control_points",
+        "processing.log_multiplier",
+        "processing.log_floor",
+        "processing.reject_palette",
+        "processing.saturation_palette",
+        "processing.gain_db",
+        "ring_down.enabled",
+        "ring_down.amplitude",
+        "ring_down.extent_mm",
+        "ring_down.decay"
+      ],
+      "issues": []
+    }
+  },
+  {
+    "name": "C. Axial PSF (per radius)",
+    "status": "fail",
+    "summary": "Sim axial FWHM medians: r=5: not detected, r=10: not detected, r=15: not detected, r=20: not detected, r=25: not detected. Bench median FWHM = 88 \u00b5m. Sim FWHM is essentially subpixel for every wire \u2014 the simulator's axial PSF is much narrower than the bench's pulse-length-broadened echoes.",
+    "detail": {
+      "per_wire_summary": [
+        {
+          "wire_idx": 1,
+          "r_mm": 5.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2484.6064453125,
+          "detected": true,
+          "saturated": true
+        },
+        {
+          "wire_idx": 2,
+          "r_mm": 10.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2517.893310546875,
+          "detected": true,
+          "saturated": true
+        },
+        {
+          "wire_idx": 3,
+          "r_mm": 15.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2339.56298828125,
+          "detected": true,
+          "saturated": true
+        },
+        {
+          "wire_idx": 4,
+          "r_mm": 20.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2354.35009765625,
+          "detected": true,
+          "saturated": true
+        },
+        {
+          "wire_idx": 5,
+          "r_mm": 25.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2504.25,
+          "detected": true,
+          "saturated": true
+        }
+      ],
+      "bench_axial_median_mm": 0.088,
+      "bench_axial_per_wire": [
+        {
+          "wire": 4,
+          "r_mm": 21.12,
+          "axial_fwhm_mm": 0.128,
+          "peak_palette": 228.05
+        },
+        {
+          "wire": 4,
+          "r_mm": 20.88,
+          "axial_fwhm_mm": 0.1599,
+          "peak_palette": 224.08
+        },
+        {
+          "wire": 5,
+          "r_mm": 26.04,
+          "axial_fwhm_mm": 0.1601,
+          "peak_palette": 233.8
+        },
+        {
+          "wire": 5,
+          "r_mm": 26.28,
+          "axial_fwhm_mm": 0.1721,
+          "peak_palette": 233.18
+        },
+        {
+          "wire": 1,
+          "r_mm": 3.84,
+          "axial_fwhm_mm": 0.1708,
+          "peak_palette": 233.46
+        },
+        {
+          "wire": 3,
+          "r_mm": 16.68,
+          "axial_fwhm_mm": 0.0601,
+          "peak_palette": 175.6
+        },
+        {
+          "wire": 4,
+          "r_mm": 22.92,
+          "axial_fwhm_mm": 0.1975,
+          "peak_palette": 37.24
+        },
+        {
+          "wire": 1,
+          "r_mm": 4.68,
+          "axial_fwhm_mm": 0.0952,
+          "peak_palette": 234.94
+        },
+        {
+          "wire": 3,
+          "r_mm": 15.48,
+          "axial_fwhm_mm": 0.0698,
+          "peak_palette": 203.63
+        },
+        {
+          "wire": 4,
+          "r_mm": 21.36,
+          "axial_fwhm_mm": 0.0545,
+          "peak_palette": 194.65
+        },
+        {
+          "wire": 1,
+          "r_mm": 4.92,
+          "axial_fwhm_mm": 0.1914,
+          "peak_palette": 223.46
+        },
+        {
+          "wire": 2,
+          "r_mm": 10.56,
+          "axial_fwhm_mm": 0.092,
+          "peak_palette": 232.46
+        },
+        {
+          "wire": 3,
+          "r_mm": 16.2,
+          "axial_fwhm_mm": 0.0941,
+          "peak_palette": 234.8
+        },
+        {
+          "wire": 4,
+          "r_mm": 21.84,
+          "axial_fwhm_mm": 0.0769,
+          "peak_palette": 177.3
+        },
+        {
+          "wire": 5,
+          "r_mm": 26.28,
+          "axial_fwhm_mm": 0.0876,
+          "peak_palette": 202.23
+        },
+        {
+          "wire": 4,
+          "r_mm": 23.16,
+          "axial_fwhm_mm": 0.075,
+          "peak_palette": 220.04
+        },
+        {
+          "wire": 1,
+          "r_mm": 3.72,
+          "axial_fwhm_mm": 0.1531,
+          "peak_palette": 205.77
+        },
+        {
+          "wire": 4,
+          "r_mm": 22.44,
+          "axial_fwhm_mm": 0.0884,
+          "peak_palette": 223.21
+        }
+      ],
+      "tolerance_mm": 0.029296875
+    }
+  },
+  {
+    "name": "D. Lateral PSF (per radius)",
+    "status": "fail",
+    "summary": "Sim lateral arc-FWHM medians: r=5: not detected, r=10: not detected, r=15: not detected, r=20: not detected, r=25: not detected. Bench focus FWHM = 0.53 mm at z_f = 19.2 mm. 0/0 wires within \u00b120%; no focus determined. Focal trend mismatch: sim focus outside 12\u201320 mm window.",
+    "detail": {
+      "per_wire_summary": [
+        {
+          "wire_idx": 1,
+          "r_mm": 5.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2484.6064453125,
+          "detected": true,
+          "saturated": true
+        },
+        {
+          "wire_idx": 2,
+          "r_mm": 10.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2517.893310546875,
+          "detected": true,
+          "saturated": true
+        },
+        {
+          "wire_idx": 3,
+          "r_mm": 15.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2339.56298828125,
+          "detected": true,
+          "saturated": true
+        },
+        {
+          "wire_idx": 4,
+          "r_mm": 20.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2354.35009765625,
+          "detected": true,
+          "saturated": true
+        },
+        {
+          "wire_idx": 5,
+          "r_mm": 25.0,
+          "n_frames": 8,
+          "n_unsat": 0,
+          "axial_fwhm_mm_median": null,
+          "lateral_fwhm_arc_mm_median": null,
+          "peak_palette_max": 2504.25,
+          "detected": true,
+          "saturated": true
+        }
+      ],
+      "bench_lateral_fwhm_at_focus_mm": 0.5339204745599667
+    }
+  },
+  {
+    "name": "E. Ring-down (mean A-line)",
+    "status": "fail",
+    "summary": "sim peak palette = 189.9 (bench 231.7, \u0394=-41.8); RMS over r \u2208 [0, 3] mm = 37.7 palette (\u22645 required); sim extent = 3.03 mm (bench 3.84 mm).",
+    "detail": {
+      "bench": {
+        "peak_palette": 231.70911865234376,
+        "extent_mm": 3.84,
+        "speckle_floor_palette": 44.61449775695801,
+        "peak_palette_excess": 187.09462089538576
+      },
+      "sim": {
+        "peak_palette": 189.8743896484375,
+        "peak_depth_mm": 1.8896484375,
+        "extent_mm": 3.0322265625,
+        "speckle_floor_palette_proxy": 48.66733169555664,
+        "peak_palette_excess": 141.20706176757812,
+        "rms_palette_inner3mm": 37.69256937324227,
+        "rms_palette_inner3mm_shape_only": 39.93982446824868
+      },
+      "pass_criteria": {
+        "peak_within_10pct": {
+          "sim": 189.8743896484375,
+          "bench": 231.70911865234376,
+          "rel_err": 0.18054847926237666,
+          "ok": false
+        },
+        "rms_le_5_palette": {
+          "value": 37.69256937324227,
+          "ok": false
+        },
+        "rms_shape_le_5_palette": {
+          "value": 39.93982446824868,
+          "ok": false,
+          "note": "shape-only RMS after subtracting each curve's post-ringdown baseline; cf. gain-alignment diagnostic"
+        },
+        "extent_within_0_3_mm": {
+          "sim": 3.0322265625,
+          "bench": 3.84,
+          "delta_mm": 0.8077734374999999,
+          "ok": false
+        }
+      }
+    }
+  },
+  {
+    "name": "F. Noise floor \u03c3",
+    "status": "pass",
+    "summary": "sim std palette = 22.29 vs bench 20.27 (rel.err 10.0% / 20% tol); sim mean = 46.43 vs bench 46.25; sim median = 46.91 vs bench 44.29. Anechoic water render; noise.sigma = 0.0007.",
+    "detail": {
+      "bench_gain_54": {
+        "n": 396772,
+        "mean": 46.24573254734288,
+        "std": 20.269958717835966,
+        "skew": 1.5558974361327211,
+        "kurt": 7.1219639958680325,
+        "p05": 18.19167537689209,
+        "p50": 44.290117263793945,
+        "p95": 79.16501121520989,
+        "n_frames": 9,
+        "gauss_sigma": 20.269958717835966,
+        "gauss_nll_per_sample": 4.428078457052594,
+        "rayleigh_sigma_shifted": 29.36515238224403,
+        "rayleigh_nll_per_sample": 4.35169279931483,
+        "preferred_distribution": "rayleigh"
+      },
+      "sim": {
+        "mean_palette": 46.429168701171875,
+        "std_palette": 22.2926082611084,
+        "p50_palette": 46.91374206542969,
+        "p05_palette": 11.0,
+        "p95_palette": 82.54989624023438,
+        "n_frames": 8,
+        "n_pixels": 1818624,
+        "world": "water (no scatter, anechoic)",
+        "noise_sigma_yaml": 0.000712
+      },
+      "pass_criteria": {
+        "sigma_within_20pct": {
+          "sim_std": 22.2926082611084,
+          "bench_std": 20.269958717835966,
+          "rel_err": 0.09978557783113098,
+          "ok": true
+        },
+        "mean_palette_diagnostic": {
+          "sim_mean": 46.429168701171875,
+          "bench_mean": 46.24573254734288,
+          "rel_err": 0.003966553100682415,
+          "note": "informational; calibration anchors mean directly so this should be \u226a 5%"
+        }
+      }
+    }
+  },
+  {
+    "name": "G. Log-compression mapping",
+    "status": "pass",
+    "summary": "Synthetic envelope sweep: |\u0394palette| \u2264 0.0 \u2264 3 across 6 amplitudes spanning ~3.5 decades. K2v2 kernel matches the spec mapping exactly (log_floor = 1).",
+    "detail": {
+      "log_multiplier": 112.3,
+      "log_floor": 1.0,
+      "kernel_formula": "log_multiplier * log10(max(amp, eps) / max(log_floor, eps))",
+      "spec_formula": "log_multiplier * log10(amp / log_floor)",
+      "rows": [
+        {
+          "envelope_amp": 1.0,
+          "spec_palette": 0.0,
+          "kernel_palette": 0.0,
+          "delta_palette": 0.0,
+          "delta_dB": 0.0
+        },
+        {
+          "envelope_amp": 1.0,
+          "spec_palette": 0.0,
+          "kernel_palette": 0.0,
+          "delta_palette": 0.0,
+          "delta_dB": 0.0
+        },
+        {
+          "envelope_amp": 10.0,
+          "spec_palette": 112.3,
+          "kernel_palette": 112.3,
+          "delta_palette": 0.0,
+          "delta_dB": 0.0
+        },
+        {
+          "envelope_amp": 100.0,
+          "spec_palette": 224.6,
+          "kernel_palette": 224.6,
+          "delta_palette": 0.0,
+          "delta_dB": 0.0
+        },
+        {
+          "envelope_amp": 1000.0,
+          "spec_palette": 336.9,
+          "kernel_palette": 336.9,
+          "delta_palette": 0.0,
+          "delta_dB": 0.0
+        },
+        {
+          "envelope_amp": 5000.0,
+          "spec_palette": 415.3943314869349,
+          "kernel_palette": 415.3943314869349,
+          "delta_palette": 0.0,
+          "delta_dB": 0.0
+        }
+      ],
+      "max_abs_palette_error": 0.0,
+      "tolerance_palette": 3.0
+    }
+  },
+  {
+    "name": "H. TGC schedule",
+    "status": "pass",
+    "summary": "YAML and sim apply identical piecewise-linear TGC over r\u2208[0.01, 29.99] mm; RMS = 0.0000 dB (\u2264 0.1 dB tolerance).",
+    "detail": {
+      "n_samples": 1024,
+      "depth_range_mm": [
+        0.0146484375,
+        29.9853515625
+      ],
+      "rms_dB": 0.0,
+      "max_abs_dB": 0.0,
+      "tolerance_dB": 0.1
+    }
+  },
+  {
+    "name": "Gain alignment (calibration-sheet diagnostic)",
+    "status": "pass",
+    "summary": "Sim water-bg palette (mean across 8 clean frames, r \u2208 [5.0, 25.0] mm) = 48.1 vs bench 46.2 (\u0394 = +1.9 palette \u2248 +0.34 dB). Within \u00b110 palette tolerance \u2014 Pass 3b gain calibration on target.",
+    "detail": {
+      "sim_bg_mean_palette": 48.11888313293457,
+      "sim_bg_std_palette": 0.1445327473072353,
+      "bench_bg_palette_at_slider_54": 46.2,
+      "delta_palette": 1.9188831329345675,
+      "delta_dB_estimate": 0.34174232109253205,
+      "tolerance_palette": 10.0,
+      "clean_band_mm": [
+        5.0,
+        25.0
+      ],
+      "n_frames": 8,
+      "interpretation": "The calibrated bg matches the bench within tolerance, so the simulator's reject window will reproduce the device's reject palette directly. Wire-vs-bg contrast remains over-represented (simulator > bench by ~74 dB on the OptiX renderer), so the calibrated wires saturate at saturation_palette = 239 \u2014 consistent with how the bench renders saturated inner wires."
+    }
+  },
+  {
+    "name": "I. Depth uniformity (anechoic ROI)",
+    "status": "pass",
+    "summary": "Sim vs bench mean palette over r \u2208 [4.0, 29.0] mm: RMS = 3.5 palette (\u2264 10 required), max |\u0394| = 8.6, bias = +0.2; sim peak-to-trough = 6.5 vs bench 14.1 (ratio 0.46, \u2264 1.5 required). Sim depth uniformity matches bench within tolerance.",
+    "detail": {
+      "rms_palette": 3.5266780589158144,
+      "max_abs_palette": 8.559218747281164,
+      "bias_palette": 0.17808297609204296,
+      "sim_peak_to_trough_palette": 6.458102862928165,
+      "bench_peak_to_trough_palette": 14.055746980011463,
+      "sim_span_over_bench_span": 0.45946351141011343,
+      "rms_tolerance_palette": 10.0,
+      "span_ratio_tolerance": 1.5,
+      "rms_pass": true,
+      "span_ratio_pass": true,
+      "evaluation_band_mm": [
+        4.0,
+        29.0
+      ],
+      "ringdown_excluded_mm": 3.0,
+      "n_sim_frames": 8,
+      "n_bench_frames": 5,
+      "bench_mask": {
+        "exclude_angle_deg": 12.0,
+        "peak_clip_percentile": 70.0,
+        "gain_slider": 54.0,
+        "diameter_mm": 60.0
+      },
+      "figure": "figures/depth_uniformity.png"
+    }
+  }
+]

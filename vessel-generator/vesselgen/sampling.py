@@ -1,0 +1,608 @@
+"""Pose sampling and ground-truth extraction.
+
+This module is the public surface the DL training pipeline calls every
+frame. The two operations are:
+
+1. :func:`sample_pose` -- draw a random catheter pose inside the vessel
+   lumen. The sampler picks a branch (weighted by its arclength), an
+   arclength along that branch, a 2D position inside the lumen contour at
+   that arclength (rejection-sampled), and a small probe-axis tilt
+   relative to the local vessel tangent. The result is a :class:`PoseSample`
+   with a 3D position and an Euler-XYZ rotation (degrees) suitable for
+   passing directly to ``rs.Pose(position=..., rotation=...)``.
+
+2. :func:`ground_truth_at` -- compute per-frame ground truth for a given
+   pose. The imaging plane (perpendicular to the probe long axis, through
+   the probe origin) is intersected with the vessel's lumen and outer
+   meshes; the intersection polygons are converted to polar coordinates
+   centred on the probe to produce per-angle distance-to-wall arrays.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Optional
+
+import numpy as np
+
+from vesselgen.vessel import BranchHandle, Vessel
+
+
+# ---------------------------------------------------------------------------
+# Data classes
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PoseSample:
+    """A sampled catheter pose, ready for the simulator."""
+
+    position: np.ndarray  # (3,) world-space mm
+    rotation_euler_deg: np.ndarray  # (3,) Euler XYZ degrees, suitable for rs.Pose
+    rotation_matrix: np.ndarray  # (3, 3), probe-local-frame -> world
+    probe_axis_world: np.ndarray  # (3,), unit vector of the probe long axis in world
+
+    branch_id: int
+    branch_name: str
+    arclength_mm: float
+    """Arclength along the branch's centerline at which this pose was sampled."""
+
+    centerline_offset_mm: float
+    """Distance from the sampled position to the branch's centerline (eccentricity)."""
+
+    tilt_deg: float
+    """Angle between the probe long axis and the local vessel tangent."""
+
+    seed_used: Optional[int] = None
+
+
+@dataclass
+class GroundTruth:
+    """Per-frame ground truth at one pose.
+
+    Attributes:
+        n_angles:            number of polar angle bins.
+        thetas_rad:          (n_angles,) angle bin centres in radians.
+        distance_to_lumen_wall_mm:
+            (n_angles,) distance from probe to the nearest lumen-surface
+            crossing along the ray at angle theta. ``np.nan`` for any
+            ray that misses the lumen surface within the imaging window
+            (e.g. probe-against-wall geometry).
+        distance_to_outer_wall_mm:
+            (n_angles,) same for the outer (adventitia) surface.
+        wall_thickness_mm:
+            (n_angles,) outer minus lumen.
+        lumen_contour_polygons:
+            list of (M, 2) closed polygons in the imaging plane (xz-like
+            local coordinates, x along probe binormal, y along normal).
+            Multiple polygons mean the imaging plane crosses an ostium and
+            the model sees more than one lumen pocket.
+        outer_contour_polygons:
+            same, for the outer mesh.
+        lumen_csa_mm2:
+            sum of areas of the lumen polygons in the plane.
+        outer_csa_mm2:
+            sum of areas of the outer polygons in the plane.
+        branch_ids_visible:
+            branch IDs whose centerline is closer to the probe than its
+            mean radius (heuristic for "this branch is visible in this
+            frame"). Always includes the sampled branch.
+        equivalent_lumen_diameter_mm:
+            2 * sqrt(lumen_csa / pi). Convenient scalar for diameter MAE.
+    """
+
+    n_angles: int
+    thetas_rad: np.ndarray
+    distance_to_lumen_wall_mm: np.ndarray
+    distance_to_outer_wall_mm: np.ndarray
+    wall_thickness_mm: np.ndarray
+    lumen_contour_polygons: list[np.ndarray]
+    outer_contour_polygons: list[np.ndarray]
+    lumen_csa_mm2: float
+    outer_csa_mm2: float
+    branch_ids_visible: list[int] = field(default_factory=list)
+    equivalent_lumen_diameter_mm: float = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _lumen_contour_polygon(branch: BranchHandle, station_idx: int) -> np.ndarray:
+    """Closed (M+1, 2) lumen contour polygon in the cross-section local frame."""
+    contour = branch.lumen_field.contour(station_idx)
+    return np.vstack([contour, contour[:1]])
+
+
+def _point_in_polygon(point: np.ndarray, polygon: np.ndarray) -> bool:
+    """Standard even-odd point-in-polygon test for a convex-ish closed polygon.
+
+    Polygon is (K, 2) and may be open (last vertex != first). Closed
+    polygons also work.
+    """
+    x, y = float(point[0]), float(point[1])
+    inside = False
+    K = len(polygon)
+    j = K - 1
+    for i in range(K):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / ((yj - yi) + 1e-30) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _euler_xyz_from_matrix(R: np.ndarray) -> np.ndarray:
+    """Recover Euler XYZ angles (degrees) from a rotation matrix.
+
+    Convention matches scipy's intrinsic 'XYZ' Euler decomposition: R = Rx(a) Ry(b) Rz(c).
+    """
+    sy = -R[2, 0]
+    cy = float(np.sqrt(max(0.0, 1.0 - sy * sy)))
+    if cy > 1e-6:
+        x = float(np.arctan2(R[2, 1], R[2, 2]))
+        y = float(np.arctan2(sy, cy))
+        z = float(np.arctan2(R[1, 0], R[0, 0]))
+    else:
+        x = float(np.arctan2(-R[1, 2], R[1, 1]))
+        y = float(np.arctan2(sy, cy))
+        z = 0.0
+    return np.degrees(np.array([x, y, z]))
+
+
+def _build_probe_rotation(probe_axis_world: np.ndarray) -> np.ndarray:
+    """3x3 rotation matrix that maps probe-local axes to world axes.
+
+    Probe-local convention (matches the simulator's IVUSProbe at zero
+    rotation): probe long axis is the local +Y axis, imaging plane is the
+    local xz plane.
+    """
+    target_y = probe_axis_world / (np.linalg.norm(probe_axis_world) + 1e-12)
+    candidate = np.array([1.0, 0.0, 0.0])
+    if abs(np.dot(target_y, candidate)) > 0.95:
+        candidate = np.array([0.0, 0.0, 1.0])
+    target_x = candidate - np.dot(candidate, target_y) * target_y
+    target_x /= np.linalg.norm(target_x) + 1e-12
+    target_z = np.cross(target_x, target_y)
+    R = np.column_stack([target_x, target_y, target_z])
+    return R
+
+
+def _ray_polygon_intersection_distance(
+    polygons: list[np.ndarray], theta_rad: float, max_distance_mm: float
+) -> float:
+    """Distance from origin (0,0) to the nearest intersection of a ray at
+    angle ``theta_rad`` with any of the closed polygons.
+
+    The ray is parameterised as ``P = t * D`` with ``t >= 0`` and
+    ``D = (cos theta, sin theta)``. Each polygon segment ``A + s (B - A)``
+    is intersected with the ray by solving the 2x2 system
+
+        [ Dx   -(Bx - Ax) ] [ t ]   [ Ax ]
+        [ Dy   -(By - Ay) ] [ s ] = [ Ay ]
+
+    keeping the smallest ``t > 0`` with ``0 <= s <= 1``. Returns NaN if no
+    intersection is found within ``max_distance_mm``.
+    """
+    dx = float(np.cos(theta_rad))
+    dy = float(np.sin(theta_rad))
+    best = np.inf
+    for poly in polygons:
+        K = len(poly) - 1 if np.allclose(poly[0], poly[-1]) else len(poly)
+        for i in range(K):
+            ax, ay = float(poly[i, 0]), float(poly[i, 1])
+            bx, by = float(poly[(i + 1) % K, 0]), float(poly[(i + 1) % K, 1])
+            ex, ey = bx - ax, by - ay
+            det = dx * (-ey) - dy * (-ex)
+            if abs(det) < 1e-12:
+                continue
+            t = (ax * (-ey) - ay * (-ex)) / det
+            s = (dx * ay - dy * ax) / det
+            if t < 0.0 or s < 0.0 or s > 1.0:
+                continue
+            if t < best:
+                best = t
+    if best <= max_distance_mm:
+        return float(best)
+    return float("nan")
+
+
+# ---------------------------------------------------------------------------
+# Pose sampling
+# ---------------------------------------------------------------------------
+
+
+def _pick_branch(vessel: Vessel, rng: np.random.Generator) -> BranchHandle:
+    weights = np.asarray([b.centerline.length_mm for b in vessel.branches], dtype=float)
+    weights /= weights.sum()
+    idx = int(rng.choice(len(vessel.branches), p=weights))
+    return vessel.branches[idx]
+
+
+def _interpolate_lumen_contour(
+    branch: BranchHandle, arclength_mm: float
+) -> np.ndarray:
+    """Linearly interpolate the lumen contour at a non-grid arclength.
+
+    Returns a (M, 2) contour in the local cross-section plane (x along
+    branch.normal, y along branch.binormal).
+    """
+    s_grid = np.linspace(0.0, branch.centerline.length_mm, branch.lumen_field.n_stations)
+    s = float(np.clip(arclength_mm, s_grid[0], s_grid[-1]))
+    if s <= s_grid[0]:
+        return branch.lumen_field.contour(0)
+    if s >= s_grid[-1]:
+        return branch.lumen_field.contour(-1)
+    j = int(np.searchsorted(s_grid, s) - 1)
+    j = max(0, min(branch.lumen_field.n_stations - 2, j))
+    t = (s - s_grid[j]) / (s_grid[j + 1] - s_grid[j])
+    a = branch.lumen_field.contour(j)
+    b = branch.lumen_field.contour(j + 1)
+    return (1.0 - t) * a + t * b
+
+
+def sample_pose(
+    vessel: Vessel,
+    rng: np.random.Generator,
+    max_tilt_deg: float = 15.0,
+    edge_margin_mm: float = 0.2,
+    max_attempts: int = 64,
+) -> PoseSample:
+    """Sample a random catheter pose inside the vessel lumen.
+
+    The sampler picks a branch (weighted by arclength), an arclength along
+    the branch, a 2D position inside the lumen contour at that arclength
+    (rejection-sampled inside the contour, with at least ``edge_margin_mm``
+    clearance from the wall), then samples a small probe-axis tilt.
+
+    Parameters
+    ----------
+    max_tilt_deg:
+        Maximum angle between the probe long axis and the local vessel
+        tangent. Tilt is sampled uniformly in [0, max_tilt_deg] with a
+        random azimuth around the tangent.
+    edge_margin_mm:
+        Minimum clearance from the lumen wall, in the cross-section plane.
+        Set to 0 to allow probe-against-wall poses (useful for training the
+        contact-signal head).
+    max_attempts:
+        Maximum rejection-sampling attempts before giving up; raises
+        :class:`RuntimeError` if exceeded.
+    """
+    branch = _pick_branch(vessel, rng)
+    s = float(rng.uniform(0.0, branch.centerline.length_mm))
+    contour_local = _interpolate_lumen_contour(branch, s)
+
+    bbox_min = contour_local.min(axis=0)
+    bbox_max = contour_local.max(axis=0)
+    margin = max(edge_margin_mm, 0.0)
+
+    chosen_local = None
+    eccentricity = 0.0
+    for _ in range(max_attempts):
+        candidate = rng.uniform(bbox_min, bbox_max)
+        if not _point_in_polygon(candidate, contour_local):
+            continue
+        if margin > 0.0:
+            min_dist = _min_distance_to_polygon_edge(candidate, contour_local)
+            if min_dist < margin:
+                continue
+        chosen_local = candidate
+        eccentricity = float(np.linalg.norm(candidate))
+        break
+    if chosen_local is None:
+        raise RuntimeError(
+            f"sample_pose: could not find an in-lumen point in branch '{branch.name}'"
+            f" within {max_attempts} attempts (try lowering edge_margin_mm)"
+        )
+
+    frame = branch.centerline.frame(s)
+    position_world = (
+        frame.position
+        + chosen_local[0] * frame.normal
+        + chosen_local[1] * frame.binormal
+    )
+
+    tilt_deg = float(rng.uniform(0.0, max_tilt_deg))
+    tilt_azimuth = float(rng.uniform(0.0, 2.0 * np.pi))
+    probe_axis = (
+        np.cos(np.radians(tilt_deg)) * frame.tangent
+        + np.sin(np.radians(tilt_deg)) * (
+            np.cos(tilt_azimuth) * frame.normal + np.sin(tilt_azimuth) * frame.binormal
+        )
+    )
+    probe_axis /= np.linalg.norm(probe_axis) + 1e-12
+
+    R = _build_probe_rotation(probe_axis)
+    euler_deg = _euler_xyz_from_matrix(R)
+
+    return PoseSample(
+        position=position_world,
+        rotation_euler_deg=euler_deg,
+        rotation_matrix=R,
+        probe_axis_world=probe_axis,
+        branch_id=branch.branch_id,
+        branch_name=branch.name,
+        arclength_mm=s,
+        centerline_offset_mm=eccentricity,
+        tilt_deg=tilt_deg,
+    )
+
+
+def pose_at(
+    vessel: "Vessel",
+    position: np.ndarray,
+    probe_axis_world: np.ndarray | None = None,
+    require_inside_lumen: bool = True,
+) -> PoseSample:
+    """Build a :class:`PoseSample` at a user-specified 3D position.
+
+    Use this when you want the probe at a *specific* location rather than a
+    random sample. The probe long axis defaults to the local tangent of the
+    nearest branch's centerline at the projection of ``position`` onto that
+    centerline (so the probe is roughly aligned with the vessel even when
+    you only supply a position).
+
+    Parameters
+    ----------
+    vessel:
+        The vessel to query.
+    position:
+        World-space (3,) position in mm. Must lie inside the lumen if
+        ``require_inside_lumen`` is True.
+    probe_axis_world:
+        Optional (3,) probe long-axis direction in world coordinates. If
+        ``None``, falls back to the nearest branch's local tangent.
+    require_inside_lumen:
+        When True (default), raises :class:`ValueError` if ``position`` is
+        not inside ``vessel.lumen_mesh``.
+    """
+    position = np.asarray(position, dtype=float)
+    if position.shape != (3,):
+        raise ValueError(f"position must be shape (3,), got {position.shape}")
+    if require_inside_lumen and not bool(vessel.lumen_mesh.contains([position])[0]):
+        raise ValueError(f"position {position.tolist()} is not inside the lumen")
+
+    # Pick the branch whose centerline the position is closest to, and take
+    # its local tangent as the default probe axis.
+    nearest_branch = vessel.branches[0]
+    nearest_offset = float("inf")
+    nearest_arclength = 0.0
+    for b in vessel.branches:
+        s, off = b.centerline.project(position)
+        d = float(np.linalg.norm(off))
+        if d < nearest_offset:
+            nearest_offset = d
+            nearest_branch = b
+            nearest_arclength = s
+
+    if probe_axis_world is None:
+        probe_axis = nearest_branch.centerline.tangent(nearest_arclength)
+    else:
+        probe_axis = np.asarray(probe_axis_world, dtype=float)
+        n = float(np.linalg.norm(probe_axis))
+        if n < 1e-9:
+            raise ValueError("probe_axis_world must be a non-zero vector")
+        probe_axis = probe_axis / n
+
+    tilt = float(np.degrees(np.arccos(
+        np.clip(float(np.dot(probe_axis, nearest_branch.centerline.tangent(nearest_arclength))),
+                -1.0, 1.0)
+    )))
+    R = _build_probe_rotation(probe_axis)
+    return PoseSample(
+        position=position.copy(),
+        rotation_euler_deg=_euler_xyz_from_matrix(R),
+        rotation_matrix=R,
+        probe_axis_world=probe_axis,
+        branch_id=nearest_branch.branch_id,
+        branch_name=nearest_branch.name,
+        arclength_mm=nearest_arclength,
+        centerline_offset_mm=nearest_offset,
+        tilt_deg=tilt,
+    )
+
+
+def sample_pose_in_branch(
+    vessel: "Vessel",
+    branch_name: str,
+    rng: np.random.Generator,
+    arclength_mm: float | None = None,
+    max_tilt_deg: float = 15.0,
+    edge_margin_mm: float = 0.2,
+    max_attempts: int = 64,
+) -> PoseSample:
+    """Sample a pose constrained to a specific branch.
+
+    ``arclength_mm`` pins the sample to a particular axial station along
+    the branch (useful for stratified sampling along the vessel); if None,
+    the arclength is sampled uniformly along the branch like
+    :func:`sample_pose`.
+    """
+    target = None
+    for b in vessel.branches:
+        if b.name == branch_name:
+            target = b
+            break
+    if target is None:
+        raise KeyError(f"no branch named '{branch_name}'")
+
+    s = (
+        float(rng.uniform(0.0, target.centerline.length_mm))
+        if arclength_mm is None
+        else float(np.clip(arclength_mm, 0.0, target.centerline.length_mm))
+    )
+    contour_local = _interpolate_lumen_contour(target, s)
+    bbox_min = contour_local.min(axis=0)
+    bbox_max = contour_local.max(axis=0)
+    margin = max(edge_margin_mm, 0.0)
+    chosen_local = None
+    eccentricity = 0.0
+    for _ in range(max_attempts):
+        candidate = rng.uniform(bbox_min, bbox_max)
+        if not _point_in_polygon(candidate, contour_local):
+            continue
+        if margin > 0.0:
+            if _min_distance_to_polygon_edge(candidate, contour_local) < margin:
+                continue
+        chosen_local = candidate
+        eccentricity = float(np.linalg.norm(candidate))
+        break
+    if chosen_local is None:
+        raise RuntimeError(
+            f"sample_pose_in_branch: could not find an in-lumen point in '{branch_name}'"
+            f" at s={s:.2f} mm within {max_attempts} attempts"
+        )
+    frame = target.centerline.frame(s)
+    position_world = (
+        frame.position
+        + chosen_local[0] * frame.normal
+        + chosen_local[1] * frame.binormal
+    )
+    tilt_deg = float(rng.uniform(0.0, max_tilt_deg))
+    tilt_azimuth = float(rng.uniform(0.0, 2.0 * np.pi))
+    probe_axis = (
+        np.cos(np.radians(tilt_deg)) * frame.tangent
+        + np.sin(np.radians(tilt_deg)) * (
+            np.cos(tilt_azimuth) * frame.normal + np.sin(tilt_azimuth) * frame.binormal
+        )
+    )
+    probe_axis /= np.linalg.norm(probe_axis) + 1e-12
+    R = _build_probe_rotation(probe_axis)
+    return PoseSample(
+        position=position_world,
+        rotation_euler_deg=_euler_xyz_from_matrix(R),
+        rotation_matrix=R,
+        probe_axis_world=probe_axis,
+        branch_id=target.branch_id,
+        branch_name=target.name,
+        arclength_mm=s,
+        centerline_offset_mm=eccentricity,
+        tilt_deg=tilt_deg,
+    )
+
+
+def _min_distance_to_polygon_edge(point: np.ndarray, polygon: np.ndarray) -> float:
+    """Minimum distance from ``point`` to any edge of the closed polygon."""
+    K = len(polygon)
+    best = np.inf
+    for i in range(K):
+        a = polygon[i]
+        b = polygon[(i + 1) % K]
+        ab = b - a
+        denom = float(np.dot(ab, ab))
+        if denom < 1e-12:
+            continue
+        t = float(np.clip(np.dot(point - a, ab) / denom, 0.0, 1.0))
+        proj = a + t * ab
+        d = float(np.linalg.norm(point - proj))
+        if d < best:
+            best = d
+    return best
+
+
+# ---------------------------------------------------------------------------
+# Ground truth extraction
+# ---------------------------------------------------------------------------
+
+
+def _section_to_polygons(section, plane_origin: np.ndarray,
+                          probe_x: np.ndarray, probe_z: np.ndarray) -> list[np.ndarray]:
+    """Project a trimesh Path3D section into 2D polygons in the imaging plane.
+
+    Each discrete polyline of the 3D path is projected onto the
+    (probe_x, probe_z) basis spanning the plane, with ``plane_origin``
+    placed at (0, 0). The probe long axis (probe_y / plane normal) is
+    perpendicular to this 2D basis so the projection is exact.
+    """
+    if section is None:
+        return []
+    polygons: list[np.ndarray] = []
+    for entity_pts in section.discrete:
+        pts3 = np.asarray(entity_pts, dtype=float)
+        if len(pts3) < 2:
+            continue
+        rel = pts3 - plane_origin[None, :]
+        xs = rel @ probe_x
+        ys = rel @ probe_z
+        polygons.append(np.column_stack([xs, ys]))
+    return polygons
+
+
+def _polygon_signed_area(polygon: np.ndarray) -> float:
+    if len(polygon) < 3:
+        return 0.0
+    x = polygon[:, 0]
+    y = polygon[:, 1]
+    return 0.5 * float(np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y))
+
+
+def _ensure_ccw(polygon: np.ndarray) -> np.ndarray:
+    if _polygon_signed_area(polygon) < 0:
+        return polygon[::-1].copy()
+    return polygon
+
+
+def ground_truth_at(
+    vessel: Vessel,
+    pose: PoseSample,
+    n_angles: int = 360,
+    max_distance_mm: float = 30.0,
+) -> GroundTruth:
+    """Compute per-frame ground truth at the given pose.
+
+    Slices the lumen and outer meshes with the imaging plane (perpendicular
+    to ``pose.probe_axis_world``, through ``pose.position``) and converts
+    the resulting polygons to polar (per-angle distance) ground truth.
+    """
+    plane_origin = pose.position
+    plane_normal = pose.probe_axis_world
+    probe_x = pose.rotation_matrix[:, 0]
+    probe_z = pose.rotation_matrix[:, 2]
+
+    lumen_section = vessel.lumen_mesh.section(plane_origin=plane_origin,
+                                                plane_normal=plane_normal)
+    outer_section = vessel.outer_mesh.section(plane_origin=plane_origin,
+                                                plane_normal=plane_normal)
+
+    lumen_polys = _section_to_polygons(lumen_section, plane_origin, probe_x, probe_z)
+    outer_polys = _section_to_polygons(outer_section, plane_origin, probe_x, probe_z)
+    lumen_polys = [_ensure_ccw(p) for p in lumen_polys if len(p) >= 3]
+    outer_polys = [_ensure_ccw(p) for p in outer_polys if len(p) >= 3]
+
+    thetas = np.linspace(0.0, 2.0 * np.pi, n_angles, endpoint=False)
+    d_lumen = np.full(n_angles, np.nan)
+    d_outer = np.full(n_angles, np.nan)
+    for i, th in enumerate(thetas):
+        d_lumen[i] = _ray_polygon_intersection_distance(lumen_polys, th, max_distance_mm)
+        d_outer[i] = _ray_polygon_intersection_distance(outer_polys, th, max_distance_mm)
+    wall_thickness = d_outer - d_lumen
+
+    lumen_csa = float(sum(abs(_polygon_signed_area(p)) for p in lumen_polys))
+    outer_csa = float(sum(abs(_polygon_signed_area(p)) for p in outer_polys))
+
+    visible: list[int] = [pose.branch_id]
+    for b in vessel.branches:
+        if b.branch_id == pose.branch_id:
+            continue
+        s_proj, offset = b.centerline.project(pose.position)
+        if np.linalg.norm(offset) <= b.lumen_field.mean_radius.max() * 1.5:
+            visible.append(b.branch_id)
+
+    eq_diam = 2.0 * float(np.sqrt(max(0.0, lumen_csa) / np.pi))
+
+    return GroundTruth(
+        n_angles=n_angles,
+        thetas_rad=thetas,
+        distance_to_lumen_wall_mm=d_lumen,
+        distance_to_outer_wall_mm=d_outer,
+        wall_thickness_mm=wall_thickness,
+        lumen_contour_polygons=lumen_polys,
+        outer_contour_polygons=outer_polys,
+        lumen_csa_mm2=lumen_csa,
+        outer_csa_mm2=outer_csa,
+        branch_ids_visible=visible,
+        equivalent_lumen_diameter_mm=eq_diam,
+    )

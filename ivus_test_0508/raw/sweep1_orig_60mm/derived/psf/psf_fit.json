@@ -1,0 +1,105 @@
+{
+  "gain_sliders": [
+    32.0,
+    36.0,
+    40.0
+  ],
+  "diameter_mm": 60.0,
+  "frequency_mhz": 10.0,
+  "sound_speed_mm_per_us": 1.54,
+  "wavelength_mm": 0.154,
+  "n_wires_used": 12,
+  "n_wires_for_lateral_fit": 6,
+  "axial_fwhm_mm_median": 0.0581,
+  "axial_fwhm_mm_std": 0.08697887071362378,
+  "axial_fwhm_n_clean_wires": 9,
+  "axial_fwhm_mm_per_wire": [
+    {
+      "wire": 1,
+      "r_mm": 5.4,
+      "axial_fwhm_mm": 0.3247,
+      "peak_palette": 217.97
+    },
+    {
+      "wire": 2,
+      "r_mm": 9.12,
+      "axial_fwhm_mm": 0.0463,
+      "peak_palette": 191.56
+    },
+    {
+      "wire": 3,
+      "r_mm": 14.04,
+      "axial_fwhm_mm": 0.0344,
+      "peak_palette": 133.72
+    },
+    {
+      "wire": 4,
+      "r_mm": 20.4,
+      "axial_fwhm_mm": 0.0581,
+      "peak_palette": 214.63
+    },
+    {
+      "wire": 5,
+      "r_mm": 25.8,
+      "axial_fwhm_mm": 0.0608,
+      "peak_palette": 188.58
+    },
+    {
+      "wire": 1,
+      "r_mm": 5.4,
+      "axial_fwhm_mm": 0.4551,
+      "peak_palette": 234.97
+    },
+    {
+      "wire": 2,
+      "r_mm": 9.12,
+      "axial_fwhm_mm": 0.0589,
+      "peak_palette": 216.13
+    },
+    {
+      "wire": 3,
+      "r_mm": 14.04,
+      "axial_fwhm_mm": 0.0339,
+      "peak_palette": 168.95
+    },
+    {
+      "wire": 4,
+      "r_mm": 20.4,
+      "axial_fwhm_mm": 0.084,
+      "peak_palette": 232.33
+    },
+    {
+      "wire": 5,
+      "r_mm": 25.8,
+      "axial_fwhm_mm": 0.0738,
+      "peak_palette": 213.55
+    },
+    {
+      "wire": 3,
+      "r_mm": 14.04,
+      "axial_fwhm_mm": 0.0406,
+      "peak_palette": 196.47
+    },
+    {
+      "wire": 5,
+      "r_mm": 25.8,
+      "axial_fwhm_mm": 0.0855,
+      "peak_palette": 232.43
+    }
+  ],
+  "pulse_duration_cycles": 0.7545454545454545,
+  "gaussian_beam_fit": {
+    "w0_mm": 0.48716284841813995,
+    "w0_err_mm": 0.15798355489153024,
+    "z_f_mm": 16.6691798849975,
+    "z_f_err_mm": 1.9711136025410307,
+    "z_R_mm": 4.84147255246021,
+    "lateral_fwhm_at_focus_mm": 0.8111793516704818
+  },
+  "derived": {
+    "focal_length_mm": 16.6691798849975,
+    "element_radius_mm": 2.634697730569009,
+    "pulse_duration_cycles": 0.7545454545454545
+  },
+  "method": "E2 \u2014 PSF extraction from per-wire echoes in the polar arrays."
+}

@@ -1,0 +1,27 @@
+[project]
+name = "instrument-calibration"
+version = "0.1.0"
+description = "Per-instrument ultrasound calibration pipeline that produces YAML configs for the i4h-sensor-simulation raytracer."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
+    "pillow>=10.0",
+    "pydicom>=2.4",
+    "ezdxf>=1.1",
+    "PyYAML>=6.0",
+    "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+gui = ["matplotlib>=3.7"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["p035_visions*"]

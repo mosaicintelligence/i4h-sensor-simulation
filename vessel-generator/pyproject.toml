@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vesselgen"
+version = "0.1.0"
+description = "Vessel-segment geometry generation for IVUS simulation training data"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "ivus-sim team" },
+]
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "trimesh>=4.0",
+  "manifold3d>=2.5",
+  "shapely>=2.0",
+  "matplotlib>=3.7",
+  "networkx>=3.0",
+  "rtree>=1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4",
+]
+
+[project.scripts]
+vesselgen-vessel = "vesselgen.tools.generate_vessel:main"
+vesselgen-dataset = "vesselgen.tools.generate_dataset:main"
+vesselgen-frames = "vesselgen.tools.sample_frames:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vesselgen*"]

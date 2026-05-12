@@ -1,0 +1,4 @@
+[console_scripts]
+vesselgen-dataset = vesselgen.tools.generate_dataset:main
+vesselgen-frames = vesselgen.tools.sample_frames:main
+vesselgen-vessel = vesselgen.tools.generate_vessel:main
