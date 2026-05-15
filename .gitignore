@@ -79,6 +79,11 @@ ivus_test_0508/VOLCANO_VIEWER_LICENSE.rtf
 ivus_test_0508/gain_curve_comparison.png
 ivus_test_0508/gain_curve_wire_comparison.png
 
+# 2026-05-15 bench dump (raw DICOMs + Volcano viewer payload, ~1.4 GB).
+# Same shape as ivus_test_0508 but no symlinked subsets yet — ignore the
+# entire tree until we extract a small canonical slice.
+ivus_test_0515/
+
 # =============================================================================
 # Regenerable diagnostic artifacts under */derived/
 # =============================================================================
