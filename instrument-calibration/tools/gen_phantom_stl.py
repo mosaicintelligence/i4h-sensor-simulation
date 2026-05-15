@@ -16,18 +16,47 @@
 """Generate STL files for IVUS calibration phantom hardware.
 
 Produces:
-  hardware/wire_spiral_disc.stl       — wire-stringing disc (print 2 copies)
-  hardware/wire_spiral_standoff.stl   — printable shouldered standoff (print 3 copies)
-  hardware/wire_spiral_assembly.stl   — visual reference (both discs + standoffs)
-  hardware/phantom_mold_uniform.stl   — open-top cylindrical mold w/ catheter channel
-  hardware/phantom_mold_cyst.stl      — same mold with 4 cyst-inclusion rod holders
-  hardware/phantom_step_mold.stl      — concentric ring mold for stepped-α phantom
+  hardware/wire_spiral_disc.stl              — wire-stringing disc (print 2 copies)
+  hardware/wire_spiral_standoff.stl          — printable shouldered standoff (print 3 copies)
+  hardware/wire_spiral_assembly.stl          — visual reference (both discs + standoffs)
+  hardware/phantom_mold_uniform.stl          — open-top cylindrical mold w/ catheter channel
+  hardware/phantom_mold_cyst.stl             — canonical cyst mold (4 mm cyst dimples at {10,14,14,18} mm)
+  hardware/phantom_mold_cyst_lid.stl         — registration lid for the canonical 4 mm cyst mold
+  hardware/phantom_mold_cyst_interim.stl     — interim cyst mold (8 mm cyst dimples at {12,16,16,20} mm)
+  hardware/phantom_mold_cyst_lid_interim.stl — registration lid for the interim 8 mm cyst mold
+  hardware/phantom_step_mold.stl             — concentric ring mold for stepped-α phantom
 
 Wire-spiral fixture is sized for the **Visions PV .035 (10 MHz, ⌀1.9 mm OD)**
 catheter and the imaging characteristics measured from the P_035_PointScatter
 captures (focus ~19 mm, useful range ~3–25 mm, ring-down to ~3 mm). 12 wires
 on a one-turn spiral, with denser sampling around the focal depth so the
 Gaussian-beam fit can actually constrain focal_length_mm and element_radius_mm.
+
+Cyst-phantom molds are sized for the **60 mm imaging diameter** reference
+operating point of the Volcano s5i (was 16 mm in older versions of this
+script; the larger mold ID leaves a ≥ 10 mm radial margin between the
+30 mm imaging fan and the mold wall, eliminating wall ring-down inside
+the imaging field). Two cyst variants are produced:
+  * Canonical (`phantom_mold_cyst.stl` + `_lid.stl`): 4 mm PTFE / steel
+    cyst rods at radii {10, 14, 14, 18} mm — per `A.3` of the IVUS
+    calibration protocol.
+  * Interim T1-E5* (`_interim.stl` + `_lid_interim.stl`): 8 mm rigid
+    reusable plastic-straw cyst rods at radii {12, 16, 16, 20} mm — the
+    shifted radii keep the innermost cyst's inner edge ≥ 8 mm from the
+    catheter, clear of the ring-down zone.
+
+Each cyst mold pairs with a printable **lid** that has matching cyst-rod
+through-holes plus a rectangular **orientation key tab** projecting
+downward from the lid's underside at 0°. The matching slot is cut into
+the mold rim at 0° — the tab slip-fits into the slot when the lid is
+correctly oriented, and the lid will sit visibly proud of the rim if
+the orientation is wrong. With the lid correctly seated, the lid's rod
+holes register directly above the mold's floor dimples, mechanically
+forcing the rods vertical during the gel pour and set without any
+external clamping. The mold's catheter rod registration is a 2 mm-deep
+blind divot in the floor (analogous to the cyst-rod dimples) — the
+bottom of the floor remains solid so the rod cannot poke through and
+no gel can leak out during pouring.
 
 All dimensions are in millimetres. Print orientation:
   * Discs: flat on bed (5 mm tall), 0.2 mm layer height, ≥ 3 perimeters,
@@ -40,6 +69,10 @@ All dimensions are in millimetres. Print orientation:
     BoM (⌀5 mm hex × 50 mm long) with M3 × 6 mm pan-head screws.
   * Molds: flat on bed, 0.2 mm layer height, vase-mode walls if available,
     otherwise ≥ 3 perimeters and 20 % infill.
+  * Cyst-mold lids: **print top-surface-down** (lid lip pointing UP) so
+    the wider top plate sits on the bed and the narrower centering lip
+    prints on top of it with no overhang. ≥ 3 perimeters, ≥ 30 % infill,
+    0.2 mm layer height.
 
 Run from the repo root:
     PYTHONPATH=/tmp/calpkgs python3 tools/gen_phantom_stl.py
@@ -72,7 +105,7 @@ OUT.mkdir(parents=True, exist_ok=True)
 # near-field, around focus, and in the far-field.
 DISC_OD = 80.0          # mm — outer disc diameter (must contain wire array + standoff bolt-circle + 5 mm rim)
 DISC_THICK = 5.0        # mm — disc thickness; 0.2 mm layer height gives 25 layers (rigid enough for wire tensioning)
-DISC_CENTER_HOLE = 2.0  # mm — slip-fit on PV .035 catheter (1.9 mm OD); 0.05 mm radial clearance per side
+DISC_CENTER_HOLE = 2.5  # mm — slip-fit on PV .035 catheter (1.9 mm OD) with 0.3 mm radial clearance per side to absorb FDM XY tolerance (~0.15–0.20 mm); was 2.0 mm in older prints and required field-drilling to 2.4 mm
 WIRE_HOLE_DIA = 0.5     # mm — through-hole; sized for any sub-wavelength filament (25–127 µm); locked at the counterbore (see WIRE_CB_*). Default protocol material is ~75 µm nylon monofilament; alternates: 36 AWG copper magnet wire, 25 µm tungsten — see ivus_calibration_protocol.md Appendix A.1
 WIRE_CB_DIA = 1.0       # mm — counterbore on top face for a small bead of cyanoacrylate (any wire) or a heat-melted ball (nylon) to lock the tensioned wire
 WIRE_CB_DEPTH = 0.4     # mm — depth of lock-bead counterbore (below the top surface)
@@ -255,14 +288,49 @@ def build_assembly_mesh() -> trimesh.Trimesh:
 
 
 # Phantom molds (E4 / E5)
-MOLD_OD = 60.0          # mm — outer diameter of the mold
-MOLD_ID = 50.0          # mm — inner diameter (gives a 5 mm wall)
-MOLD_HEIGHT = 60.0      # mm — gives 50 mm of phantom + 10 mm headspace
+# Sized for the **60 mm imaging diameter** reference operating point of the
+# Volcano s5i (was 16 mm imaging diameter in older versions of this script).
+# Inner radius 40 mm leaves a 10 mm safety margin beyond the 30 mm imaging
+# radius so the mold wall does not produce ring-down artefacts inside the
+# imaging field.
+MOLD_OD = 90.0          # mm — outer diameter (5 mm wall; clean FDM print at 0.4 mm nozzle)
+MOLD_ID = 80.0          # mm — inner diameter (40 mm internal radius vs 30 mm imaging radius)
+MOLD_HEIGHT = 70.0      # mm — gives 60 mm of phantom + 10 mm headspace for lid lip and rod caps
 MOLD_FLOOR = 3.0        # mm — closed bottom thickness
-CATH_CHANNEL_DIA = 2.0  # mm — channel formed by a removable PTFE rod ≤ 1.5 mm; 2 mm gives clearance
-CYST_ROD_DIA = 4.0      # mm — diameter of cylindrical anechoic inclusions
-CYST_RADII_MM = (10.0, 14.0, 14.0, 18.0)  # radial position of cyst rods
+CATH_CHANNEL_DIA = 3.5  # mm — slip-fit on a 3 mm-class channel-forming rod (wooden skewer, 3 mm PTFE, 3 mm brass tubing, …) with 0.25 mm radial clearance to absorb FDM tolerance. The resulting 3 mm gel channel accepts the Visions PV .035 (1.9 mm OD) catheter with ~0.55 mm radial clearance per side; gel compression seals the gap for acoustic coupling. Was 2.0 mm in older revisions (sized for a 1.5 mm PTFE rod) — that produced a 1.5 mm gel channel which is too tight for the 1.9 mm catheter to enter without forcing.
+
+# Cyst-forming rod parameters
+# Canonical recipe (`A.3` of ivus_calibration_protocol.md):
+#   4 mm PTFE or stainless rods at radii {10, 14, 14, 18} mm
+CYST_ROD_DIA = 4.0
+CYST_RADII_MM = (10.0, 14.0, 14.0, 18.0)
+# Interim recipe (T1-E5* of interim_milk_phantom_sop.md):
+#   8 mm rigid reusable plastic straws at shifted radii {12, 16, 16, 20} mm.
+#   The +2 mm radial shift keeps the innermost cyst's inner edge ≥ 8 mm from
+#   the catheter, clear of the 3 mm ring-down zone.
+CYST_ROD_DIA_INTERIM = 8.0
+CYST_RADII_MM_INTERIM = (12.0, 16.0, 16.0, 20.0)
 CYST_ANGLES_DEG = (0.0, 90.0, 270.0, 180.0)
+
+# Cyst-phantom registration lid parameters
+# The lid sits on the mold rim with a centering lip slipped into the mold ID.
+# Five through-holes register the catheter PTFE rod (centre) and the four cyst
+# rods (at design radii). A **mechanical orientation key** — a downward-
+# projecting rectangular tab on the lid's underside at 0°, slip-fitting into
+# a matching rectangular slot in the mold rim at 0° — mechanically enforces
+# the lid's rotational alignment (you cannot seat the lid flush on the rim
+# unless the tab is over the slot). When properly seated the lid's cyst-rod
+# holes register directly over the mold's floor dimples and the rods are
+# constrained vertical without any external clamping.
+LID_THICK = 4.0                       # mm — top plate thickness
+LID_LIP_HEIGHT = 3.0                  # mm — height of centering lip into mold ID
+LID_LIP_CLEARANCE = 0.4               # mm — diametric clearance of lip vs mold ID (0.2 mm radial)
+LID_CYST_HOLE_RADIAL_CLEARANCE = 0.15 # mm — radial clearance on each side of cyst rod (0.3 mm dia)
+LID_CATH_HOLE_DIA = CATH_CHANNEL_DIA  # mm — same diameter as the mold's catheter bore
+KEY_W = 5.0                           # mm — width (azimuthal) of the lid's key tab; mold slot is this + 2 × KEY_AZI_CLEARANCE
+KEY_H = 3.0                           # mm — height (vertical) of the lid's key tab; mold slot is this + KEY_VERT_CLEARANCE
+KEY_AZI_CLEARANCE = 0.2               # mm — slot is wider than tab by this much on each azimuthal side (slip fit)
+KEY_VERT_CLEARANCE = 0.3              # mm — slot is taller than tab by this much vertically (slip fit)
 
 
 def _vert_cyl(radius: float, height: float, z0: float = 0.0,
@@ -275,31 +343,140 @@ def _vert_cyl(radius: float, height: float, z0: float = 0.0,
     return cyl
 
 
-def build_uniform_mold_mesh(with_cysts: bool = False) -> trimesh.Trimesh:
+def _orientation_key_mesh(width: float, height: float, z0: float,
+                          r_inner: float, r_outer: float) -> trimesh.Trimesh:
+    """Rectangular orientation key block at 0° spanning radii [r_inner, r_outer].
+
+    Used both as the lid's downward-projecting tab (added material at exact
+    KEY_W / KEY_H dimensions) and as the mold's matching rim slot (subtracted
+    material, slightly oversized for slip-fit clearance). The block is
+    centred azimuthally on the +x axis (0°).
+    """
+    y_top = width / 2
+    y_bot = -width / 2
+    poly = sg.Polygon([
+        (r_outer, y_top),
+        (r_outer, y_bot),
+        (r_inner, y_bot),
+        (r_inner, y_top),
+    ])
+    mesh = extrude_polygon(poly, height=height)
+    mesh.apply_translation([0.0, 0.0, z0])
+    return mesh
+
+
+def build_uniform_mold_mesh(
+    with_cysts: bool = False,
+    cyst_rod_dia: float = CYST_ROD_DIA,
+    cyst_radii_mm: tuple[float, ...] = CYST_RADII_MM,
+    add_orientation_key_slot: bool = False,
+) -> trimesh.Trimesh:
     """Open-top cylindrical mold for casting tissue-mimicking material.
 
-    Design rationale: a simple cup with a closed floor and a small through-hole
-    in the floor for the catheter PTFE rod. The rod is clamped externally
-    above and below the mold so it stays centered while the gel sets.
+    Design rationale: a simple cup with a closed floor. The catheter rod
+    drops into a 2 mm blind divot in the floor (analogous to the cyst-rod
+    dimples) and is held vertical at its top by the registration lid's
+    catheter through-hole; the bottom of the floor remains solid so no gel
+    can leak out during pouring.
 
-    Cyst variant adds blind dimples in the floor so PTFE rods (4 mm OD) can be
-    pressed in to stand vertically; they form the anechoic cylinders.
+    Cyst variant adds blind dimples in the floor so cyst rods (4 mm PTFE or
+    8 mm rigid plastic straws, depending on `cyst_rod_dia`) can be pressed
+    in to stand vertically; they form the anechoic cylinders. When paired
+    with `build_cyst_lid_mesh(cyst_rod_dia, cyst_radii_mm)`, every rod
+    (catheter and cysts) is registered at both ends and held vertical
+    without external clamping.
+
+    When `add_orientation_key_slot=True`, a rectangular slot is cut into
+    the mold rim at 0° (5.4 × 3.3 mm, full radial extent of the wall) so
+    the matching tab on the printable lid mechanically keys into it; the
+    lid cannot seat flush on the rim unless its tab is over the slot.
     """
     outer = _vert_cyl(MOLD_OD / 2, MOLD_HEIGHT)
     cup = _vert_cyl(MOLD_ID / 2, MOLD_HEIGHT - MOLD_FLOOR + 0.5,
                     z0=MOLD_FLOOR)
-    cath_bore = _vert_cyl(CATH_CHANNEL_DIA / 2, MOLD_HEIGHT + 1.0, z0=-0.5)
-    body = _diff(outer, _union([cup, cath_bore]))
+    # Catheter rod registration: blind divot in the floor (z=1.0 to MOLD_FLOOR)
+    # + through-bore in the gel cavity (z=MOLD_FLOOR to MOLD_HEIGHT+0.5).
+    # Bottom 1 mm of floor remains solid so no gel leaks during pouring.
+    cath_bore = _vert_cyl(CATH_CHANNEL_DIA / 2, MOLD_HEIGHT - 0.5, z0=1.0)
+    cavities: list[trimesh.Trimesh] = [cup, cath_bore]
+    if add_orientation_key_slot:
+        slot_w = KEY_W + 2 * KEY_AZI_CLEARANCE
+        slot_h = KEY_H + KEY_VERT_CLEARANCE
+        cavities.append(_orientation_key_mesh(
+            width=slot_w,
+            height=slot_h + 0.5,
+            z0=MOLD_HEIGHT - slot_h,
+            r_inner=MOLD_ID / 2 - 0.5,
+            r_outer=MOLD_OD / 2 + 0.5,
+        ))
+    body = _diff(outer, _union(cavities))
     if with_cysts:
         dimple_h = MOLD_FLOOR - 1.0
-        for r, ang_deg in zip(CYST_RADII_MM, CYST_ANGLES_DEG):
+        for r, ang_deg in zip(cyst_radii_mm, CYST_ANGLES_DEG):
             ang = np.deg2rad(ang_deg)
             sx = r * np.cos(ang)
             sy = r * np.sin(ang)
-            dimple = _vert_cyl(CYST_ROD_DIA / 2 + 0.1, dimple_h,
+            dimple = _vert_cyl(cyst_rod_dia / 2 + 0.1, dimple_h,
                                z0=1.0, cx=sx, cy=sy, sections=32)
             body = _diff(body, dimple)
     body.metadata["name"] = "phantom_mold"
+    return body
+
+
+def build_cyst_lid_mesh(cyst_rod_dia: float,
+                        cyst_radii_mm: tuple[float, ...]) -> trimesh.Trimesh:
+    """Registration lid for the cyst-phantom mold.
+
+    The lid is a flat disc with a centering lip on its underside that slip-
+    fits into the mold ID, plus five through-holes (1 centre, 4 at the cyst
+    design radii) sized to register the catheter rod and the cyst rods. A
+    rectangular **orientation key tab** projects downward from the lid's
+    underside at 0°, sized to slip-fit into the matching slot in the mold
+    rim — mechanically enforcing the lid's rotational alignment so the rod
+    holes register directly above the floor dimples.
+
+    With both ends of each rod registered (lid hole at the top, floor
+    divot/dimple at the bottom), the rods are mechanically forced vertical
+    during the gel pour and set, with no external clamping needed.
+
+    Print orientation: **top-surface-down** (lid lip and key tab pointing
+    UP) so the wider top plate sits on the bed and the narrower features
+    print on top of it with no overhang.
+    """
+    body = _vert_cyl(MOLD_OD / 2, LID_THICK, z0=0.0)
+    lip = _vert_cyl((MOLD_ID - LID_LIP_CLEARANCE) / 2, LID_LIP_HEIGHT,
+                    z0=-LID_LIP_HEIGHT)
+    body = _union([body, lip])
+    # Orientation key tab: downward-projecting rectangular block on the
+    # underside at 0°, sized to slip-fit into the mold's rim slot.
+    key_tab = _orientation_key_mesh(
+        width=KEY_W,
+        height=KEY_H,
+        z0=-KEY_H,
+        r_inner=MOLD_ID / 2,
+        r_outer=MOLD_OD / 2,
+    )
+    body = _union([body, key_tab])
+    holes: list[trimesh.Trimesh] = []
+    holes.append(_vert_cyl(
+        LID_CATH_HOLE_DIA / 2,
+        LID_THICK + LID_LIP_HEIGHT + 2.0,
+        z0=-LID_LIP_HEIGHT - 1.0,
+        sections=24,
+    ))
+    cyst_hole_radius = cyst_rod_dia / 2 + LID_CYST_HOLE_RADIAL_CLEARANCE
+    for r, ang_deg in zip(cyst_radii_mm, CYST_ANGLES_DEG):
+        ang = np.deg2rad(ang_deg)
+        sx = r * np.cos(ang)
+        sy = r * np.sin(ang)
+        holes.append(_vert_cyl(
+            cyst_hole_radius,
+            LID_THICK + LID_LIP_HEIGHT + 2.0,
+            z0=-LID_LIP_HEIGHT - 1.0,
+            cx=sx, cy=sy, sections=32,
+        ))
+    body = _diff(body, _union(holes))
+    body.metadata["name"] = "cyst_phantom_lid"
     return body
 
 
@@ -373,10 +550,39 @@ def main() -> None:
     mold.export(mold_path)
     print(f"  wrote {mold_path}")
 
-    cyst = _finalize(build_uniform_mold_mesh(with_cysts=True))
+    cyst = _finalize(build_uniform_mold_mesh(
+        with_cysts=True,
+        cyst_rod_dia=CYST_ROD_DIA,
+        cyst_radii_mm=CYST_RADII_MM,
+        add_orientation_key_slot=True,
+    ))
     cyst_path = OUT / "phantom_mold_cyst.stl"
     cyst.export(cyst_path)
-    print(f"  wrote {cyst_path}")
+    print(f"  wrote {cyst_path}  (canonical: ⌀{CYST_ROD_DIA} mm cysts at "
+          f"radii {tuple(CYST_RADII_MM)} mm)")
+
+    cyst_lid = _finalize(build_cyst_lid_mesh(CYST_ROD_DIA, CYST_RADII_MM))
+    cyst_lid_path = OUT / "phantom_mold_cyst_lid.stl"
+    cyst_lid.export(cyst_lid_path)
+    print(f"  wrote {cyst_lid_path}  (lid for canonical mold)")
+
+    cyst_interim = _finalize(build_uniform_mold_mesh(
+        with_cysts=True,
+        cyst_rod_dia=CYST_ROD_DIA_INTERIM,
+        cyst_radii_mm=CYST_RADII_MM_INTERIM,
+        add_orientation_key_slot=True,
+    ))
+    cyst_interim_path = OUT / "phantom_mold_cyst_interim.stl"
+    cyst_interim.export(cyst_interim_path)
+    print(f"  wrote {cyst_interim_path}  (interim T1-E5*: "
+          f"⌀{CYST_ROD_DIA_INTERIM} mm cysts at radii "
+          f"{tuple(CYST_RADII_MM_INTERIM)} mm)")
+
+    cyst_lid_interim = _finalize(build_cyst_lid_mesh(
+        CYST_ROD_DIA_INTERIM, CYST_RADII_MM_INTERIM))
+    cyst_lid_interim_path = OUT / "phantom_mold_cyst_lid_interim.stl"
+    cyst_lid_interim.export(cyst_lid_interim_path)
+    print(f"  wrote {cyst_lid_interim_path}  (lid for interim mold)")
 
     step = _finalize(build_step_mold_mesh())
     step_path = OUT / "phantom_step_mold.stl"
@@ -404,6 +610,27 @@ def main() -> None:
     for n, (x, y, th) in enumerate(_wire_positions()):
         r = np.hypot(x, y)
         print(f"  wire #{n+1:2d}:  r = {r:.2f} mm,  θ = {th:.0f}°")
+
+    print()
+    print("Cyst-phantom mold geometry (sized for 60 mm imaging diameter):")
+    print(f"  Mold: OD {MOLD_OD} mm, ID {MOLD_ID} mm, height {MOLD_HEIGHT} mm, "
+          f"floor {MOLD_FLOOR} mm")
+    print(f"  Catheter channel: ⌀{CATH_CHANNEL_DIA} mm slip-fit on a 3 mm-"
+          f"class channel-forming rod (wooden skewer, 3 mm PTFE, brass "
+          f"tubing, ...); resulting ⌀3 mm gel channel accepts the Visions "
+          f"PV .035 catheter (OD = 1.9 mm) with ~0.55 mm radial clearance")
+    print(f"  Canonical cysts (PTFE / steel rods): "
+          f"⌀{CYST_ROD_DIA} mm at radii {tuple(CYST_RADII_MM)} mm, "
+          f"angles {tuple(CYST_ANGLES_DEG)}°")
+    print(f"  Interim cysts (8 mm rigid plastic straws): "
+          f"⌀{CYST_ROD_DIA_INTERIM} mm at radii "
+          f"{tuple(CYST_RADII_MM_INTERIM)} mm, "
+          f"angles {tuple(CYST_ANGLES_DEG)}°")
+    print(f"  Lid: ⌀{MOLD_OD} mm × {LID_THICK} mm + ⌀"
+          f"{MOLD_ID - LID_LIP_CLEARANCE:.1f} mm × {LID_LIP_HEIGHT} mm "
+          f"centering lip; ⌀{LID_CATH_HOLE_DIA} mm catheter through-hole at "
+          f"centre; rectangular orientation key tab ({KEY_W} × {KEY_H} mm) "
+          f"on underside at 0° that slip-fits into matching slot in mold rim")
 
 
 if __name__ == "__main__":

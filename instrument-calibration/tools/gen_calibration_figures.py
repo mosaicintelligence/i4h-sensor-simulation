@@ -533,11 +533,210 @@ def fig_e9_timing():
     _save(fig, "fig_e9_timing.png")
 
 
+MILK = "#fff3d6"
+MILK_GEL = "#f5e8c8"
+
+
+def fig_t1_e4i_milk_tank():
+    """Interim T1-E4* — uniform-fluid (evaporated milk) stand-in for E4.
+
+    Cross-section view (catheter long axis into page). The "tank" here is a
+    tall glass beaker / jar filled with Carnation-type evaporated milk;
+    the catheter is suspended vertically at the center.
+
+    The figure shows the **Phase B1** configuration (E2 wire phantom
+    submerged in **undiluted** milk for c refinement). The same setup
+    is repeated in 1:1 diluted milk for Phase B2; Phase A1/A2 use the
+    same fill with the wire phantom removed.
+    """
+    fig, ax = _new_fig(
+        "T1-E4* — Uniform-fluid milk tank + wire-phantom c-cal "
+        "(interim stand-in for E4; cross-section view, Phase B1 shown)",
+        w=11.0, h=6.8,
+    )
+    bx, by, BR = 5.4, 2.7, 2.4
+    ax.add_patch(mp.Circle((bx, by), BR + 0.18, fc="#dcdcdc", ec="0.35",
+                           lw=2.0, zorder=1))
+    ax.add_patch(mp.Circle((bx, by), BR, fc=MILK, ec="0.5", lw=1.0, zorder=2))
+    ax.text(bx - BR - 0.20, by + BR + 0.08,
+            "Glass beaker / jar\n(≥ 1 L; ID ≥ 90 mm)",
+            fontsize=8, ha="left", bbox=LABEL_BG)
+    ax.text(bx + 1.55, by - 1.55,
+            "Phase A1/B1: undiluted\nevap milk (~25 % solids)\n"
+            "Phase A2/B2: 1:1 diluted\nwith degassed water",
+            fontsize=8, ha="left", color="0.25", bbox=LABEL_BG)
+    _ivus_catheter_xs(ax, bx, by, R=0.18, label=None, tail_dir="left",
+                      tail_len=3.8, show_fan=True, fan_radius=2.0)
+    ax.text(bx - 0.05, by - 0.42, "IVUS catheter\n(end-on)", fontsize=8,
+            ha="center", bbox=LABEL_BG)
+    # E2 wire phantom: canonical 12-wire Archimedean spiral
+    # at (r mm, θ°) per ivus_calibration_protocol.md § E2.
+    # Scale: imaging fan radius = 2.0 fu = 30 mm imaging radius, so
+    # 1 fu ≈ 15 mm and 1 mm ≈ 0.0667 fu.
+    mm_per_fu = 15.0
+    spiral_layout = [
+        (4, 0),    (6, 30),   (8, 60),   (10, 90),
+        (12, 120), (14, 150), (16, 180), (18, 210),
+        (20, 240), (22, 270), (24, 300), (26, 330),
+    ]
+    for r_mm, a_deg in spiral_layout:
+        r_fu = r_mm / mm_per_fu
+        a_rad = np.deg2rad(a_deg)
+        wx = bx + r_fu * np.cos(a_rad)
+        wy = by + r_fu * np.sin(a_rad)
+        ax.add_patch(mp.Circle((wx, wy), 0.05, fc=WIRE, ec="black",
+                               lw=0.5, zorder=6))
+        ax.plot([bx, wx], [by, wy], color=WIRE, lw=0.4, ls=":", alpha=0.4)
+    # Single combined annotation for the wire phantom
+    a_anchor = np.deg2rad(120)
+    r_anchor = 12.0 / mm_per_fu
+    ax.annotate(
+        "E2 wire phantom (Phases B1, B2):\n"
+        "canonical 12-wire Archimedean spiral,\n"
+        "radii r ∈ {4, 6, 8, 10, 12, 14, 16, 18,\n"
+        "20, 22, 24, 26} mm, 30° azimuthal step,\n"
+        "all wires parallel to catheter long axis\n"
+        "(into the page). Phase B gain operator-set\n"
+        "per wire-visibility rule (~25–35 for tungsten,\n"
+        "~50 for nylon).",
+        xy=(bx + r_anchor * np.cos(a_anchor),
+            by + r_anchor * np.sin(a_anchor)),
+        xytext=(bx + 2.5, by + 1.5),
+        fontsize=7, ha="left", color="0.2", bbox=LABEL_BG,
+        arrowprops=dict(arrowstyle="->", color="0.4", lw=0.7),
+    )
+    _arrow(ax, bx + 0.18, by - 1.05, bx + BR - 0.05, by - 1.05,
+           text="≥ 30 mm\nto wall")
+    ax.text(0.3, 0.45,
+            "Phase A1/B1 — undiluted Carnation evap milk @ 22 °C:\n"
+            "  α ≈ 0.8 ± 0.15 dB/cm/MHz (Antoniou 2021),\n"
+            "  c ≈ 1565 ± 10 m/s, Z ≈ 1.58 MRayl.\n"
+            "Phase A2/B2 — 1:1 diluted with degassed distilled water:\n"
+            "  α ≈ 0.4 ± 0.10 dB/cm/MHz (Farrer 2015 interp.),\n"
+            "  c ≈ 1525 ± 10 m/s, Z ≈ 1.53 MRayl.\n"
+            "Cross-check: α₁/α₂ ≈ 2.0; c₁−c₂ ≈ 40 m/s.",
+            fontsize=7.5, bbox=LABEL_BG)
+    ax.add_patch(mp.FancyBboxPatch((0.2, 5.7), 4.7, 1.0,
+                                   boxstyle="round,pad=0.1", fc="#fff3b0",
+                                   ec="0.4"))
+    ax.text(2.55, 6.20,
+            "Console: TGC sliders centered • Acoustic Reference ON\n"
+            "• imaging diameter = 60 mm\n"
+            "• Phase A gain slider stepped through {20, 35, 50, 68}\n"
+            "• Phase B gain operator-set (~25–35 for tungsten)",
+            fontsize=7.5, ha="center", va="center")
+    ax.add_patch(mp.FancyBboxPatch((5.1, 5.45), 5.7, 1.25,
+                                   boxstyle="round,pad=0.1", fc="#d8f3dc",
+                                   ec="0.4"))
+    ax.text(7.95, 6.07,
+            "Phase A1 (undiluted, no wire): 180 frames\n"
+            "  (4 gains @ P1 + gain 50 @ P2, P3)\n"
+            "Phase B1 (undiluted + wire phantom, shown): 30 frames\n"
+            "  [fluid swap: drain → rinse → 250 mL milk + 250 mL water]\n"
+            "Phase A2 (diluted, no wire): 180 frames (same as A1)\n"
+            "Phase B2 (diluted + wire phantom): 30 frames (same as B1)",
+            fontsize=7.0, ha="center", va="center")
+    ax.set_xlim(-0.5, 11.0)
+    ax.set_ylim(-0.3, 6.9)
+    _save(fig, "fig_t1_e4i_milk_tank.png")
+
+
+def fig_t1_e5i_milk_agar_cyst():
+    """Interim T1-E5* — agar + evaporated milk gel with 4 cyst voids."""
+    fig, ax = _new_fig(
+        "T1-E5* — Agar + evaporated-milk cyst phantom (interim stand-in for E5; cross-section view)",
+        w=10.5, h=7.4,
+    )
+    gel_x0, gel_y0, gel_w, gel_h = 0.6, 0.3, 9.3, 6.0
+    ax.add_patch(mp.Rectangle((gel_x0, gel_y0), gel_w, gel_h, fc=MILK_GEL,
+                              ec="0.35", lw=2))
+    ax.text(gel_x0 + 0.25, gel_y0 + gel_h - 0.30,
+            "Agar 3 % + evaporated milk 50 % (gel matrix is\n"
+            "milky-translucent — cyst voids verifiable optically)",
+            fontsize=8, bbox=LABEL_BG)
+    cx, cy = 5.0, 3.3
+    _ivus_catheter_xs(ax, cx, cy, R=0.14, label=None, tail_dir="left",
+                      tail_len=3.8, show_fan=False)
+    ax.text(cx, cy - 0.40, "IVUS catheter", fontsize=8, ha="center",
+            bbox=LABEL_BG)
+    scale = 0.13
+    th = np.deg2rad(np.linspace(0, 360, 200))
+    for r_mm in (5, 10, 15, 20, 25):
+        r_fig = r_mm * scale
+        ax.plot(cx + r_fig * np.cos(th), cy + r_fig * np.sin(th),
+                color="#1f77b4", lw=0.35, alpha=0.22)
+    cyst_R = 2.0 * scale
+    cyst_targets = [
+        (10.0, 0.0, "ROI-A", (cx + 1.0 * scale * 10 + 0.6,
+                              cy + 0.9)),
+        (14.0, 90.0, None, None),
+        (14.0, 180.0, None, None),
+        (18.0, 270.0, None, None),
+    ]
+    for r_mm, theta_deg, roi, label_xy in cyst_targets:
+        r_fig = r_mm * scale
+        ang = np.deg2rad(theta_deg)
+        ccx = cx + r_fig * np.cos(ang)
+        ccy = cy + r_fig * np.sin(ang)
+        ax.add_patch(mp.Circle((ccx, ccy), cyst_R, fc=ANECHOIC, ec="0.2",
+                               lw=1.0, zorder=4))
+        ax.plot([cx, ccx], [cy, ccy], color="0.4", lw=0.6, ls=":", alpha=0.55)
+        if theta_deg == 0:
+            tx, ty = ccx + cyst_R + 0.10, ccy + 0.05
+            ha = "left"
+        elif theta_deg == 90:
+            tx, ty = ccx, ccy + cyst_R + 0.30
+            ha = "center"
+        elif theta_deg == 180:
+            tx, ty = ccx - cyst_R - 0.10, ccy + 0.05
+            ha = "right"
+        else:
+            tx, ty = ccx, ccy - cyst_R - 0.32
+            ha = "center"
+        ax.text(tx, ty, f"⌀4 mm cyst\n(r = {r_mm:.0f} mm)",
+                fontsize=7, ha=ha, va="center", color="0.15", bbox=LABEL_BG)
+        if roi:
+            ax.annotate(roi,
+                        xy=(ccx + cyst_R * 0.4, ccy - cyst_R * 0.4),
+                        xytext=(label_xy[0], label_xy[1]),
+                        fontsize=8, ha="left", color="#cc2a2a",
+                        bbox=LABEL_BG,
+                        arrowprops=dict(arrowstyle="->", color="#cc2a2a",
+                                        lw=0.8))
+    roi_t_x = cx + 0.55 * scale * 10
+    roi_t_y = cy + 0.55 * scale * 10
+    ax.add_patch(mp.Rectangle((roi_t_x, roi_t_y), 0.8, 0.55, fc="none",
+                              ec="C2", lw=1.6, ls="--"))
+    ax.text(roi_t_x - 0.10, roi_t_y + 0.27, "ROI-T",
+            fontsize=8, ha="right", va="center", color="C2", bbox=LABEL_BG)
+    ax.text(gel_x0 + 0.25, gel_y0 + 0.30,
+            "Cyst voids formed by PTFE / steel / dowel rods at\n"
+            "design radii 10, 14, 14, 18 mm; rods withdrawn after set.",
+            fontsize=8, bbox=LABEL_BG)
+    ax.add_patch(mp.FancyBboxPatch((0.2, 6.55), 4.6, 0.75,
+                                   boxstyle="round,pad=0.1", fc="#fff3b0",
+                                   ec="0.4"))
+    ax.text(2.5, 6.93,
+            "Console: gain ∈ {20, 50, 68} • TGC centered\n"
+            "Acoustic Reference ON • imaging diameter = 60 mm",
+            fontsize=8, ha="center", va="center")
+    ax.add_patch(mp.FancyBboxPatch((5.0, 6.55), 5.2, 0.75,
+                                   boxstyle="round,pad=0.1", fc="#d8f3dc",
+                                   ec="0.4"))
+    ax.text(7.6, 6.93,
+            "ROI-A → noise σ, reject  •  ROI-T → speckle autocorr\n"
+            "(scattering_resolution_mm), envelope hist (μ0/μ1/σ)",
+            fontsize=8, ha="center", va="center")
+    ax.set_xlim(-0.2, 10.4)
+    ax.set_ylim(-0.2, 7.4)
+    _save(fig, "fig_t1_e5i_milk_agar_cyst.png")
+
+
 if __name__ == "__main__":
     for fn in (fig_e1_pulse_echo, fig_e2_wire_psf, fig_e3_slice_thickness,
               fig_e4_attenuation_phantom, fig_e5_cyst_phantom,
               fig_e6_ringdown, fig_e7_grayscale, fig_e8_tissue,
-              fig_e9_timing):
+              fig_e9_timing, fig_t1_e4i_milk_tank, fig_t1_e5i_milk_agar_cyst):
         fn()
         print(f"  wrote {fn.__name__}")
     print(f"All figures written to {OUT}")

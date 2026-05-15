@@ -4,9 +4,10 @@ Pipeline: Markdown -> HTML (python-markdown w/ tables, fenced_code, toc, codehil
 pymdownx.tilde, pymdownx.tasklist, pymdownx.magiclink) -> PDF (xhtml2pdf).
 
 Run:
-    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py            # render all docs
-    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py tier1      # only the Tier 1 calibration protocol
-    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py tier2      # only the Tier 2 / Tier 3 acceptance protocol
+    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py                  # render all docs
+    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py tier1            # only the Tier 1 calibration protocol
+    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py tier2            # only the Tier 2 / Tier 3 acceptance protocol
+    PYTHONPATH=/tmp/calpkgs python3 tools/render_protocol_pdf.py interim_milk     # only the interim milk-phantom SOP
 """
 from __future__ import annotations
 
@@ -49,6 +50,14 @@ DOCS: dict[str, DocSpec] = {
         title="IVUS Tier 2 / Tier 3 Acceptance Protocol",
         subtitle="Visions PV .035 &nbsp;·&nbsp; bench protocol for T2-E1 – T2-E4",
         footer_label="IVUS Tier 2 / Tier 3 Acceptance Protocol — Visions PV .035",
+    ),
+    "interim_milk": DocSpec(
+        name="interim_milk",
+        src=DOCS_DIR / "interim_milk_phantom_sop.md",
+        out=DOCS_DIR / "interim_milk_phantom_sop.pdf",
+        title="Interim Milk-based Tier 1 Phantom SOP",
+        subtitle="Visions PV .035 &nbsp;·&nbsp; T1-E4* and T1-E5* interim stand-ins",
+        footer_label="Interim Milk-based Tier 1 Phantom SOP — Visions PV .035",
     ),
 }
 
