@@ -591,7 +591,7 @@
         25.0
       ],
       "n_frames": 8,
-      "interpretation": "The calibrated bg matches the bench within tolerance, so the simulator's reject window will reproduce the device's reject palette directly. Wire-vs-bg contrast remains over-represented (simulator > bench by ~74 dB on the OptiX renderer), so the calibrated wires saturate at saturation_palette = 239 \u2014 consistent with how the bench renders saturated inner wires."
+      "interpretation": "The calibrated bg matches the bench within tolerance, so the simulator's reject window will reproduce the device's reject palette directly. The wire-vs-bg contrast gap (sim > bench by ~74 dB on the OptiX renderer at ka \u2248 2.6) is a separate scattering-physics issue that the gain_db scalar cannot fix \u2014 see Headline and the deferred Pass 8."
     }
   },
   {
