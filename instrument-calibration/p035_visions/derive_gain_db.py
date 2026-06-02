@@ -25,12 +25,23 @@ This script re-derives ``g_db`` from first principles by:
    ``10**palette``. The K2v2 kernel's epsilon clamp keeps the math finite
    for amp == 0 (-> pixel ≈ -30) but never affects realistic amplitudes.
 
-2. Reading the bench's per-wire peak palettes from
-   ``derived/psf/psf_fit.json`` (the calibrated PSF table) and converting
-   each to envelope amplitude via the calibration sheet's mapping
-   ``amp = 10^(palette / log_multiplier)``. We exclude wires at or near
-   palette saturation (≥ 220) because their underlying amplitude is no
-   longer recoverable.
+2. Reading the bench's per-wire peak palettes from the Wave 0 B2 tungsten/
+   water aggregate fit
+   (``ivus_test_0515/derived_aggregate/psf_b2_tungsten_water/psf_fit.json``)
+   and converting each to envelope amplitude via the calibration sheet's
+   mapping ``amp = 10^(palette / log_multiplier)``.  Wires at or near
+   palette saturation (>= 220) are dropped because their underlying
+   amplitude is no longer recoverable.
+
+   The B2 aggregate replaces the legacy P_035 5-wire phantom (18 wires
+   total, only 7 unsaturated, single take):
+
+      Source                     n_wires  n_unsaturated  median peak
+      P_035 (legacy)             18       7              194.65 palette
+      Wave 0 B2 (aggregate)      154      133            157.11 palette
+
+   The P_035 median was biased by inner-wire near-saturation; the B2
+   aggregate has cleaner per-r-band statistics and 4-take redundancy.
 
 3. Computing the wire-by-wire required gain:
 
@@ -74,10 +85,22 @@ from raysim import IvusSimConfig, RaytracingUltrasoundSimulator  # noqa: E402
 from raysim.ray_sim_python import Sphere  # noqa: E402
 
 YAML_PATH = HERE / "volcano_s5i.yaml"
-BENCH_ROOT = WORKSPACE_ROOT / "P_035_PointScatter" / "derived"
-PSF_FIT_PATH = BENCH_ROOT / "psf" / "psf_fit.json"
-GAIN_LUT_PATH = BENCH_ROOT / "gain_lut" / "gain_lut.json"
-OUTPUT_PATH = BENCH_ROOT / "gain_lut" / "gain_db_derivation.json"
+# Wave 0 B2 wire phantom is the protocol-correct, robustly collected
+# wire-peak anchor.  154 wires across 4 catheter positions at slider 54
+# D=60 (canonical reference operating point), vs P_035's 18 wires at the
+# same operating point from a single take.
+WAVE0_ROOT = WORKSPACE_ROOT / "ivus_test_0515"
+PSF_FIT_PATH = (
+    WAVE0_ROOT / "derived_aggregate" / "psf_b2_tungsten_water" / "psf_fit.json"
+)
+# Legacy P_035 paths kept only for the deprecated bg-target diagnostic.
+LEGACY_BENCH_ROOT = WORKSPACE_ROOT / "P_035_PointScatter" / "derived"
+LEGACY_PSF_FIT_PATH = LEGACY_BENCH_ROOT / "psf" / "psf_fit.json"
+GAIN_LUT_PATH = LEGACY_BENCH_ROOT / "gain_lut" / "gain_lut.json"
+OUTPUT_PATH = (
+    WAVE0_ROOT / "derived_aggregate" / "psf_b2_tungsten_water"
+    / "gain_db_derivation.json"
+)
 
 WIRE_RADII_MM = (5.0, 10.0, 15.0, 20.0, 25.0)
 WIRE_DIAMETER_MM = 0.127
@@ -94,7 +117,7 @@ BENCH_PEAK_SATURATION_PALETTE = 220.0
 def build_wire_world(materials) -> tuple[Any, list[tuple[float, float]]]:
     """Same wire phantom as ``tier1_evaluation.py`` so radii line up exactly."""
     world = rs.World("lumen")
-    wire_mat = materials.get_index("bone")
+    wire_mat = materials.get_index("tungsten")
     positions: list[tuple[float, float]] = []
     for i, r in enumerate(WIRE_RADII_MM):
         theta = i * 2.0 * math.pi / len(WIRE_RADII_MM)
@@ -188,17 +211,25 @@ def measure_water_bg_amp(theta_r_frames: np.ndarray, *, t_far_mm: float,
 # Bench data
 # ---------------------------------------------------------------------------
 def load_bench_wire_amps(*, log_multiplier: float,
-                         saturation_palette: float = BENCH_PEAK_SATURATION_PALETTE) -> list[dict]:
+                         saturation_palette: float = BENCH_PEAK_SATURATION_PALETTE,
+                         psf_fit_path: Path | None = None) -> list[dict]:
     """Read bench per-wire peak palettes and convert to envelope amplitudes.
 
     The calibration sheet defines ``pixel = log_multiplier * log10(amp / log_floor)``
     with ``log_floor = 1.0``; equivalently ``amp = 10^(palette / log_multiplier)``.
     Wires at or above ``saturation_palette`` are dropped because their
     underlying amplitude is no longer recoverable from the palette value.
+
+    Default source: Wave 0 B2 tungsten/water aggregate
+    (`ivus_test_0515/derived_aggregate/psf_b2_tungsten_water/psf_fit.json`)
+    — 154 wires across 4 catheter positions at slider 54, D=60, vs P_035's
+    18 wires from a single take.  Falls back to ``psf_fit_path`` if
+    explicitly passed.
     """
-    if not PSF_FIT_PATH.exists():
-        raise FileNotFoundError(f"missing bench PSF fit: {PSF_FIT_PATH}")
-    psf = json.load(open(PSF_FIT_PATH))
+    psf_fit_path = psf_fit_path or PSF_FIT_PATH
+    if not psf_fit_path.exists():
+        raise FileNotFoundError(f"missing bench PSF fit: {psf_fit_path}")
+    psf = json.load(open(psf_fit_path))
     rows = []
     for r in psf.get("axial_fwhm_mm_per_wire", []):
         peak = float(r.get("peak_palette", 0.0))
@@ -210,6 +241,7 @@ def load_bench_wire_amps(*, log_multiplier: float,
             "r_mm": float(r.get("r_mm", float("nan"))),
             "peak_palette": peak,
             "envelope_amp": amp,
+            "source_subfolder": r.get("source_subfolder", "unknown"),
         })
     return rows
 
@@ -374,10 +406,19 @@ def derive_gain_db(n_frames: int = 30) -> dict[str, Any]:
         )
     bench_amp_median = float(np.median([r["envelope_amp"] for r in bench_rows]))
 
-    # Bench water-scatter background at slider 54: from gain_lut.json's noise
-    # row (E5 anechoic-ROI palette histograms). Mean palette = 46.2 at slider
-    # 54 (clean log-Rayleigh shape, no reject clipping).
-    BENCH_BG_PALETTE_AT_54 = 46.2
+    # Bench water-scatter background reference.  Deprecated as the primary
+    # calibration anchor (the bench's wire-peak target on Wave 0 B2 is the
+    # primary now); kept here as a CONSISTENCY DIAGNOSTIC.  The protocol-
+    # correct E6 AR-off deep tail at slider 50 averages 34.36 palette (mean
+    # of g50_d30 + g50_d60); extrapolated to slider 54 using the +1 dB
+    # per step convention -> 34.36 + 137.4 * 4 / 20 = 61.84 palette.
+    #
+    # The legacy P_035 wedge-masked anechoic ROI gave 46.2 palette at slider
+    # 54.  The 15.6-palette gap (P_035 lower) reflects the
+    # wire-PSF-sidelobe-induced pull of the wedge mask AWAY from the true
+    # noise+water-scatter floor.  Use the E6 number going forward.
+    BENCH_BG_PALETTE_AT_54 = 61.84
+    LEGACY_P_035_BG_PALETTE_AT_54 = 46.2
     bench_bg_amp = 10.0 ** (BENCH_BG_PALETTE_AT_54 / log_multiplier)
 
     # Two candidate calibrations of gain_db against the bench reference:
@@ -474,6 +515,11 @@ def derive_gain_db(n_frames: int = 30) -> dict[str, Any]:
         "bench_envelope_amp_median_wire": bench_amp_median,
         "bench_envelope_amp_water_bg_at_slider_54": bench_bg_amp,
         "bench_water_bg_palette_at_slider_54": BENCH_BG_PALETTE_AT_54,
+        "bench_water_bg_palette_source": (
+            "E6 c_take2_water/derived/ringdown AR-off deep-tail mean "
+            "(g50 avg) + slider-step extrapolation to slider 54"),
+        "legacy_p_035_water_bg_palette_at_slider_54":
+            LEGACY_P_035_BG_PALETTE_AT_54,
         "gain_db_wire_target": gain_db_wire,
         "gain_db_bg_target": gain_db_bg,
         "gain_db_bg_amp_pure": gain_db_bg_amp_pure,

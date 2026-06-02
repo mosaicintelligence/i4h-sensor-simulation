@@ -1,0 +1,135 @@
+{
+  "method_summary": "Bisection of processing.noise.sigma so the simulator's anechoic post-clamp MEAN palette matches the protocol-correct E6 AR-on deep-tail MEAN (averaged across usable E6 pairs at their native slider, pure water bath, no scatterers, AR suppresses catheter ringdown -- the cleanest device-noise reference).  The sim is rendered AT THE BENCH SLIDER (gain_db bumped by ref_slider-54 from the YAML's slider-54 default) so MEAN is compared without slider-step extrapolation.  The legacy P_035 wedge-masked anechoic ROI (mean 46.2 at slider 54) is deprecated because wire-PSF sidelobe leakage into the ROI biased the measurement away from the true device-noise floor.\n\nWhy MEAN (and not STD): palette MEAN is monotonic-increasing in sigma (until palette saturation) so a stable bisection is possible.  STD is non-monotonic (rises, peaks ~ palette 30 at sigma ~ 1e-2, then falls as palette saturates at 239), so std-anchored bisection has two solutions and is unreliable.  The bench-vs-sim STD comparison is reported as a DIAGNOSTIC: Gaussian RF noise -> Rayleigh envelope -> log_palette gives CV ~ 0.5; bench AR-on processing flattens the noise distribution to CV ~ 0.07, a shape that single-scalar Gaussian RF noise cannot reproduce.  Test F (Noise floor sigma) is expected to fail until a Pass 8 noise-shape calibration is added (e.g., post-clamp Gaussian smoothing, or a fundamentally different noise distribution).",
+  "target_mean": 37.260202407836914,
+  "target_std_bench_diagnostic": 2.6453996896743774,
+  "target_ref_slider": 50.0,
+  "n_frames": 8,
+  "tol_palette": 0.5,
+  "calibrated_sigma": 0.008593890625000001,
+  "previous_yaml_sigma": 0.002149,
+  "final_stats": {
+    "sigma": 0.008593890625000001,
+    "mean_palette": 37.37887191772461,
+    "median_palette": 35.82555389404297,
+    "std_palette": 21.69655418395996,
+    "p05_palette": 11.0,
+    "p95_palette": 75.33660888671875,
+    "n_pixels": 1398784
+  },
+  "cv_sim_palette": 0.5804496784096825,
+  "cv_bench_palette": 0.07099799568233081,
+  "cv_ratio_sim_over_bench": 8.175578378392707,
+  "history": [
+    {
+      "sigma": 1e-06,
+      "mean_palette": 11.0,
+      "median_palette": 11.0,
+      "std_palette": 0.0,
+      "p05_palette": 11.0,
+      "p95_palette": 11.0,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.005,
+      "mean_palette": 17.66134262084961,
+      "median_palette": 11.0,
+      "std_palette": 11.223651885986328,
+      "p05_palette": 11.0,
+      "p95_palette": 43.01740646362305,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.01,
+      "mean_palette": 44.923011779785156,
+      "median_palette": 44.86786651611328,
+      "std_palette": 23.66546058654785,
+      "p05_palette": 11.0,
+      "p95_palette": 84.3789291381836,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.0050005,
+      "mean_palette": 17.6636905670166,
+      "median_palette": 11.0,
+      "std_palette": 11.225801467895508,
+      "p05_palette": 11.0,
+      "p95_palette": 43.02338409423828,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.00750025,
+      "mean_palette": 31.226959228515625,
+      "median_palette": 27.70327377319336,
+      "std_palette": 19.490522384643555,
+      "p05_palette": 11.0,
+      "p95_palette": 67.2143325805664,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.008750125000000001,
+      "mean_palette": 38.240943908691406,
+      "median_palette": 36.90062713623047,
+      "std_palette": 21.95795440673828,
+      "p05_palette": 11.0,
+      "p95_palette": 76.41168975830078,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.0081251875,
+      "mean_palette": 34.76396179199219,
+      "median_palette": 32.478981018066406,
+      "std_palette": 20.836009979248047,
+      "p05_palette": 11.0,
+      "p95_palette": 71.99005126953125,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.008437656250000002,
+      "mean_palette": 36.51171875,
+      "median_palette": 34.730751037597656,
+      "std_palette": 21.422842025756836,
+      "p05_palette": 11.0,
+      "p95_palette": 74.24180603027344,
+      "n_pixels": 1398784
+    },
+    {
+      "sigma": 0.008593890625000001,
+      "mean_palette": 37.37887191772461,
+      "median_palette": 35.82555389404297,
+      "std_palette": 21.69655418395996,
+      "p05_palette": 11.0,
+      "p95_palette": 75.33660888671875,
+      "n_pixels": 1398784
+    }
+  ],
+  "e6_anchor": {
+    "target_std": 2.6453996896743774,
+    "target_mean": 37.260202407836914,
+    "ref_slider": 50.0,
+    "pairs": [
+      {
+        "gain": 50.0,
+        "diameter_mm": 30.0,
+        "on_mean_palette": 36.92856979370117,
+        "on_std_palette": 2.019989252090454,
+        "on_p50_palette": 37.0,
+        "band_r_mm": [
+          4.0,
+          9.84000015258789
+        ]
+      },
+      {
+        "gain": 50.0,
+        "diameter_mm": 60.0,
+        "on_mean_palette": 37.591835021972656,
+        "on_std_palette": 3.270810127258301,
+        "on_p50_palette": 38.5,
+        "band_r_mm": [
+          4.0,
+          9.84000015258789
+        ]
+      }
+    ],
+    "source_summary": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_summary_v2.json"
+  }
+}

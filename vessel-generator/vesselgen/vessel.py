@@ -71,6 +71,7 @@ class Vessel:
 
     @classmethod
     def from_config(cls, cfg: VesselConfig) -> "Vessel":
+        cfg = cfg.with_minimum_side_branch_lengths()
         rng_root = np.random.default_rng(cfg.seed)
 
         parent_centerline = Centerline(cfg.parent.centerline)
@@ -168,6 +169,8 @@ class Vessel:
         max_tilt_deg: float = 15.0,
         edge_margin_mm: float = 0.2,
         max_attempts: int = 64,
+        side_branch_ostium_bias_prob: float = 0.0,
+        side_branch_ostium_arclength_frac: float = 0.25,
     ):
         """Draw a fresh random pose anywhere inside the vessel lumen.
 
@@ -183,6 +186,8 @@ class Vessel:
             max_tilt_deg=max_tilt_deg,
             edge_margin_mm=edge_margin_mm,
             max_attempts=max_attempts,
+            side_branch_ostium_bias_prob=side_branch_ostium_bias_prob,
+            side_branch_ostium_arclength_frac=side_branch_ostium_arclength_frac,
         )
 
     def sample_pose_in_branch(
@@ -226,9 +231,16 @@ class Vessel:
         """True iff ``position`` (3,) lies inside the lumen."""
         return bool(self.lumen_mesh.contains([np.asarray(position, dtype=float)])[0])
 
-    def ground_truth_at(self, pose, n_angles: int = 360):
+    def ground_truth_at(
+        self,
+        pose,
+        n_angles: int = 360,
+        max_distance_mm: float = 30.0,
+    ):
         from vesselgen.sampling import ground_truth_at
-        return ground_truth_at(self, pose, n_angles=n_angles)
+        return ground_truth_at(
+            self, pose, n_angles=n_angles, max_distance_mm=max_distance_mm
+        )
 
     # -----------------------------------------------------------------
     # IO (full IO lives in vesselgen.io to keep this module light)

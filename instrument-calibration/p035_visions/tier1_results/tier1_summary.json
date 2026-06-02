@@ -1,628 +1,3393 @@
-[
-  {
-    "name": "A. Configuration-sheet round-trip",
-    "status": "pass",
-    "summary": "Every probe / processing / TGC / ring-down parameter in the YAML appears in SimParams with the identical value (no rounding).",
-    "detail": {
-      "probe.frequency_mhz": {
-        "yaml": 10.0,
-        "sim_params": 10.0,
-        "abs_diff": 0.0,
-        "tol": 0.0001,
-        "ok": true
-      },
-      "probe.pulse_duration_cycles": {
-        "yaml": 2.0,
-        "sim_params": 2.0,
-        "abs_diff": 0.0,
-        "tol": 2e-05,
-        "ok": true
-      },
-      "probe.element_radius_mm": {
-        "yaml": 4.6,
-        "sim_params": 4.6,
-        "abs_diff": 0.0,
-        "tol": 4.6e-05,
-        "ok": true
-      },
-      "probe.focal_length_mm": {
-        "yaml": 19.2,
-        "sim_params": 19.2,
-        "abs_diff": 0.0,
-        "tol": 0.000192,
-        "ok": true
-      },
-      "probe.speed_of_sound_mm_per_us": {
-        "yaml": 1.54,
-        "sim_params": 1.54,
-        "abs_diff": 0.0,
-        "tol": 1.54e-05,
-        "ok": true
-      },
-      "processing.log_multiplier": {
-        "yaml": 112.3,
-        "sim_params": 112.30000305175781,
-        "abs_diff": 3.051757815342171e-06,
-        "tol": 0.0011230000305175781,
-        "ok": true
-      },
-      "processing.log_floor": {
-        "yaml": 1.0,
-        "sim_params": 1.0,
-        "abs_diff": 0.0,
-        "tol": 1e-05,
-        "ok": true
-      },
-      "processing.reject_palette": {
-        "yaml": 11.0,
-        "sim_params": 11.0,
-        "abs_diff": 0.0,
-        "tol": 0.00011,
-        "ok": true
-      },
-      "processing.saturation_palette": {
-        "yaml": 239.0,
-        "sim_params": 239.0,
-        "abs_diff": 0.0,
-        "tol": 0.00239,
-        "ok": true
-      },
-      "processing.gain_db": {
-        "yaml": 73.92,
-        "sim_params": 73.91999816894531,
-        "abs_diff": 1.8310546892053026e-06,
-        "tol": 0.0007392000000000001,
-        "ok": true
-      },
-      "ring_down.enabled": {
-        "yaml": 1.0,
-        "sim_params": 1.0,
-        "abs_diff": 0.0,
-        "tol": 1e-05,
-        "ok": true
-      },
-      "ring_down.amplitude": {
-        "yaml": 46.37,
-        "sim_params": 46.369998931884766,
-        "abs_diff": 1.0681152318170462e-06,
-        "tol": 0.0004637,
-        "ok": true
-      },
-      "ring_down.extent_mm": {
-        "yaml": 3.0,
-        "sim_params": 3.0,
-        "abs_diff": 0.0,
-        "tol": 3.0000000000000004e-05,
-        "ok": true
-      },
-      "tgc_control_points": {
-        "yaml": [
-          [
-            0.0,
-            0.0
-          ],
-          [
-            0.7,
-            0.0
-          ],
-          [
-            1.5,
-            0.0
-          ],
-          [
-            2.2,
-            0.98
-          ],
-          [
-            2.9,
-            2.05
-          ]
-        ],
-        "sim_params": [
-          [
-            0.0,
-            0.0
-          ],
-          [
-            0.699999988079071,
-            0.0
-          ],
-          [
-            1.5,
-            0.0
-          ],
-          [
-            2.200000047683716,
-            0.9800000190734863
-          ],
-          [
-            2.9000000953674316,
-            2.049999952316284
-          ]
-        ],
-        "ok": true
-      }
-    }
-  },
-  {
-    "name": "B. Configuration self-consistency",
-    "status": "pass",
-    "summary": "All 15 round-tripped fields match across IvusSimConfig.to_dict \u2194 from_dict.",
-    "detail": {
-      "fields_checked": [
-        "probe.frequency_mhz",
-        "probe.pulse_duration_cycles",
-        "probe.element_radius_mm",
-        "probe.focal_length_mm",
-        "probe.speed_of_sound_mm_per_us",
-        "processing.tgc_control_points",
-        "processing.log_multiplier",
-        "processing.log_floor",
-        "processing.reject_palette",
-        "processing.saturation_palette",
-        "processing.gain_db",
-        "ring_down.enabled",
-        "ring_down.amplitude",
-        "ring_down.extent_mm",
-        "ring_down.decay"
-      ],
-      "issues": []
-    }
-  },
-  {
-    "name": "C. Axial PSF (per radius)",
-    "status": "fail",
-    "summary": "Sim axial FWHM medians: r=5: not detected, r=10: not detected, r=15: not detected, r=20: not detected, r=25: not detected. Bench median FWHM = 88 \u00b5m. Sim FWHM is essentially subpixel for every wire \u2014 the simulator's axial PSF is much narrower than the bench's pulse-length-broadened echoes.",
-    "detail": {
-      "per_wire_summary": [
-        {
-          "wire_idx": 1,
-          "r_mm": 5.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2484.6064453125,
-          "detected": true,
-          "saturated": true
-        },
-        {
-          "wire_idx": 2,
-          "r_mm": 10.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2517.893310546875,
-          "detected": true,
-          "saturated": true
-        },
-        {
-          "wire_idx": 3,
-          "r_mm": 15.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2339.56298828125,
-          "detected": true,
-          "saturated": true
-        },
-        {
-          "wire_idx": 4,
-          "r_mm": 20.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2354.35009765625,
-          "detected": true,
-          "saturated": true
-        },
-        {
-          "wire_idx": 5,
-          "r_mm": 25.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2504.25,
-          "detected": true,
-          "saturated": true
-        }
-      ],
-      "bench_axial_median_mm": 0.088,
-      "bench_axial_per_wire": [
-        {
-          "wire": 4,
-          "r_mm": 21.12,
-          "axial_fwhm_mm": 0.128,
-          "peak_palette": 228.05
-        },
-        {
-          "wire": 4,
-          "r_mm": 20.88,
-          "axial_fwhm_mm": 0.1599,
-          "peak_palette": 224.08
-        },
-        {
-          "wire": 5,
-          "r_mm": 26.04,
-          "axial_fwhm_mm": 0.1601,
-          "peak_palette": 233.8
-        },
-        {
-          "wire": 5,
-          "r_mm": 26.28,
-          "axial_fwhm_mm": 0.1721,
-          "peak_palette": 233.18
-        },
-        {
-          "wire": 1,
-          "r_mm": 3.84,
-          "axial_fwhm_mm": 0.1708,
-          "peak_palette": 233.46
-        },
-        {
-          "wire": 3,
-          "r_mm": 16.68,
-          "axial_fwhm_mm": 0.0601,
-          "peak_palette": 175.6
-        },
-        {
-          "wire": 4,
-          "r_mm": 22.92,
-          "axial_fwhm_mm": 0.1975,
-          "peak_palette": 37.24
-        },
-        {
-          "wire": 1,
-          "r_mm": 4.68,
-          "axial_fwhm_mm": 0.0952,
-          "peak_palette": 234.94
-        },
-        {
-          "wire": 3,
-          "r_mm": 15.48,
-          "axial_fwhm_mm": 0.0698,
-          "peak_palette": 203.63
-        },
-        {
-          "wire": 4,
-          "r_mm": 21.36,
-          "axial_fwhm_mm": 0.0545,
-          "peak_palette": 194.65
-        },
-        {
-          "wire": 1,
-          "r_mm": 4.92,
-          "axial_fwhm_mm": 0.1914,
-          "peak_palette": 223.46
-        },
-        {
-          "wire": 2,
-          "r_mm": 10.56,
-          "axial_fwhm_mm": 0.092,
-          "peak_palette": 232.46
-        },
-        {
-          "wire": 3,
-          "r_mm": 16.2,
-          "axial_fwhm_mm": 0.0941,
-          "peak_palette": 234.8
-        },
-        {
-          "wire": 4,
-          "r_mm": 21.84,
-          "axial_fwhm_mm": 0.0769,
-          "peak_palette": 177.3
-        },
-        {
-          "wire": 5,
-          "r_mm": 26.28,
-          "axial_fwhm_mm": 0.0876,
-          "peak_palette": 202.23
-        },
-        {
-          "wire": 4,
-          "r_mm": 23.16,
-          "axial_fwhm_mm": 0.075,
-          "peak_palette": 220.04
-        },
-        {
-          "wire": 1,
-          "r_mm": 3.72,
-          "axial_fwhm_mm": 0.1531,
-          "peak_palette": 205.77
-        },
-        {
-          "wire": 4,
-          "r_mm": 22.44,
-          "axial_fwhm_mm": 0.0884,
-          "peak_palette": 223.21
-        }
-      ],
-      "tolerance_mm": 0.029296875
-    }
-  },
-  {
-    "name": "D. Lateral PSF (per radius)",
-    "status": "fail",
-    "summary": "Sim lateral arc-FWHM medians: r=5: not detected, r=10: not detected, r=15: not detected, r=20: not detected, r=25: not detected. Bench focus FWHM = 0.53 mm at z_f = 19.2 mm. 0/0 wires within \u00b120%; no focus determined. Focal trend mismatch: sim focus outside 12\u201320 mm window.",
-    "detail": {
-      "per_wire_summary": [
-        {
-          "wire_idx": 1,
-          "r_mm": 5.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2484.6064453125,
-          "detected": true,
-          "saturated": true
-        },
-        {
-          "wire_idx": 2,
-          "r_mm": 10.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2517.893310546875,
-          "detected": true,
-          "saturated": true
-        },
-        {
-          "wire_idx": 3,
-          "r_mm": 15.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2339.56298828125,
-          "detected": true,
-          "saturated": true
-        },
-        {
-          "wire_idx": 4,
-          "r_mm": 20.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2354.35009765625,
-          "detected": true,
-          "saturated": true
-        },
-        {
-          "wire_idx": 5,
-          "r_mm": 25.0,
-          "n_frames": 8,
-          "n_unsat": 0,
-          "axial_fwhm_mm_median": null,
-          "lateral_fwhm_arc_mm_median": null,
-          "peak_palette_max": 2504.25,
-          "detected": true,
-          "saturated": true
-        }
-      ],
-      "bench_lateral_fwhm_at_focus_mm": 0.5339204745599667
-    }
-  },
-  {
-    "name": "E. Ring-down (mean A-line)",
-    "status": "fail",
-    "summary": "sim peak palette = 189.9 (bench 231.7, \u0394=-41.8); RMS over r \u2208 [0, 3] mm = 37.7 palette (\u22645 required); sim extent = 3.03 mm (bench 3.84 mm).",
-    "detail": {
-      "bench": {
-        "peak_palette": 231.70911865234376,
-        "extent_mm": 3.84,
-        "speckle_floor_palette": 44.61449775695801,
-        "peak_palette_excess": 187.09462089538576
-      },
-      "sim": {
-        "peak_palette": 189.8743896484375,
-        "peak_depth_mm": 1.8896484375,
-        "extent_mm": 3.0322265625,
-        "speckle_floor_palette_proxy": 48.66733169555664,
-        "peak_palette_excess": 141.20706176757812,
-        "rms_palette_inner3mm": 37.69256937324227,
-        "rms_palette_inner3mm_shape_only": 39.93982446824868
-      },
-      "pass_criteria": {
-        "peak_within_10pct": {
-          "sim": 189.8743896484375,
-          "bench": 231.70911865234376,
-          "rel_err": 0.18054847926237666,
-          "ok": false
-        },
-        "rms_le_5_palette": {
-          "value": 37.69256937324227,
-          "ok": false
-        },
-        "rms_shape_le_5_palette": {
-          "value": 39.93982446824868,
-          "ok": false,
-          "note": "shape-only RMS after subtracting each curve's post-ringdown baseline; cf. gain-alignment diagnostic"
-        },
-        "extent_within_0_3_mm": {
-          "sim": 3.0322265625,
-          "bench": 3.84,
-          "delta_mm": 0.8077734374999999,
-          "ok": false
-        }
-      }
-    }
-  },
-  {
-    "name": "F. Noise floor \u03c3",
-    "status": "pass",
-    "summary": "sim std palette = 22.29 vs bench 20.27 (rel.err 10.0% / 20% tol); sim mean = 46.43 vs bench 46.25; sim median = 46.91 vs bench 44.29. Anechoic water render; noise.sigma = 0.0007.",
-    "detail": {
-      "bench_gain_54": {
-        "n": 396772,
-        "mean": 46.24573254734288,
-        "std": 20.269958717835966,
-        "skew": 1.5558974361327211,
-        "kurt": 7.1219639958680325,
-        "p05": 18.19167537689209,
-        "p50": 44.290117263793945,
-        "p95": 79.16501121520989,
-        "n_frames": 9,
-        "gauss_sigma": 20.269958717835966,
-        "gauss_nll_per_sample": 4.428078457052594,
-        "rayleigh_sigma_shifted": 29.36515238224403,
-        "rayleigh_nll_per_sample": 4.35169279931483,
-        "preferred_distribution": "rayleigh"
-      },
-      "sim": {
-        "mean_palette": 46.429168701171875,
-        "std_palette": 22.2926082611084,
-        "p50_palette": 46.91374206542969,
-        "p05_palette": 11.0,
-        "p95_palette": 82.54989624023438,
-        "n_frames": 8,
-        "n_pixels": 1818624,
-        "world": "water (no scatter, anechoic)",
-        "noise_sigma_yaml": 0.000712
-      },
-      "pass_criteria": {
-        "sigma_within_20pct": {
-          "sim_std": 22.2926082611084,
-          "bench_std": 20.269958717835966,
-          "rel_err": 0.09978557783113098,
+{
+  "psf_anchor": "wave0",
+  "psf_anchor_label": "B2 (12-wire spiral, n=168 wires pooled over 4 positions)",
+  "results": [
+    {
+      "name": "A. Configuration-sheet round-trip",
+      "status": "pass",
+      "summary": "Every probe / processing / TGC / ring-down parameter in the YAML appears in SimParams with the identical value (no rounding).",
+      "detail": {
+        "probe.frequency_mhz": {
+          "yaml": 10.0,
+          "sim_params": 10.0,
+          "abs_diff": 0.0,
+          "tol": 0.0001,
           "ok": true
         },
-        "mean_palette_diagnostic": {
-          "sim_mean": 46.429168701171875,
-          "bench_mean": 46.24573254734288,
-          "rel_err": 0.003966553100682415,
-          "note": "informational; calibration anchors mean directly so this should be \u226a 5%"
+        "probe.pulse_duration_cycles": {
+          "yaml": 15.0,
+          "sim_params": 15.0,
+          "abs_diff": 0.0,
+          "tol": 0.00015000000000000001,
+          "ok": true
+        },
+        "probe.element_radius_mm": {
+          "yaml": 2.79,
+          "sim_params": 2.79,
+          "abs_diff": 0.0,
+          "tol": 2.7900000000000004e-05,
+          "ok": true
+        },
+        "probe.focal_length_mm": {
+          "yaml": 9.55,
+          "sim_params": 9.55,
+          "abs_diff": 0.0,
+          "tol": 9.550000000000002e-05,
+          "ok": true
+        },
+        "probe.speed_of_sound_mm_per_us": {
+          "yaml": 1.54,
+          "sim_params": 1.54,
+          "abs_diff": 0.0,
+          "tol": 1.54e-05,
+          "ok": true
+        },
+        "processing.log_multiplier": {
+          "yaml": 137.4,
+          "sim_params": 137.39999389648438,
+          "abs_diff": 6.103515630684342e-06,
+          "tol": 0.0013740000000000002,
+          "ok": true
+        },
+        "processing.log_floor": {
+          "yaml": 1.0,
+          "sim_params": 1.0,
+          "abs_diff": 0.0,
+          "tol": 1e-05,
+          "ok": true
+        },
+        "processing.reject_palette": {
+          "yaml": 11.0,
+          "sim_params": 11.0,
+          "abs_diff": 0.0,
+          "tol": 0.00011,
+          "ok": true
+        },
+        "processing.saturation_palette": {
+          "yaml": 239.0,
+          "sim_params": 239.0,
+          "abs_diff": 0.0,
+          "tol": 0.00239,
+          "ok": true
+        },
+        "processing.gain_db": {
+          "yaml": 58.09,
+          "sim_params": 58.09000015258789,
+          "abs_diff": 1.5258788721439487e-07,
+          "tol": 0.000580900001525879,
+          "ok": true
+        },
+        "ring_down.enabled": {
+          "yaml": 1.0,
+          "sim_params": 1.0,
+          "abs_diff": 0.0,
+          "tol": 1e-05,
+          "ok": true
+        },
+        "ring_down.amplitude": {
+          "yaml": 0.082497,
+          "sim_params": 0.0824970006942749,
+          "abs_diff": 6.942749014582361e-10,
+          "tol": 1e-06,
+          "ok": true
+        },
+        "ring_down.extent_mm": {
+          "yaml": 3.6,
+          "sim_params": 3.5999999046325684,
+          "abs_diff": 9.536743172944284e-08,
+          "tol": 3.6e-05,
+          "ok": true
+        },
+        "tgc_control_points": {
+          "yaml": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.5,
+              0.0
+            ],
+            [
+              3.0,
+              13.0
+            ]
+          ],
+          "sim_params": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              0.5,
+              0.0
+            ],
+            [
+              3.0,
+              13.0
+            ]
+          ],
+          "ok": true
         }
-      }
-    }
-  },
-  {
-    "name": "G. Log-compression mapping",
-    "status": "pass",
-    "summary": "Synthetic envelope sweep: |\u0394palette| \u2264 0.0 \u2264 3 across 6 amplitudes spanning ~3.5 decades. K2v2 kernel matches the spec mapping exactly (log_floor = 1).",
-    "detail": {
-      "log_multiplier": 112.3,
-      "log_floor": 1.0,
-      "kernel_formula": "log_multiplier * log10(max(amp, eps) / max(log_floor, eps))",
-      "spec_formula": "log_multiplier * log10(amp / log_floor)",
-      "rows": [
-        {
-          "envelope_amp": 1.0,
-          "spec_palette": 0.0,
-          "kernel_palette": 0.0,
-          "delta_palette": 0.0,
-          "delta_dB": 0.0
-        },
-        {
-          "envelope_amp": 1.0,
-          "spec_palette": 0.0,
-          "kernel_palette": 0.0,
-          "delta_palette": 0.0,
-          "delta_dB": 0.0
-        },
-        {
-          "envelope_amp": 10.0,
-          "spec_palette": 112.3,
-          "kernel_palette": 112.3,
-          "delta_palette": 0.0,
-          "delta_dB": 0.0
-        },
-        {
-          "envelope_amp": 100.0,
-          "spec_palette": 224.6,
-          "kernel_palette": 224.6,
-          "delta_palette": 0.0,
-          "delta_dB": 0.0
-        },
-        {
-          "envelope_amp": 1000.0,
-          "spec_palette": 336.9,
-          "kernel_palette": 336.9,
-          "delta_palette": 0.0,
-          "delta_dB": 0.0
-        },
-        {
-          "envelope_amp": 5000.0,
-          "spec_palette": 415.3943314869349,
-          "kernel_palette": 415.3943314869349,
-          "delta_palette": 0.0,
-          "delta_dB": 0.0
-        }
-      ],
-      "max_abs_palette_error": 0.0,
-      "tolerance_palette": 3.0
-    }
-  },
-  {
-    "name": "H. TGC schedule",
-    "status": "pass",
-    "summary": "YAML and sim apply identical piecewise-linear TGC over r\u2208[0.01, 29.99] mm; RMS = 0.0000 dB (\u2264 0.1 dB tolerance).",
-    "detail": {
-      "n_samples": 1024,
-      "depth_range_mm": [
-        0.0146484375,
-        29.9853515625
-      ],
-      "rms_dB": 0.0,
-      "max_abs_dB": 0.0,
-      "tolerance_dB": 0.1
-    }
-  },
-  {
-    "name": "Gain alignment (calibration-sheet diagnostic)",
-    "status": "pass",
-    "summary": "Sim water-bg palette (mean across 8 clean frames, r \u2208 [5.0, 25.0] mm) = 48.1 vs bench 46.2 (\u0394 = +1.9 palette \u2248 +0.34 dB). Within \u00b110 palette tolerance \u2014 Pass 3b gain calibration on target.",
-    "detail": {
-      "sim_bg_mean_palette": 48.11888313293457,
-      "sim_bg_std_palette": 0.1445327473072353,
-      "bench_bg_palette_at_slider_54": 46.2,
-      "delta_palette": 1.9188831329345675,
-      "delta_dB_estimate": 0.34174232109253205,
-      "tolerance_palette": 10.0,
-      "clean_band_mm": [
-        5.0,
-        25.0
-      ],
-      "n_frames": 8,
-      "interpretation": "The calibrated bg matches the bench within tolerance, so the simulator's reject window will reproduce the device's reject palette directly. The wire-vs-bg contrast gap (sim > bench by ~74 dB on the OptiX renderer at ka \u2248 2.6) is a separate scattering-physics issue that the gain_db scalar cannot fix \u2014 see Headline and the deferred Pass 8."
-    }
-  },
-  {
-    "name": "I. Depth uniformity (anechoic ROI)",
-    "status": "pass",
-    "summary": "Sim vs bench mean palette over r \u2208 [4.0, 29.0] mm: RMS = 3.5 palette (\u2264 10 required), max |\u0394| = 8.6, bias = +0.2; sim peak-to-trough = 6.5 vs bench 14.1 (ratio 0.46, \u2264 1.5 required). Sim depth uniformity matches bench within tolerance.",
-    "detail": {
-      "rms_palette": 3.5266780589158144,
-      "max_abs_palette": 8.559218747281164,
-      "bias_palette": 0.17808297609204296,
-      "sim_peak_to_trough_palette": 6.458102862928165,
-      "bench_peak_to_trough_palette": 14.055746980011463,
-      "sim_span_over_bench_span": 0.45946351141011343,
-      "rms_tolerance_palette": 10.0,
-      "span_ratio_tolerance": 1.5,
-      "rms_pass": true,
-      "span_ratio_pass": true,
-      "evaluation_band_mm": [
-        4.0,
-        29.0
-      ],
-      "ringdown_excluded_mm": 3.0,
-      "n_sim_frames": 8,
-      "n_bench_frames": 5,
-      "bench_mask": {
-        "exclude_angle_deg": 12.0,
-        "peak_clip_percentile": 70.0,
-        "gain_slider": 54.0,
-        "diameter_mm": 60.0
       },
-      "figure": "figures/depth_uniformity.png"
+      "bank": "parameter"
+    },
+    {
+      "name": "B. Configuration self-consistency",
+      "status": "pass",
+      "summary": "All 15 round-tripped fields match across IvusSimConfig.to_dict \u2194 from_dict.",
+      "detail": {
+        "fields_checked": [
+          "probe.frequency_mhz",
+          "probe.pulse_duration_cycles",
+          "probe.element_radius_mm",
+          "probe.focal_length_mm",
+          "probe.speed_of_sound_mm_per_us",
+          "processing.tgc_control_points",
+          "processing.log_multiplier",
+          "processing.log_floor",
+          "processing.reject_palette",
+          "processing.saturation_palette",
+          "processing.gain_db",
+          "ring_down.enabled",
+          "ring_down.amplitude",
+          "ring_down.extent_mm",
+          "ring_down.decay"
+        ],
+        "issues": []
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "C. Axial PSF (per radius)",
+      "status": "pass",
+      "summary": "B2 spiral phantom, 10 scored wires (w2..w11), 4 catheter rotations x 8 frames = 32 obs/wire. 10/10 wires pass per-wire axial FWHM match (tol = max(50 um, bench IQR)). Sim per-wire medians: r=6.0: 272 um, r=8.0: 266 um, r=10.0: 279 um, r=12.0: 257 um, r=14.0: 269 um, r=16.0: 273 um, r=18.0: 264 um, r=20.0: 271 um, r=22.0: 263 um, r=24.0: 266 um. Bench global median = 303 um.",
+      "detail": {
+        "per_wire_summary": [
+          {
+            "wire_idx": 1,
+            "r_mm": 4.0,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.2611600553938077,
+            "axial_fwhm_mm_iqr_um": 17.735552112314757,
+            "lateral_fwhm_arc_mm_median": 0.48195079711085465,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.009140665296752393,
+            "peak_palette_max": 2853.50048828125,
+            "detected": true,
+            "saturated": false,
+            "scored": false
+          },
+          {
+            "wire_idx": 2,
+            "r_mm": 5.999867998547968,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.27172391472734814,
+            "axial_fwhm_mm_iqr_um": 27.724015495207645,
+            "lateral_fwhm_arc_mm_median": 0.7395893071467403,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.029424092815583336,
+            "peak_palette_max": 2854.13330078125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.2892,
+            "bench_axial_fwhm_iqr_um": 43.999999999999986,
+            "bench_axial_n_wires": 9,
+            "axial_diff_mm": -0.017476085272651876,
+            "axial_tol_mm": 0.05,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 0.7714,
+            "bench_lateral_fwhm_iqr_mm": 0.11532500000000001,
+            "bench_lateral_n_wires": 6,
+            "lateral_diff_mm": -0.03181069285325966,
+            "lateral_tol_mm": 0.15428,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 3,
+            "r_mm": 7.999823998063957,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.2655931567924458,
+            "axial_fwhm_mm_iqr_um": 27.541901373221876,
+            "lateral_fwhm_arc_mm_median": 0.9705200899184316,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.07099966494818366,
+            "peak_palette_max": 2825.782470703125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.2589,
+            "bench_axial_fwhm_iqr_um": 42.00000000000001,
+            "bench_axial_n_wires": 9,
+            "axial_diff_mm": 0.006693156792445754,
+            "axial_tol_mm": 0.05,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 0.9809,
+            "bench_lateral_fwhm_iqr_mm": 0.12640000000000007,
+            "bench_lateral_n_wires": 5,
+            "lateral_diff_mm": -0.010379910081568355,
+            "lateral_tol_mm": 0.19618000000000002,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 4,
+            "r_mm": 10.0,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.27920400274995705,
+            "axial_fwhm_mm_iqr_um": 12.9005237079991,
+            "lateral_fwhm_arc_mm_median": 1.1720798878235623,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.21615848655860415,
+            "peak_palette_max": 2822.040771484375,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.279,
+            "bench_axial_fwhm_iqr_um": 21.12500000000006,
+            "bench_axial_n_wires": 8,
+            "axial_diff_mm": 0.00020400274995702183,
+            "axial_tol_mm": 0.05,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 1.1939000000000002,
+            "bench_lateral_fwhm_iqr_mm": 0.10785,
+            "bench_lateral_n_wires": 6,
+            "lateral_diff_mm": -0.021820112176437867,
+            "lateral_tol_mm": 0.23878000000000005,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 5,
+            "r_mm": 11.999735997095936,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.25698152796196416,
+            "axial_fwhm_mm_iqr_um": 39.06292273829923,
+            "lateral_fwhm_arc_mm_median": 1.406391336145521,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.0621519573769167,
+            "peak_palette_max": 2856.75732421875,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.2842,
+            "bench_axial_fwhm_iqr_um": 24.400000000000034,
+            "bench_axial_n_wires": 9,
+            "axial_diff_mm": -0.027218472038035846,
+            "axial_tol_mm": 0.05,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 1.4680499999999999,
+            "bench_lateral_fwhm_iqr_mm": 0.29920000000000013,
+            "bench_lateral_n_wires": 8,
+            "lateral_diff_mm": -0.061658663854478934,
+            "lateral_tol_mm": 0.29361,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 6,
+            "r_mm": 13.999691996611926,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.26899059912070283,
+            "axial_fwhm_mm_iqr_um": 25.60278136187036,
+            "lateral_fwhm_arc_mm_median": 1.635081510837097,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.05765793961100396,
+            "peak_palette_max": 2858.0869140625,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.32015000000000005,
+            "bench_axial_fwhm_iqr_um": 74.35000000000002,
+            "bench_axial_n_wires": 16,
+            "axial_diff_mm": -0.05115940087929721,
+            "axial_tol_mm": 0.07435000000000003,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 1.8036,
+            "bench_lateral_fwhm_iqr_mm": 0.28500000000000014,
+            "bench_lateral_n_wires": 13,
+            "lateral_diff_mm": -0.16851848916290302,
+            "lateral_tol_mm": 0.36072000000000004,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 7,
+            "r_mm": 16.0,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.27315449459358154,
+            "axial_fwhm_mm_iqr_um": 14.233297245140053,
+            "lateral_fwhm_arc_mm_median": 1.8628252826854146,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.011571332763462117,
+            "peak_palette_max": 2845.126953125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.3255,
+            "bench_axial_fwhm_iqr_um": 76.6,
+            "bench_axial_n_wires": 13,
+            "axial_diff_mm": -0.05234550540641847,
+            "axial_tol_mm": 0.0766,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.1943,
+            "bench_lateral_fwhm_iqr_mm": 0.5074000000000001,
+            "bench_lateral_n_wires": 9,
+            "lateral_diff_mm": -0.33147471731458555,
+            "lateral_tol_mm": 0.43886000000000003,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 8,
+            "r_mm": 17.999603995643902,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.26438249115634527,
+            "axial_fwhm_mm_iqr_um": 16.03922139535474,
+            "lateral_fwhm_arc_mm_median": 2.098158148016843,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.1285680463765031,
+            "peak_palette_max": 2860.954345703125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.30369999999999997,
+            "bench_axial_fwhm_iqr_um": 77.19999999999999,
+            "bench_axial_n_wires": 14,
+            "axial_diff_mm": -0.0393175088436547,
+            "axial_tol_mm": 0.07719999999999999,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.36605,
+            "bench_lateral_fwhm_iqr_mm": 0.24719999999999986,
+            "bench_lateral_n_wires": 6,
+            "lateral_diff_mm": -0.267891851983157,
+            "lateral_tol_mm": 0.47321,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 9,
+            "r_mm": 20.000426020462665,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.2711710193910255,
+            "axial_fwhm_mm_iqr_um": 8.279523700595037,
+            "lateral_fwhm_arc_mm_median": 2.475390049628179,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.2142403757335205,
+            "peak_palette_max": 2831.461181640625,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.31855,
+            "bench_axial_fwhm_iqr_um": 86.675,
+            "bench_axial_n_wires": 14,
+            "axial_diff_mm": -0.0473789806089745,
+            "axial_tol_mm": 0.086675,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.6354,
+            "bench_lateral_fwhm_iqr_mm": 0.35172500000000007,
+            "bench_lateral_n_wires": 8,
+            "lateral_diff_mm": -0.1600099503718213,
+            "lateral_tol_mm": 0.5270800000000001,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 10,
+            "r_mm": 22.0,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.26326179727188703,
+            "axial_fwhm_mm_iqr_um": 18.784972445337612,
+            "lateral_fwhm_arc_mm_median": 2.562350592745749,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.03984036352115172,
+            "peak_palette_max": 2856.497314453125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.3044,
+            "bench_axial_fwhm_iqr_um": 60.90000000000001,
+            "bench_axial_n_wires": 21,
+            "axial_diff_mm": -0.04113820272811297,
+            "axial_tol_mm": 0.06090000000000001,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.6974,
+            "bench_lateral_fwhm_iqr_mm": 0.4623249999999999,
+            "bench_lateral_n_wires": 16,
+            "lateral_diff_mm": -0.13504940725425119,
+            "lateral_tol_mm": 0.5394800000000001,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 11,
+            "r_mm": 24.00033801845299,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.2664654591476623,
+            "axial_fwhm_mm_iqr_um": 19.552955289555417,
+            "lateral_fwhm_arc_mm_median": 2.7948174926145914,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.08813705589711951,
+            "peak_palette_max": 2871.125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.30945,
+            "bench_axial_fwhm_iqr_um": 140.89999999999998,
+            "bench_axial_n_wires": 22,
+            "axial_diff_mm": -0.042984540852337716,
+            "axial_tol_mm": 0.14089999999999997,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.9874,
+            "bench_lateral_fwhm_iqr_mm": 0.6305999999999998,
+            "bench_lateral_n_wires": 13,
+            "lateral_diff_mm": -0.1925825073854086,
+            "lateral_tol_mm": 0.59748,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 12,
+            "r_mm": 26.00029401756834,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.26925642128420135,
+            "axial_fwhm_mm_iqr_um": 7.013376597430621,
+            "lateral_fwhm_arc_mm_median": 3.052145171088175,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.17896735395938368,
+            "peak_palette_max": 2850.154052734375,
+            "detected": true,
+            "saturated": false,
+            "scored": false
+          }
+        ],
+        "bench_axial_median_mm": 0.3032,
+        "bench_axial_per_wire": [
+          {
+            "r_mm": 1.92,
+            "axial_fwhm_mm": 1.1185,
+            "peak_palette": 64.78
+          },
+          {
+            "r_mm": 11.16,
+            "axial_fwhm_mm": 0.3114,
+            "peak_palette": 123.66
+          },
+          {
+            "r_mm": 21.12,
+            "axial_fwhm_mm": 0.4038,
+            "peak_palette": 97.4
+          },
+          {
+            "r_mm": 5.4,
+            "axial_fwhm_mm": 0.2892,
+            "peak_palette": 168.86
+          },
+          {
+            "r_mm": 8.28,
+            "axial_fwhm_mm": 0.2589,
+            "peak_palette": 168.65
+          },
+          {
+            "r_mm": 11.16,
+            "axial_fwhm_mm": 0.2798,
+            "peak_palette": 169.85
+          },
+          {
+            "r_mm": 13.92,
+            "axial_fwhm_mm": 0.544,
+            "peak_palette": 69.0
+          },
+          {
+            "r_mm": 16.08,
+            "axial_fwhm_mm": 0.4479,
+            "peak_palette": 65.5
+          },
+          {
+            "r_mm": 19.56,
+            "axial_fwhm_mm": 0.391,
+            "peak_palette": 76.15
+          },
+          {
+            "r_mm": 21.0,
+            "axial_fwhm_mm": 0.33,
+            "peak_palette": 140.34
+          },
+          {
+            "r_mm": 22.2,
+            "axial_fwhm_mm": 0.2798,
+            "peak_palette": 159.32
+          },
+          {
+            "r_mm": 5.4,
+            "axial_fwhm_mm": 0.2918,
+            "peak_palette": 169.34
+          },
+          {
+            "r_mm": 8.28,
+            "axial_fwhm_mm": 0.2624,
+            "peak_palette": 168.81
+          },
+          {
+            "r_mm": 11.16,
+            "axial_fwhm_mm": 0.2788,
+            "peak_palette": 170.47
+          },
+          {
+            "r_mm": 13.92,
+            "axial_fwhm_mm": 0.5376,
+            "peak_palette": 69.49
+          },
+          {
+            "r_mm": 16.08,
+            "axial_fwhm_mm": 0.4598,
+            "peak_palette": 64.62
+          },
+          {
+            "r_mm": 19.56,
+            "axial_fwhm_mm": 0.3951,
+            "peak_palette": 76.07
+          },
+          {
+            "r_mm": 21.12,
+            "axial_fwhm_mm": 0.329,
+            "peak_palette": 141.24
+          },
+          {
+            "r_mm": 22.2,
+            "axial_fwhm_mm": 0.27,
+            "peak_palette": 159.21
+          },
+          {
+            "r_mm": 5.4,
+            "axial_fwhm_mm": 0.3086,
+            "peak_palette": 204.5
+          },
+          {
+            "r_mm": 8.28,
+            "axial_fwhm_mm": 0.2841,
+            "peak_palette": 204.71
+          },
+          {
+            "r_mm": 11.16,
+            "axial_fwhm_mm": 0.3032,
+            "peak_palette": 206.55
+          },
+          {
+            "r_mm": 13.92,
+            "axial_fwhm_mm": 0.3514,
+            "peak_palette": 107.0
+          },
+          {
+            "r_mm": 16.08,
+            "axial_fwhm_mm": 0.3488,
+            "peak_palette": 97.31
+          },
+          {
+            "r_mm": 18.36,
+            "axial_fwhm_mm": 0.5775,
+            "peak_palette": 55.19
+          },
+          {
+            "r_mm": 19.56,
+            "axial_fwhm_mm": 0.3071,
+            "peak_palette": 116.08
+          },
+          {
+            "r_mm": 21.12,
+            "axial_fwhm_mm": 0.3532,
+            "peak_palette": 182.79
+          },
+          {
+            "r_mm": 22.2,
+            "axial_fwhm_mm": 0.2923,
+            "peak_palette": 196.95
+          },
+          {
+            "r_mm": 23.64,
+            "axial_fwhm_mm": 0.6701,
+            "peak_palette": 57.66
+          },
+          {
+            "r_mm": 5.4,
+            "axial_fwhm_mm": 0.3565,
+            "peak_palette": 229.97
+          },
+          {
+            "r_mm": 8.28,
+            "axial_fwhm_mm": 0.3453,
+            "peak_palette": 230.47
+          },
+          {
+            "r_mm": 11.16,
+            "axial_fwhm_mm": 0.3908,
+            "peak_palette": 231.09
+          },
+          {
+            "r_mm": 13.92,
+            "axial_fwhm_mm": 0.3051,
+            "peak_palette": 151.45
+          },
+          {
+            "r_mm": 16.08,
+            "axial_fwhm_mm": 0.2755,
+            "peak_palette": 144.06
+          },
+          {
+            "r_mm": 18.36,
+            "axial_fwhm_mm": 0.3536,
+            "peak_palette": 84.41
+          },
+          {
+            "r_mm": 19.56,
+            "axial_fwhm_mm": 0.2806,
+            "peak_palette": 162.31
+          },
+          {
+            "r_mm": 21.12,
+            "axial_fwhm_mm": 0.4061,
+            "peak_palette": 214.34
+          },
+          {
+            "r_mm": 22.2,
+            "axial_fwhm_mm": 0.3353,
+            "peak_palette": 224.87
+          },
+          {
+            "r_mm": 23.64,
+            "axial_fwhm_mm": 0.5532,
+            "peak_palette": 86.0
+          },
+          {
+            "r_mm": 13.92,
+            "axial_fwhm_mm": 0.31,
+            "peak_palette": 190.65
+          },
+          {
+            "r_mm": 16.08,
+            "axial_fwhm_mm": 0.2846,
+            "peak_palette": 185.56
+          },
+          {
+            "r_mm": 18.36,
+            "axial_fwhm_mm": 0.2418,
+            "peak_palette": 129.43
+          },
+          {
+            "r_mm": 19.56,
+            "axial_fwhm_mm": 0.2939,
+            "peak_palette": 199.85
+          },
+          {
+            "r_mm": 23.64,
+            "axial_fwhm_mm": 0.4531,
+            "peak_palette": 128.77
+          },
+          {
+            "r_mm": 5.88,
+            "axial_fwhm_mm": 0.2811,
+            "peak_palette": 190.92
+          },
+          {
+            "r_mm": 7.8,
+            "axial_fwhm_mm": 0.2917,
+            "peak_palette": 198.62
+          },
+          {
+            "r_mm": 9.84,
+            "axial_fwhm_mm": 0.2751,
+            "peak_palette": 183.39
+          },
+          {
+            "r_mm": 12.12,
+            "axial_fwhm_mm": 0.2636,
+            "peak_palette": 164.75
+          },
+          {
+            "r_mm": 14.28,
+            "axial_fwhm_mm": 0.3089,
+            "peak_palette": 126.77
+          },
+          {
+            "r_mm": 16.92,
+            "axial_fwhm_mm": 0.284,
+            "peak_palette": 137.84
+          },
+          {
+            "r_mm": 18.84,
+            "axial_fwhm_mm": 0.2706,
+            "peak_palette": 148.0
+          },
+          {
+            "r_mm": 21.36,
+            "axial_fwhm_mm": 0.295,
+            "peak_palette": 109.33
+          },
+          {
+            "r_mm": 23.4,
+            "axial_fwhm_mm": 0.4251,
+            "peak_palette": 76.64
+          },
+          {
+            "r_mm": 5.88,
+            "axial_fwhm_mm": 0.312,
+            "peak_palette": 219.52
+          },
+          {
+            "r_mm": 7.8,
+            "axial_fwhm_mm": 0.3159,
+            "peak_palette": 225.7
+          },
+          {
+            "r_mm": 9.84,
+            "axial_fwhm_mm": 0.2984,
+            "peak_palette": 214.98
+          },
+          {
+            "r_mm": 12.12,
+            "axial_fwhm_mm": 0.2842,
+            "peak_palette": 199.77
+          },
+          {
+            "r_mm": 14.28,
+            "axial_fwhm_mm": 0.2719,
+            "peak_palette": 172.71
+          },
+          {
+            "r_mm": 16.92,
+            "axial_fwhm_mm": 0.2913,
+            "peak_palette": 179.24
+          },
+          {
+            "r_mm": 18.84,
+            "axial_fwhm_mm": 0.2771,
+            "peak_palette": 186.96
+          },
+          {
+            "r_mm": 21.36,
+            "axial_fwhm_mm": 0.2514,
+            "peak_palette": 156.27
+          },
+          {
+            "r_mm": 23.4,
+            "axial_fwhm_mm": 0.2892,
+            "peak_palette": 114.52
+          },
+          {
+            "r_mm": 12.12,
+            "axial_fwhm_mm": 0.3368,
+            "peak_palette": 228.62
+          },
+          {
+            "r_mm": 14.28,
+            "axial_fwhm_mm": 0.3131,
+            "peak_palette": 205.67
+          },
+          {
+            "r_mm": 16.92,
+            "axial_fwhm_mm": 0.3208,
+            "peak_palette": 211.97
+          },
+          {
+            "r_mm": 18.84,
+            "axial_fwhm_mm": 0.3181,
+            "peak_palette": 217.56
+          },
+          {
+            "r_mm": 21.36,
+            "axial_fwhm_mm": 0.2636,
+            "peak_palette": 192.4
+          },
+          {
+            "r_mm": 23.4,
+            "axial_fwhm_mm": 0.2439,
+            "peak_palette": 163.44
+          },
+          {
+            "r_mm": 25.44,
+            "axial_fwhm_mm": 0.4711,
+            "peak_palette": 78.67
+          },
+          {
+            "r_mm": 14.28,
+            "axial_fwhm_mm": 0.353,
+            "peak_palette": 230.73
+          },
+          {
+            "r_mm": 21.36,
+            "axial_fwhm_mm": 0.2937,
+            "peak_palette": 223.12
+          },
+          {
+            "r_mm": 23.4,
+            "axial_fwhm_mm": 0.2704,
+            "peak_palette": 200.02
+          },
+          {
+            "r_mm": 25.44,
+            "axial_fwhm_mm": 0.335,
+            "peak_palette": 119.61
+          },
+          {
+            "r_mm": 23.4,
+            "axial_fwhm_mm": 0.3342,
+            "peak_palette": 226.89
+          },
+          {
+            "r_mm": 25.44,
+            "axial_fwhm_mm": 0.3072,
+            "peak_palette": 165.39
+          },
+          {
+            "r_mm": 4.8,
+            "axial_fwhm_mm": 0.3561,
+            "peak_palette": 193.77
+          },
+          {
+            "r_mm": 6.84,
+            "axial_fwhm_mm": 0.221,
+            "peak_palette": 160.19
+          },
+          {
+            "r_mm": 9.24,
+            "axial_fwhm_mm": 0.2709,
+            "peak_palette": 157.06
+          },
+          {
+            "r_mm": 12.12,
+            "axial_fwhm_mm": 0.2782,
+            "peak_palette": 188.58
+          },
+          {
+            "r_mm": 14.76,
+            "axial_fwhm_mm": 0.3944,
+            "peak_palette": 90.24
+          },
+          {
+            "r_mm": 17.88,
+            "axial_fwhm_mm": 0.3608,
+            "peak_palette": 90.46
+          },
+          {
+            "r_mm": 20.04,
+            "axial_fwhm_mm": 0.4425,
+            "peak_palette": 72.86
+          },
+          {
+            "r_mm": 22.32,
+            "axial_fwhm_mm": 0.606,
+            "peak_palette": 58.79
+          },
+          {
+            "r_mm": 24.0,
+            "axial_fwhm_mm": 0.5976,
+            "peak_palette": 61.05
+          },
+          {
+            "r_mm": 25.56,
+            "axial_fwhm_mm": 0.3654,
+            "peak_palette": 80.5
+          },
+          {
+            "r_mm": 4.8,
+            "axial_fwhm_mm": 0.3828,
+            "peak_palette": 222.26
+          },
+          {
+            "r_mm": 6.84,
+            "axial_fwhm_mm": 0.2248,
+            "peak_palette": 197.34
+          },
+          {
+            "r_mm": 9.24,
+            "axial_fwhm_mm": 0.2829,
+            "peak_palette": 194.78
+          },
+          {
+            "r_mm": 12.12,
+            "axial_fwhm_mm": 0.2998,
+            "peak_palette": 219.33
+          },
+          {
+            "r_mm": 14.76,
+            "axial_fwhm_mm": 0.2979,
+            "peak_palette": 136.11
+          },
+          {
+            "r_mm": 17.88,
+            "axial_fwhm_mm": 0.2755,
+            "peak_palette": 136.04
+          },
+          {
+            "r_mm": 20.04,
+            "axial_fwhm_mm": 0.3069,
+            "peak_palette": 111.94
+          },
+          {
+            "r_mm": 22.32,
+            "axial_fwhm_mm": 0.4406,
+            "peak_palette": 86.08
+          },
+          {
+            "r_mm": 24.0,
+            "axial_fwhm_mm": 0.4051,
+            "peak_palette": 92.46
+          },
+          {
+            "r_mm": 25.56,
+            "axial_fwhm_mm": 0.2765,
+            "peak_palette": 121.94
+          },
+          {
+            "r_mm": 6.84,
+            "axial_fwhm_mm": 0.2646,
+            "peak_palette": 224.65
+          },
+          {
+            "r_mm": 9.24,
+            "axial_fwhm_mm": 0.3316,
+            "peak_palette": 224.75
+          },
+          {
+            "r_mm": 14.76,
+            "axial_fwhm_mm": 0.2906,
+            "peak_palette": 178.71
+          },
+          {
+            "r_mm": 17.88,
+            "axial_fwhm_mm": 0.2645,
+            "peak_palette": 179.69
+          },
+          {
+            "r_mm": 20.04,
+            "axial_fwhm_mm": 0.2719,
+            "peak_palette": 157.56
+          },
+          {
+            "r_mm": 22.32,
+            "axial_fwhm_mm": 0.299,
+            "peak_palette": 132.8
+          },
+          {
+            "r_mm": 24.0,
+            "axial_fwhm_mm": 0.2863,
+            "peak_palette": 140.13
+          },
+          {
+            "r_mm": 25.56,
+            "axial_fwhm_mm": 0.261,
+            "peak_palette": 166.01
+          },
+          {
+            "r_mm": 14.76,
+            "axial_fwhm_mm": 0.323,
+            "peak_palette": 211.36
+          },
+          {
+            "r_mm": 17.88,
+            "axial_fwhm_mm": 0.307,
+            "peak_palette": 211.57
+          },
+          {
+            "r_mm": 20.04,
+            "axial_fwhm_mm": 0.2959,
+            "peak_palette": 194.43
+          },
+          {
+            "r_mm": 22.32,
+            "axial_fwhm_mm": 0.2952,
+            "peak_palette": 174.55
+          },
+          {
+            "r_mm": 24.0,
+            "axial_fwhm_mm": 0.284,
+            "peak_palette": 184.92
+          },
+          {
+            "r_mm": 25.56,
+            "axial_fwhm_mm": 0.2859,
+            "peak_palette": 201.13
+          },
+          {
+            "r_mm": 14.76,
+            "axial_fwhm_mm": 0.412,
+            "peak_palette": 233.95
+          },
+          {
+            "r_mm": 17.88,
+            "axial_fwhm_mm": 0.3961,
+            "peak_palette": 234.99
+          },
+          {
+            "r_mm": 20.04,
+            "axial_fwhm_mm": 0.335,
+            "peak_palette": 224.44
+          },
+          {
+            "r_mm": 22.32,
+            "axial_fwhm_mm": 0.3375,
+            "peak_palette": 208.8
+          },
+          {
+            "r_mm": 24.0,
+            "axial_fwhm_mm": 0.3251,
+            "peak_palette": 214.78
+          },
+          {
+            "r_mm": 25.56,
+            "axial_fwhm_mm": 0.3141,
+            "peak_palette": 228.44
+          },
+          {
+            "r_mm": 4.2,
+            "axial_fwhm_mm": 0.2723,
+            "peak_palette": 137.7
+          },
+          {
+            "r_mm": 7.08,
+            "axial_fwhm_mm": 0.2421,
+            "peak_palette": 125.92
+          },
+          {
+            "r_mm": 9.96,
+            "axial_fwhm_mm": 0.2363,
+            "peak_palette": 143.64
+          },
+          {
+            "r_mm": 13.2,
+            "axial_fwhm_mm": 0.3808,
+            "peak_palette": 108.75
+          },
+          {
+            "r_mm": 15.96,
+            "axial_fwhm_mm": 0.4765,
+            "peak_palette": 74.84
+          },
+          {
+            "r_mm": 23.52,
+            "axial_fwhm_mm": 0.4548,
+            "peak_palette": 65.63
+          },
+          {
+            "r_mm": 24.6,
+            "axial_fwhm_mm": 0.3238,
+            "peak_palette": 102.42
+          },
+          {
+            "r_mm": 4.2,
+            "axial_fwhm_mm": 0.2583,
+            "peak_palette": 178.74
+          },
+          {
+            "r_mm": 7.08,
+            "axial_fwhm_mm": 0.2223,
+            "peak_palette": 168.19
+          },
+          {
+            "r_mm": 9.96,
+            "axial_fwhm_mm": 0.2556,
+            "peak_palette": 185.36
+          },
+          {
+            "r_mm": 13.2,
+            "axial_fwhm_mm": 0.3173,
+            "peak_palette": 154.93
+          },
+          {
+            "r_mm": 15.96,
+            "axial_fwhm_mm": 0.3255,
+            "peak_palette": 116.52
+          },
+          {
+            "r_mm": 18.84,
+            "axial_fwhm_mm": 0.5043,
+            "peak_palette": 70.17
+          },
+          {
+            "r_mm": 23.52,
+            "axial_fwhm_mm": 0.3084,
+            "peak_palette": 102.5
+          },
+          {
+            "r_mm": 24.6,
+            "axial_fwhm_mm": 0.2654,
+            "peak_palette": 149.77
+          },
+          {
+            "r_mm": 4.2,
+            "axial_fwhm_mm": 0.2686,
+            "peak_palette": 211.85
+          },
+          {
+            "r_mm": 7.08,
+            "axial_fwhm_mm": 0.223,
+            "peak_palette": 204.43
+          },
+          {
+            "r_mm": 9.96,
+            "axial_fwhm_mm": 0.2848,
+            "peak_palette": 215.33
+          },
+          {
+            "r_mm": 13.2,
+            "axial_fwhm_mm": 0.3309,
+            "peak_palette": 193.38
+          },
+          {
+            "r_mm": 15.96,
+            "axial_fwhm_mm": 0.2962,
+            "peak_palette": 161.54
+          },
+          {
+            "r_mm": 18.84,
+            "axial_fwhm_mm": 0.3516,
+            "peak_palette": 107.58
+          },
+          {
+            "r_mm": 20.52,
+            "axial_fwhm_mm": 0.5552,
+            "peak_palette": 71.52
+          },
+          {
+            "r_mm": 22.32,
+            "axial_fwhm_mm": 0.4329,
+            "peak_palette": 73.99
+          },
+          {
+            "r_mm": 23.52,
+            "axial_fwhm_mm": 0.2589,
+            "peak_palette": 146.79
+          },
+          {
+            "r_mm": 24.6,
+            "axial_fwhm_mm": 0.2776,
+            "peak_palette": 190.32
+          },
+          {
+            "r_mm": 4.2,
+            "axial_fwhm_mm": 0.3169,
+            "peak_palette": 234.24
+          },
+          {
+            "r_mm": 7.08,
+            "axial_fwhm_mm": 0.2446,
+            "peak_palette": 229.98
+          },
+          {
+            "r_mm": 13.2,
+            "axial_fwhm_mm": 0.3868,
+            "peak_palette": 222.03
+          },
+          {
+            "r_mm": 15.96,
+            "axial_fwhm_mm": 0.3282,
+            "peak_palette": 198.29
+          },
+          {
+            "r_mm": 18.84,
+            "axial_fwhm_mm": 0.2783,
+            "peak_palette": 155.09
+          },
+          {
+            "r_mm": 20.52,
+            "axial_fwhm_mm": 0.3513,
+            "peak_palette": 109.25
+          },
+          {
+            "r_mm": 22.32,
+            "axial_fwhm_mm": 0.3044,
+            "peak_palette": 112.45
+          },
+          {
+            "r_mm": 23.52,
+            "axial_fwhm_mm": 0.2567,
+            "peak_palette": 187.47
+          },
+          {
+            "r_mm": 24.6,
+            "axial_fwhm_mm": 0.3105,
+            "peak_palette": 220.11
+          },
+          {
+            "r_mm": 15.96,
+            "axial_fwhm_mm": 0.3679,
+            "peak_palette": 226.35
+          },
+          {
+            "r_mm": 18.84,
+            "axial_fwhm_mm": 0.3004,
+            "peak_palette": 193.64
+          },
+          {
+            "r_mm": 20.52,
+            "axial_fwhm_mm": 0.2853,
+            "peak_palette": 155.76
+          },
+          {
+            "r_mm": 22.32,
+            "axial_fwhm_mm": 0.2692,
+            "peak_palette": 157.11
+          },
+          {
+            "r_mm": 23.52,
+            "axial_fwhm_mm": 0.2918,
+            "peak_palette": 217.96
+          }
+        ],
+        "bench_anchor_label": "B2 (12-wire spiral, n=168 wires pooled over 4 positions)",
+        "bench_anchor_n_wires": 154,
+        "tolerance_floor_mm": 0.05,
+        "ac_tier": "shape (FWHM per-wire IQR or 50 um, whichever wider)",
+        "gain_db_diagnostic": {
+          "available": true,
+          "per_wire_sim": [
+            {
+              "r_mm": 5.0,
+              "sim_palette_log10amp": -1.3073450326919556,
+              "sim_envelope_amp": 0.04927821491758166,
+              "log10_amp_diff_to_bench_median": 2.450794865145114,
+              "gain_db_required_to_match_bench_median": 49.01589730290227
+            },
+            {
+              "r_mm": 10.0,
+              "sim_palette_log10amp": -1.5859429836273193,
+              "sim_envelope_amp": 0.025945199614428472,
+              "log10_amp_diff_to_bench_median": 2.7293928160804777,
+              "gain_db_required_to_match_bench_median": 54.58785632160954
+            },
+            {
+              "r_mm": 15.0,
+              "sim_palette_log10amp": -1.7610210180282593,
+              "sim_envelope_amp": 0.017337200909555154,
+              "log10_amp_diff_to_bench_median": 2.9044708504814176,
+              "gain_db_required_to_match_bench_median": 58.08941700962834
+            },
+            {
+              "r_mm": 20.0,
+              "sim_palette_log10amp": -2.3384101390838623,
+              "sim_envelope_amp": 0.00458764560057276,
+              "log10_amp_diff_to_bench_median": 3.4818599715370206,
+              "gain_db_required_to_match_bench_median": 69.63719943074041
+            },
+            {
+              "r_mm": 25.0,
+              "sim_palette_log10amp": -1.9126527309417725,
+              "sim_envelope_amp": 0.012227770221074697,
+              "log10_amp_diff_to_bench_median": 3.056102563394931,
+              "gain_db_required_to_match_bench_median": 61.12205126789861
+            }
+          ],
+          "gain_db_distribution_pooled_dB": {
+            "median": 58.08941700962834,
+            "p25": 51.12289559390584,
+            "p75": 62.97151329636744,
+            "p10": 46.01518066541226,
+            "p90": 65.2603052466562,
+            "n_bench_wires": 133
+          },
+          "sim_spread_db": 20.621302127838142,
+          "rationale": "INFORMATIONAL diagnostic: per-wire gain_db_required_to_match_bench from `derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json`.  The spread across r captures the magnitude-side fingerprint of the fixed-focus PSF + Fresnel over-bright issues (Q1 + Q3).  Does NOT gate Tests C / D -- they remain shape-only on FWHM.",
+          "source": "ivus_test_0515/derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json"
+        },
+        "catheter_rotations_deg": [
+          0.0,
+          22.5,
+          45.0,
+          67.5
+        ],
+        "scored_wire_indices": [
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ],
+        "n_pass": 10,
+        "n_measurable": 10,
+        "n_pass_pct": 100.0,
+        "notes": []
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "D. Lateral PSF (per radius)",
+      "status": "pass",
+      "summary": "B2 spiral phantom, 10 scored wires (w2..w11). 10/10 wires pass per-wire lateral arc-FWHM match (tol = max(20%, bench IQR/2)). Sim per-wire arc-FWHM medians: r=6.0: 0.74 mm, r=8.0: 0.97 mm, r=10.0: 1.17 mm, r=12.0: 1.41 mm, r=14.0: 1.64 mm, r=16.0: 1.86 mm, r=18.0: 2.10 mm, r=20.0: 2.48 mm, r=22.0: 2.56 mm, r=24.0: 2.79 mm. Bench Gaussian-beam fit z_f = 2.8 mm, focus FWHM = 0.94 mm (informational; constant_angular has no focal minimum).",
+      "detail": {
+        "per_wire_summary": [
+          {
+            "wire_idx": 1,
+            "r_mm": 4.0,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.2611600553938077,
+            "axial_fwhm_mm_iqr_um": 17.735552112314757,
+            "lateral_fwhm_arc_mm_median": 0.48195079711085465,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.009140665296752393,
+            "peak_palette_max": 2853.50048828125,
+            "detected": true,
+            "saturated": false,
+            "scored": false
+          },
+          {
+            "wire_idx": 2,
+            "r_mm": 5.999867998547968,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.27172391472734814,
+            "axial_fwhm_mm_iqr_um": 27.724015495207645,
+            "lateral_fwhm_arc_mm_median": 0.7395893071467403,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.029424092815583336,
+            "peak_palette_max": 2854.13330078125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.2892,
+            "bench_axial_fwhm_iqr_um": 43.999999999999986,
+            "bench_axial_n_wires": 9,
+            "axial_diff_mm": -0.017476085272651876,
+            "axial_tol_mm": 0.05,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 0.7714,
+            "bench_lateral_fwhm_iqr_mm": 0.11532500000000001,
+            "bench_lateral_n_wires": 6,
+            "lateral_diff_mm": -0.03181069285325966,
+            "lateral_tol_mm": 0.15428,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 3,
+            "r_mm": 7.999823998063957,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.2655931567924458,
+            "axial_fwhm_mm_iqr_um": 27.541901373221876,
+            "lateral_fwhm_arc_mm_median": 0.9705200899184316,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.07099966494818366,
+            "peak_palette_max": 2825.782470703125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.2589,
+            "bench_axial_fwhm_iqr_um": 42.00000000000001,
+            "bench_axial_n_wires": 9,
+            "axial_diff_mm": 0.006693156792445754,
+            "axial_tol_mm": 0.05,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 0.9809,
+            "bench_lateral_fwhm_iqr_mm": 0.12640000000000007,
+            "bench_lateral_n_wires": 5,
+            "lateral_diff_mm": -0.010379910081568355,
+            "lateral_tol_mm": 0.19618000000000002,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 4,
+            "r_mm": 10.0,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.27920400274995705,
+            "axial_fwhm_mm_iqr_um": 12.9005237079991,
+            "lateral_fwhm_arc_mm_median": 1.1720798878235623,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.21615848655860415,
+            "peak_palette_max": 2822.040771484375,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.279,
+            "bench_axial_fwhm_iqr_um": 21.12500000000006,
+            "bench_axial_n_wires": 8,
+            "axial_diff_mm": 0.00020400274995702183,
+            "axial_tol_mm": 0.05,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 1.1939000000000002,
+            "bench_lateral_fwhm_iqr_mm": 0.10785,
+            "bench_lateral_n_wires": 6,
+            "lateral_diff_mm": -0.021820112176437867,
+            "lateral_tol_mm": 0.23878000000000005,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 5,
+            "r_mm": 11.999735997095936,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.25698152796196416,
+            "axial_fwhm_mm_iqr_um": 39.06292273829923,
+            "lateral_fwhm_arc_mm_median": 1.406391336145521,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.0621519573769167,
+            "peak_palette_max": 2856.75732421875,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.2842,
+            "bench_axial_fwhm_iqr_um": 24.400000000000034,
+            "bench_axial_n_wires": 9,
+            "axial_diff_mm": -0.027218472038035846,
+            "axial_tol_mm": 0.05,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 1.4680499999999999,
+            "bench_lateral_fwhm_iqr_mm": 0.29920000000000013,
+            "bench_lateral_n_wires": 8,
+            "lateral_diff_mm": -0.061658663854478934,
+            "lateral_tol_mm": 0.29361,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 6,
+            "r_mm": 13.999691996611926,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.26899059912070283,
+            "axial_fwhm_mm_iqr_um": 25.60278136187036,
+            "lateral_fwhm_arc_mm_median": 1.635081510837097,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.05765793961100396,
+            "peak_palette_max": 2858.0869140625,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.32015000000000005,
+            "bench_axial_fwhm_iqr_um": 74.35000000000002,
+            "bench_axial_n_wires": 16,
+            "axial_diff_mm": -0.05115940087929721,
+            "axial_tol_mm": 0.07435000000000003,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 1.8036,
+            "bench_lateral_fwhm_iqr_mm": 0.28500000000000014,
+            "bench_lateral_n_wires": 13,
+            "lateral_diff_mm": -0.16851848916290302,
+            "lateral_tol_mm": 0.36072000000000004,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 7,
+            "r_mm": 16.0,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.27315449459358154,
+            "axial_fwhm_mm_iqr_um": 14.233297245140053,
+            "lateral_fwhm_arc_mm_median": 1.8628252826854146,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.011571332763462117,
+            "peak_palette_max": 2845.126953125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.3255,
+            "bench_axial_fwhm_iqr_um": 76.6,
+            "bench_axial_n_wires": 13,
+            "axial_diff_mm": -0.05234550540641847,
+            "axial_tol_mm": 0.0766,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.1943,
+            "bench_lateral_fwhm_iqr_mm": 0.5074000000000001,
+            "bench_lateral_n_wires": 9,
+            "lateral_diff_mm": -0.33147471731458555,
+            "lateral_tol_mm": 0.43886000000000003,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 8,
+            "r_mm": 17.999603995643902,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.26438249115634527,
+            "axial_fwhm_mm_iqr_um": 16.03922139535474,
+            "lateral_fwhm_arc_mm_median": 2.098158148016843,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.1285680463765031,
+            "peak_palette_max": 2860.954345703125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.30369999999999997,
+            "bench_axial_fwhm_iqr_um": 77.19999999999999,
+            "bench_axial_n_wires": 14,
+            "axial_diff_mm": -0.0393175088436547,
+            "axial_tol_mm": 0.07719999999999999,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.36605,
+            "bench_lateral_fwhm_iqr_mm": 0.24719999999999986,
+            "bench_lateral_n_wires": 6,
+            "lateral_diff_mm": -0.267891851983157,
+            "lateral_tol_mm": 0.47321,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 9,
+            "r_mm": 20.000426020462665,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.2711710193910255,
+            "axial_fwhm_mm_iqr_um": 8.279523700595037,
+            "lateral_fwhm_arc_mm_median": 2.475390049628179,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.2142403757335205,
+            "peak_palette_max": 2831.461181640625,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.31855,
+            "bench_axial_fwhm_iqr_um": 86.675,
+            "bench_axial_n_wires": 14,
+            "axial_diff_mm": -0.0473789806089745,
+            "axial_tol_mm": 0.086675,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.6354,
+            "bench_lateral_fwhm_iqr_mm": 0.35172500000000007,
+            "bench_lateral_n_wires": 8,
+            "lateral_diff_mm": -0.1600099503718213,
+            "lateral_tol_mm": 0.5270800000000001,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 10,
+            "r_mm": 22.0,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.26326179727188703,
+            "axial_fwhm_mm_iqr_um": 18.784972445337612,
+            "lateral_fwhm_arc_mm_median": 2.562350592745749,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.03984036352115172,
+            "peak_palette_max": 2856.497314453125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.3044,
+            "bench_axial_fwhm_iqr_um": 60.90000000000001,
+            "bench_axial_n_wires": 21,
+            "axial_diff_mm": -0.04113820272811297,
+            "axial_tol_mm": 0.06090000000000001,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.6974,
+            "bench_lateral_fwhm_iqr_mm": 0.4623249999999999,
+            "bench_lateral_n_wires": 16,
+            "lateral_diff_mm": -0.13504940725425119,
+            "lateral_tol_mm": 0.5394800000000001,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 11,
+            "r_mm": 24.00033801845299,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.2664654591476623,
+            "axial_fwhm_mm_iqr_um": 19.552955289555417,
+            "lateral_fwhm_arc_mm_median": 2.7948174926145914,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.08813705589711951,
+            "peak_palette_max": 2871.125,
+            "detected": true,
+            "saturated": false,
+            "scored": true,
+            "bench_axial_fwhm_mm_median": 0.30945,
+            "bench_axial_fwhm_iqr_um": 140.89999999999998,
+            "bench_axial_n_wires": 22,
+            "axial_diff_mm": -0.042984540852337716,
+            "axial_tol_mm": 0.14089999999999997,
+            "axial_pass": true,
+            "bench_lateral_fwhm_arc_mm_median": 2.9874,
+            "bench_lateral_fwhm_iqr_mm": 0.6305999999999998,
+            "bench_lateral_n_wires": 13,
+            "lateral_diff_mm": -0.1925825073854086,
+            "lateral_tol_mm": 0.59748,
+            "lateral_pass": true
+          },
+          {
+            "wire_idx": 12,
+            "r_mm": 26.00029401756834,
+            "n_observations": 32,
+            "n_unsat": 32,
+            "axial_fwhm_mm_median": 0.26925642128420135,
+            "axial_fwhm_mm_iqr_um": 7.013376597430621,
+            "lateral_fwhm_arc_mm_median": 3.052145171088175,
+            "lateral_fwhm_arc_mm_iqr_mm": 0.17896735395938368,
+            "peak_palette_max": 2850.154052734375,
+            "detected": true,
+            "saturated": false,
+            "scored": false
+          }
+        ],
+        "bench_anchor_label": "B2 (12-wire spiral, n=168 wires pooled over 4 positions)",
+        "ac_tier": "shape (FWHM per-wire IQR or 20%, whichever wider)",
+        "gain_db_diagnostic": {
+          "available": true,
+          "per_wire_sim": [
+            {
+              "r_mm": 5.0,
+              "sim_palette_log10amp": -1.3073450326919556,
+              "sim_envelope_amp": 0.04927821491758166,
+              "log10_amp_diff_to_bench_median": 2.450794865145114,
+              "gain_db_required_to_match_bench_median": 49.01589730290227
+            },
+            {
+              "r_mm": 10.0,
+              "sim_palette_log10amp": -1.5859429836273193,
+              "sim_envelope_amp": 0.025945199614428472,
+              "log10_amp_diff_to_bench_median": 2.7293928160804777,
+              "gain_db_required_to_match_bench_median": 54.58785632160954
+            },
+            {
+              "r_mm": 15.0,
+              "sim_palette_log10amp": -1.7610210180282593,
+              "sim_envelope_amp": 0.017337200909555154,
+              "log10_amp_diff_to_bench_median": 2.9044708504814176,
+              "gain_db_required_to_match_bench_median": 58.08941700962834
+            },
+            {
+              "r_mm": 20.0,
+              "sim_palette_log10amp": -2.3384101390838623,
+              "sim_envelope_amp": 0.00458764560057276,
+              "log10_amp_diff_to_bench_median": 3.4818599715370206,
+              "gain_db_required_to_match_bench_median": 69.63719943074041
+            },
+            {
+              "r_mm": 25.0,
+              "sim_palette_log10amp": -1.9126527309417725,
+              "sim_envelope_amp": 0.012227770221074697,
+              "log10_amp_diff_to_bench_median": 3.056102563394931,
+              "gain_db_required_to_match_bench_median": 61.12205126789861
+            }
+          ],
+          "gain_db_distribution_pooled_dB": {
+            "median": 58.08941700962834,
+            "p25": 51.12289559390584,
+            "p75": 62.97151329636744,
+            "p10": 46.01518066541226,
+            "p90": 65.2603052466562,
+            "n_bench_wires": 133
+          },
+          "sim_spread_db": 20.621302127838142,
+          "rationale": "INFORMATIONAL diagnostic: per-wire gain_db_required_to_match_bench from `derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json`.  The spread across r captures the magnitude-side fingerprint of the fixed-focus PSF + Fresnel over-bright issues (Q1 + Q3).  Does NOT gate Tests C / D -- they remain shape-only on FWHM.",
+          "source": "ivus_test_0515/derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json"
+        },
+        "catheter_rotations_deg": [
+          0.0,
+          22.5,
+          45.0,
+          67.5
+        ],
+        "scored_wire_indices": [
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11
+        ],
+        "sim_focal_r_mm": 5.999867998547968,
+        "bench_focal_r_mm": 2.812809664416586,
+        "focal_trend_informational": "constant_angular kernel has no focal minimum within the phantom; bench Gaussian-beam fit's z_f is a legacy diagnostic from the fixed-focus Gaussian-beam kernel.  Not gated.",
+        "bench_lateral_fwhm_at_focus_mm": 0.9436523452690447,
+        "n_pass": 10,
+        "n_measurable": 10,
+        "n_pass_pct": 100.0,
+        "notes": []
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "E. Ring-down (E6 anechoic, multi-pair)",
+      "status": "pass",
+      "summary": "E6 ringdown anchor: 3 (gain, D) pairs (g40D60, g50D30, g50D60). Median |peak| rel.err = 0.4% (\u226410% req), median |extent| err = 0.15 mm (\u22640.30 req), median RMS inner 3 mm = 4.9 palette (\u22645 req). Worst-case: peak 1.1%, extent 0.15 mm, RMS 8.5 palette.",
+      "detail": {
+        "n_pairs": 3,
+        "per_pair": [
+          {
+            "gain": 40.0,
+            "diameter_mm": 60.0,
+            "sim_gain_db": 44.09000015258789,
+            "bench_file_off": "FILE0002.dcm",
+            "bench_file_on": "FILE0003.dcm",
+            "sim": {
+              "peak_palette": 154.41958618164062,
+              "peak_depth_mm": 2.1533203125,
+              "speckle_floor_palette": 11.033583641052246,
+              "peak_palette_excess": 143.38600158691406,
+              "extent_mm": 3.1494140625
+            },
+            "bench": {
+              "peak_palette": 152.75,
+              "peak_depth_mm": 2.16,
+              "speckle_floor_palette": 11.0,
+              "peak_palette_excess": 141.75,
+              "extent_mm": 3.2399999999999998,
+              "peak_palette_off_summary": 152.75,
+              "extent_mm_summary": 3.240000009536743
+            },
+            "rms_palette_inner3mm": 8.504371026595033,
+            "peak_rel_err": 0.01093018776851473,
+            "extent_err_mm": 0.09058593749999977
+          },
+          {
+            "gain": 50.0,
+            "diameter_mm": 30.0,
+            "sim_gain_db": 54.09000015258789,
+            "bench_file_off": "FILE0000.dcm",
+            "bench_file_on": "FILE0001.dcm",
+            "sim": {
+              "peak_palette": 222.7982635498047,
+              "peak_depth_mm": 2.1533203125,
+              "speckle_floor_palette": 11.283343315124512,
+              "peak_palette_excess": 211.51492309570312,
+              "extent_mm": 3.3251953125
+            },
+            "bench": {
+              "peak_palette": 222.25,
+              "peak_depth_mm": 2.16,
+              "speckle_floor_palette": 27.999998092651367,
+              "peak_palette_excess": 194.25,
+              "extent_mm": 3.48,
+              "peak_palette_off_summary": 222.25,
+              "extent_mm_summary": 3.4800000190734863
+            },
+            "rms_palette_inner3mm": 4.90791041985221,
+            "peak_rel_err": 0.002466877614419291,
+            "extent_err_mm": 0.15480468749999998
+          },
+          {
+            "gain": 50.0,
+            "diameter_mm": 60.0,
+            "sim_gain_db": 54.09000015258789,
+            "bench_file_off": "FILE0004.dcm",
+            "bench_file_on": "FILE0005.dcm",
+            "sim": {
+              "peak_palette": 222.7982635498047,
+              "peak_depth_mm": 2.1533203125,
+              "speckle_floor_palette": 11.283343315124512,
+              "peak_palette_excess": 211.51492309570312,
+              "extent_mm": 3.3251953125
+            },
+            "bench": {
+              "peak_palette": 222.0,
+              "peak_depth_mm": 2.16,
+              "speckle_floor_palette": 28.0,
+              "peak_palette_excess": 194.0,
+              "extent_mm": 3.48,
+              "peak_palette_off_summary": 222.0,
+              "extent_mm_summary": 3.4800000190734863
+            },
+            "rms_palette_inner3mm": 4.437204099510432,
+            "peak_rel_err": 0.0035957817558769705,
+            "extent_err_mm": 0.15480468749999998
+          }
+        ],
+        "aggregate": {
+          "median_peak_rel_err": 0.0035957817558769705,
+          "median_extent_err_mm": 0.15480468749999998,
+          "median_rms_palette_inner3mm": 4.90791041985221,
+          "worst_peak_rel_err": 0.01093018776851473,
+          "worst_extent_err_mm": 0.15480468749999998,
+          "worst_rms_palette_inner3mm": 8.504371026595033
+        },
+        "ac_tier": "magnitude + shape (sensor property -- catheter ring-down)",
+        "pass_criteria": {
+          "median_peak_rel_err_le_10pct": {
+            "value": 0.0035957817558769705,
+            "ok": true,
+            "tier": "magnitude (gates -- sensor property)"
+          },
+          "median_extent_err_le_0_3_mm": {
+            "value": 0.15480468749999998,
+            "ok": true,
+            "tier": "shape (gates)"
+          },
+          "median_rms_palette_le_5": {
+            "value": 4.90791041985221,
+            "ok": true,
+            "tier": "shape-of-decay (gates)"
+          }
+        },
+        "figure": "figures/ringdown_mean_aline.png",
+        "bench_source": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_summary_v2.json + AR-off .npy A-lines (E6 anechoic)"
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "F. Noise floor (E4c milk multi-slider primary, E6 water diagnostic)",
+      "status": "pass",
+      "summary": "PRIMARY (milk anchor, gates): E4c D=15 r=[3,6.5] mm -- median rel.err = 1.7% across 3 usable anchors (<= 30% req); per-anchor: g50(bench=0.063 sim=0.062 rel=1% vf=4%), g56(bench=0.113 sim=0.117 rel=4% vf=8%), g62(bench=0.215 sim=0.219 rel=2% vf=17%), g68(bench=0.409 sim=0.415 rel=1% vf=74%). E4a cross-check median rel.err = 7.2% (3 anchors). Status: pass.  LEGACY E6 DIAGNOSTIC (informational, not gating): 2 water pairs (g50D30, g50D60); ff_std_palette rel.err = 98.5%, mean abs.err = 26.6 palette, corr rel.err = 282.3% -- LEGACY_ALL_PASS = False.  YAML: envelope_noise.{mean,sigma} = 0 / 0.379, reference_gain_db = 54.09, noise.sigma (legacy RF) = 0.",
+      "detail": {
+        "milk_anchor_primary": {
+          "params": {
+            "sliders": [
+              50,
+              56,
+              62,
+              68
+            ],
+            "diameter_mm": 15.0,
+            "r_band_mm": [
+              3.0,
+              6.5
+            ],
+            "min_valid_fraction": 0.05,
+            "rel_err_tol": 0.3,
+            "ref_slider": 54.0,
+            "n_frames": 8,
+            "sim_world": "build_uniform_milk_world (milk material background)",
+            "metric": "envelope_residual_std (median per-pixel temporal std of inverted envelope)"
+          },
+          "per_anchor": [
+            {
+              "slider": 50,
+              "diameter_mm": 15.0,
+              "r_band_mm": [
+                3.0,
+                6.5
+              ],
+              "gain_bump_db": -3.6,
+              "sim_gain_db": 54.4900016784668,
+              "bench_e4c": {
+                "mean_palette": 13.687819480895996,
+                "ff_std_palette": 0.23609068989753723,
+                "sf_std_palette": 10.184612274169922,
+                "coherent_std_palette": 10.162406921386719,
+                "n_frames": 38,
+                "n_pixels_per_frame": 14848,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.06269552500717619,
+                "envelope_residual_std_mean": 0.06472749436536099,
+                "envelope_residual_std_p25": 0.048924719620818,
+                "envelope_residual_std_p75": 0.08000136820423992,
+                "envelope_mean": 2.4638931935692217,
+                "envelope_n_valid_pixels": 551,
+                "envelope_valid_fraction": 0.037109375,
+                "take_id": "p1",
+                "phantom": "evap_milk_diluted_1to1"
+              },
+              "bench_e4a": {
+                "mean_palette": 13.759812355041504,
+                "ff_std_palette": 0.2702476382255554,
+                "sf_std_palette": 10.187055587768555,
+                "coherent_std_palette": 10.21603012084961,
+                "n_frames": 46,
+                "n_pixels_per_frame": 14848,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.0657840670805048,
+                "envelope_residual_std_mean": 0.07567382789430044,
+                "envelope_residual_std_p25": 0.049418584342125545,
+                "envelope_residual_std_p75": 0.08728482619468618,
+                "envelope_mean": 2.4271372430779725,
+                "envelope_n_valid_pixels": 572,
+                "envelope_valid_fraction": 0.03852370689655173,
+                "take_id": "p1",
+                "phantom": "evap_milk_undiluted"
+              },
+              "sim": {
+                "mean_palette": 17.407217025756836,
+                "ff_std_palette": 0.8904692530632019,
+                "sf_std_palette": 12.689441680908203,
+                "coherent_std_palette": 12.653777122497559,
+                "n_frames": 8,
+                "n_pixels_per_frame": 30720,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.06202443129026561,
+                "envelope_residual_std_mean": 0.06297196392926292,
+                "envelope_residual_std_p25": 0.049721097188650115,
+                "envelope_residual_std_p75": 0.07503461115850993,
+                "envelope_mean": 2.3645557778670034,
+                "envelope_n_valid_pixels": 2283,
+                "envelope_valid_fraction": 0.07431640625
+              },
+              "rel_err_e4c": 0.010704013034961745,
+              "rel_err_e4a": 0.05715116071553083
+            },
+            {
+              "slider": 56,
+              "diameter_mm": 15.0,
+              "r_band_mm": [
+                3.0,
+                6.5
+              ],
+              "gain_bump_db": 1.8,
+              "sim_gain_db": 59.88999938964844,
+              "bench_e4c": {
+                "mean_palette": 18.26496124267578,
+                "ff_std_palette": 1.515073537826538,
+                "sf_std_palette": 19.043954849243164,
+                "coherent_std_palette": 18.921104431152344,
+                "n_frames": 45,
+                "n_pixels_per_frame": 14848,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.11267985365111083,
+                "envelope_residual_std_mean": 0.14629622717260768,
+                "envelope_residual_std_p25": 0.07986393681486594,
+                "envelope_residual_std_p75": 0.17614757453181043,
+                "envelope_mean": 3.559270013007181,
+                "envelope_n_valid_pixels": 1237,
+                "envelope_valid_fraction": 0.08331088362068965,
+                "take_id": "p1",
+                "phantom": "evap_milk_diluted_1to1"
+              },
+              "bench_e4a": {
+                "mean_palette": 17.597198486328125,
+                "ff_std_palette": 1.6035526990890503,
+                "sf_std_palette": 17.43996238708496,
+                "coherent_std_palette": 17.33707618713379,
+                "n_frames": 42,
+                "n_pixels_per_frame": 14848,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.12663089903504554,
+                "envelope_residual_std_mean": 0.16284500626781198,
+                "envelope_residual_std_p25": 0.08870066334728674,
+                "envelope_residual_std_p75": 0.19815203620988397,
+                "envelope_mean": 3.2863942479270034,
+                "envelope_n_valid_pixels": 1151,
+                "envelope_valid_fraction": 0.07751885775862069,
+                "take_id": "p3",
+                "phantom": "evap_milk_undiluted"
+              },
+              "sim": {
+                "mean_palette": 24.502758026123047,
+                "ff_std_palette": 2.189093589782715,
+                "sf_std_palette": 20.615753173828125,
+                "coherent_std_palette": 20.483142852783203,
+                "n_frames": 8,
+                "n_pixels_per_frame": 30720,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.11748188733328599,
+                "envelope_residual_std_mean": 0.11860849487869651,
+                "envelope_residual_std_p25": 0.09511584168779996,
+                "envelope_residual_std_p75": 0.14069593254597465,
+                "envelope_mean": 3.5590088710110788,
+                "envelope_n_valid_pixels": 3489,
+                "envelope_valid_fraction": 0.11357421875
+              },
+              "rel_err_e4c": 0.04261661270029366,
+              "rel_err_e4a": 0.07224944126178502
+            },
+            {
+              "slider": 62,
+              "diameter_mm": 15.0,
+              "r_band_mm": [
+                3.0,
+                6.5
+              ],
+              "gain_bump_db": 7.2,
+              "sim_gain_db": 65.29000091552734,
+              "bench_e4c": {
+                "mean_palette": 31.34073829650879,
+                "ff_std_palette": 4.820738792419434,
+                "sf_std_palette": 29.321956634521484,
+                "coherent_std_palette": 28.874767303466797,
+                "n_frames": 39,
+                "n_pixels_per_frame": 14848,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.2154782293851613,
+                "envelope_residual_std_mean": 0.24165583881029185,
+                "envelope_residual_std_p25": 0.16761537831184756,
+                "envelope_residual_std_p75": 0.2894852490072462,
+                "envelope_mean": 5.019796031601476,
+                "envelope_n_valid_pixels": 2533,
+                "envelope_valid_fraction": 0.17059536637931033,
+                "take_id": "p1",
+                "phantom": "evap_milk_diluted_1to1"
+              },
+              "bench_e4a": {
+                "mean_palette": 31.01034927368164,
+                "ff_std_palette": 5.345348834991455,
+                "sf_std_palette": 27.83644676208496,
+                "coherent_std_palette": 27.2484073638916,
+                "n_frames": 48,
+                "n_pixels_per_frame": 14848,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.26821299771938567,
+                "envelope_residual_std_mean": 0.30098187880231764,
+                "envelope_residual_std_p25": 0.1971374927301116,
+                "envelope_residual_std_p75": 0.3623466953817483,
+                "envelope_mean": 4.767503112249343,
+                "envelope_n_valid_pixels": 2393,
+                "envelope_valid_fraction": 0.16116648706896552,
+                "take_id": "p2",
+                "phantom": "evap_milk_undiluted"
+              },
+              "sim": {
+                "mean_palette": 37.268428802490234,
+                "ff_std_palette": 4.659602642059326,
+                "sf_std_palette": 29.204700469970703,
+                "coherent_std_palette": 28.78580093383789,
+                "n_frames": 8,
+                "n_pixels_per_frame": 30720,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.21905459849347933,
+                "envelope_residual_std_mean": 0.22181761805228148,
+                "envelope_residual_std_p25": 0.17798530349685449,
+                "envelope_residual_std_p75": 0.26212886686939996,
+                "envelope_mean": 3.962293403756959,
+                "envelope_n_valid_pixels": 7742,
+                "envelope_valid_fraction": 0.25201822916666666
+              },
+              "rel_err_e4c": 0.01659735704401653,
+              "rel_err_e4a": 0.18328119682453894
+            },
+            {
+              "slider": 68,
+              "diameter_mm": 15.0,
+              "r_band_mm": [
+                3.0,
+                6.5
+              ],
+              "gain_bump_db": 12.600000000000001,
+              "sim_gain_db": 70.69000244140625,
+              "bench_e4c": {
+                "mean_palette": 55.97052001953125,
+                "ff_std_palette": 7.800955772399902,
+                "sf_std_palette": 37.81001663208008,
+                "coherent_std_palette": 36.8469123840332,
+                "n_frames": 37,
+                "n_pixels_per_frame": 14848,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.4088986591262703,
+                "envelope_residual_std_mean": 0.450741090813125,
+                "envelope_residual_std_p25": 0.34585616127671964,
+                "envelope_residual_std_p75": 0.5056967248580391,
+                "envelope_mean": 3.8270561260448606,
+                "envelope_n_valid_pixels": 10916,
+                "envelope_valid_fraction": 0.7351831896551724,
+                "take_id": "p1",
+                "phantom": "evap_milk_diluted_1to1"
+              },
+              "bench_e4a": {
+                "mean_palette": 56.90362548828125,
+                "ff_std_palette": 8.302284240722656,
+                "sf_std_palette": 38.50865936279297,
+                "coherent_std_palette": 37.2216911315918,
+                "n_frames": 35,
+                "n_pixels_per_frame": 14848,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.4317695474855779,
+                "envelope_residual_std_mean": 0.50787674349727,
+                "envelope_residual_std_p25": 0.36319896059331264,
+                "envelope_residual_std_p75": 0.541882006051752,
+                "envelope_mean": 3.8700813864412043,
+                "envelope_n_valid_pixels": 11145,
+                "envelope_valid_fraction": 0.7506061422413793,
+                "take_id": "p1",
+                "phantom": "evap_milk_undiluted"
+              },
+              "sim": {
+                "mean_palette": 57.50948715209961,
+                "ff_std_palette": 8.09414005279541,
+                "sf_std_palette": 37.22981643676758,
+                "coherent_std_palette": 36.23478317260742,
+                "n_frames": 8,
+                "n_pixels_per_frame": 30720,
+                "r_band_mm": [
+                  3.0,
+                  6.5
+                ],
+                "envelope_residual_std": 0.4149899331404749,
+                "envelope_residual_std_mean": 0.42047716414505215,
+                "envelope_residual_std_p25": 0.33884215657559136,
+                "envelope_residual_std_p75": 0.4968378381650989,
+                "envelope_mean": 3.95745639774057,
+                "envelope_n_valid_pixels": 20911,
+                "envelope_valid_fraction": 0.6806966145833333
+              },
+              "rel_err_e4c": 0.01489678158206809,
+              "rel_err_e4a": 0.038862431227073696
+            }
+          ],
+          "usable_e4c_sliders": [
+            56,
+            62,
+            68
+          ],
+          "usable_e4a_sliders": [
+            56,
+            62,
+            68
+          ],
+          "aggregate": {
+            "median_rel_err_e4c": 0.01659735704401653,
+            "worst_rel_err_e4c": 0.04261661270029366,
+            "median_rel_err_e4a": 0.07224944126178502,
+            "worst_rel_err_e4a": 0.18328119682453894,
+            "n_usable_e4c": 3,
+            "n_usable_e4a": 3
+          },
+          "primary_pass": true,
+          "primary_basis": "E4c milk-water"
+        },
+        "legacy_e6_diagnostic": {
+          "note": "INFORMATIONAL only.  Test F is gated by milk_anchor_primary (multi-slider milk envelope-domain residual).  The legacy E6 ff_std_palette / corr / 2-D-corr metrics are kept here to show the operating-point bias: bench water palette ~38 sits above the soft-reject knee thanks to un-modelled coherent reverb, while sim's noise-only water palette ~12 is below.",
+          "n_pairs_evaluated": 2,
+          "per_pair": [
+            {
+              "gain": 50.0,
+              "diameter_mm": 30.0,
+              "sim_gain_db": 54.09000015258789,
+              "bench": {
+                "mean_palette": 36.92856979370117,
+                "std_palette": 2.019989252090454,
+                "p50_palette": 37.0,
+                "p05_palette": 33.25,
+                "p95_palette": 39.69999694824219,
+                "n_pixels": 49,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ]
+              },
+              "bench_multiframe_on": {
+                "mean_palette": 38.26139831542969,
+                "ff_std_palette": 10.050985336303711,
+                "sf_std_palette": 16.290233612060547,
+                "coherent_std_palette": 12.863751411437988,
+                "n_frames": 45,
+                "n_pixels_per_frame": 25088,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ],
+                "envelope_residual_std": 0.5301896441099415,
+                "envelope_residual_std_mean": 0.5521887507192829,
+                "envelope_residual_std_p25": 0.46092039113976363,
+                "envelope_residual_std_p75": 0.6144532077609174,
+                "envelope_mean": 1.8923130274513669,
+                "envelope_n_valid_pixels": 12424,
+                "envelope_valid_fraction": 0.49521683673469385
+              },
+              "bench_multiframe_off": {
+                "mean_palette": 34.95530319213867,
+                "ff_std_palette": 9.874361038208008,
+                "sf_std_palette": 15.115245819091797,
+                "coherent_std_palette": 11.307138442993164,
+                "n_frames": 54,
+                "n_pixels_per_frame": 25088,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ],
+                "envelope_residual_std": 0.5424854539928856,
+                "envelope_residual_std_mean": 0.5524123182025555,
+                "envelope_residual_std_p25": 0.47922807169921583,
+                "envelope_residual_std_p75": 0.6151366822798955,
+                "envelope_mean": 1.7820798146837402,
+                "envelope_n_valid_pixels": 9631,
+                "envelope_valid_fraction": 0.38388871173469385
+              },
+              "bench_ar_off_diagnostic": {
+                "mean_palette": 34.17856979370117,
+                "std_palette": 4.693406105041504,
+                "p50_palette": 35.0,
+                "p05_palette": 26.0,
+                "p95_palette": 39.5,
+                "n_pixels": 49,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ]
+              },
+              "bench_file_on": "FILE0001.dcm",
+              "bench_file_off": "FILE0000.dcm",
+              "bench_corr_mm": 0.16827259210959541,
+              "bench_corr_detail": {
+                "corr_length_mm": 0.16827259210959541,
+                "dr_mm": 0.12,
+                "n_samples": 49,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ],
+                "threshold": 0.5
+              },
+              "bench_corr_2d": null,
+              "sim": {
+                "mean_palette": 11.090965270996094,
+                "std_palette": 0.19332396984100342,
+                "ff_std_palette": 0.14435255527496338,
+                "sf_std_palette": 0.19215694069862366,
+                "p50_palette": 11.000139236450195,
+                "p05_palette": 11.0,
+                "p95_palette": 11.479874610900879,
+                "n_frames": 8,
+                "n_pixels": 364544,
+                "envelope_residual_std": NaN,
+                "envelope_residual_std_mean": NaN,
+                "envelope_residual_std_p25": NaN,
+                "envelope_residual_std_p75": NaN,
+                "envelope_mean": NaN,
+                "envelope_n_valid_pixels": 0,
+                "envelope_valid_fraction": 0.0
+              },
+              "sim_corr_mm": 0.7570284302998709,
+              "sim_corr_detail": {
+                "corr_length_mm": 0.7570284302998709,
+                "dr_mm": 0.029296875,
+                "n_samples": 177,
+                "r_band_mm": [
+                  4.6,
+                  9.84
+                ],
+                "threshold": 0.5
+              },
+              "sim_corr_2d": {
+                "radial_corr_length_mm": 0.08692077371292797,
+                "azim_corr_length_mm": 0.08848665114362361,
+                "n_frames": 8,
+                "n_theta": 256,
+                "n_r_band": 178,
+                "dr_mm": 0.029296875,
+                "dtheta_deg": 1.40625,
+                "r_mid_mm": 7.1923828125,
+                "r_band_mm": [
+                  4.599609375,
+                  9.78515625
+                ],
+                "threshold": 0.5
+              },
+              "radial_2d_rel_err": NaN,
+              "azim_2d_rel_err": NaN,
+              "corr_rel_err": 3.498821946041103,
+              "sigma_rel_err": 0.9856379697666489,
+              "sigma_compare_basis": "frame-to-frame per-pixel std (bench multi-frame DICOM vs sim multi-frame)",
+              "bench_mean_used": 38.26139831542969,
+              "bench_std_used": 10.050985336303711,
+              "sim_std_used": 0.14435255527496338,
+              "mean_abs_err_palette": 27.170433044433594
+            },
+            {
+              "gain": 50.0,
+              "diameter_mm": 60.0,
+              "sim_gain_db": 54.09000015258789,
+              "bench": {
+                "mean_palette": 37.591835021972656,
+                "std_palette": 3.270810127258301,
+                "p50_palette": 38.5,
+                "p05_palette": 32.400001525878906,
+                "p95_palette": 42.29999923706055,
+                "n_pixels": 49,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ]
+              },
+              "bench_multiframe_on": {
+                "mean_palette": 37.212364196777344,
+                "ff_std_palette": 9.401330947875977,
+                "sf_std_palette": 15.512871742248535,
+                "coherent_std_palette": 11.640231132507324,
+                "n_frames": 39,
+                "n_pixels_per_frame": 12544,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ],
+                "envelope_residual_std": 0.5009740441722508,
+                "envelope_residual_std_mean": 0.510236272881637,
+                "envelope_residual_std_p25": 0.4340060249924579,
+                "envelope_residual_std_p75": 0.5796371623067096,
+                "envelope_mean": 1.824609707870027,
+                "envelope_n_valid_pixels": 5770,
+                "envelope_valid_fraction": 0.45998086734693877
+              },
+              "bench_multiframe_off": {
+                "mean_palette": 35.151344299316406,
+                "ff_std_palette": 9.25026798248291,
+                "sf_std_palette": 14.58834457397461,
+                "coherent_std_palette": 11.450273513793945,
+                "n_frames": 42,
+                "n_pixels_per_frame": 12544,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ],
+                "envelope_residual_std": 0.5073000178543524,
+                "envelope_residual_std_mean": 0.5164852225741482,
+                "envelope_residual_std_p25": 0.4416829857618318,
+                "envelope_residual_std_p75": 0.5870294372856153,
+                "envelope_mean": 1.7844296063583232,
+                "envelope_n_valid_pixels": 4914,
+                "envelope_valid_fraction": 0.39174107142857145
+              },
+              "bench_ar_off_diagnostic": {
+                "mean_palette": 34.54081726074219,
+                "std_palette": 4.691869258880615,
+                "p50_palette": 35.250003814697266,
+                "p05_palette": 27.349998474121094,
+                "p95_palette": 41.000003814697266,
+                "n_pixels": 49,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ]
+              },
+              "bench_file_on": "FILE0005.dcm",
+              "bench_file_off": "FILE0004.dcm",
+              "bench_corr_mm": 0.24058017795757589,
+              "bench_corr_detail": {
+                "corr_length_mm": 0.24058017795757589,
+                "dr_mm": 0.12,
+                "n_samples": 49,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ],
+                "threshold": 0.5
+              },
+              "bench_corr_2d": {
+                "radial_corr_length_mm": 0.2005143777605369,
+                "azim_corr_length_mm": 0.32844137890005465,
+                "n_frames": 39,
+                "n_theta": 256,
+                "n_r_band": 49,
+                "dr_mm": 0.11999999999999998,
+                "dtheta_deg": 1.40625,
+                "r_mid_mm": 6.92,
+                "r_band_mm": [
+                  4.0,
+                  9.84
+                ],
+                "threshold": 0.5
+              },
+              "sim": {
+                "mean_palette": 11.090965270996094,
+                "std_palette": 0.19332396984100342,
+                "ff_std_palette": 0.14435255527496338,
+                "sf_std_palette": 0.19215694069862366,
+                "p50_palette": 11.000139236450195,
+                "p05_palette": 11.0,
+                "p95_palette": 11.479874610900879,
+                "n_frames": 8,
+                "n_pixels": 364544,
+                "envelope_residual_std": NaN,
+                "envelope_residual_std_mean": NaN,
+                "envelope_residual_std_p25": NaN,
+                "envelope_residual_std_p75": NaN,
+                "envelope_mean": NaN,
+                "envelope_n_valid_pixels": 0,
+                "envelope_valid_fraction": 0.0
+              },
+              "sim_corr_mm": 0.7570284302998709,
+              "sim_corr_detail": {
+                "corr_length_mm": 0.7570284302998709,
+                "dr_mm": 0.029296875,
+                "n_samples": 177,
+                "r_band_mm": [
+                  4.6,
+                  9.84
+                ],
+                "threshold": 0.5
+              },
+              "sim_corr_2d": {
+                "radial_corr_length_mm": 0.08692077371292797,
+                "azim_corr_length_mm": 0.08848665114362361,
+                "n_frames": 8,
+                "n_theta": 256,
+                "n_r_band": 178,
+                "dr_mm": 0.029296875,
+                "dtheta_deg": 1.40625,
+                "r_mid_mm": 7.1923828125,
+                "r_band_mm": [
+                  4.599609375,
+                  9.78515625
+                ],
+                "threshold": 0.5
+              },
+              "radial_2d_rel_err": 0.5665110168970896,
+              "azim_2d_rel_err": 0.7305861659698175,
+              "corr_rel_err": 2.146678320411609,
+              "sigma_rel_err": 0.9846455192275114,
+              "sigma_compare_basis": "frame-to-frame per-pixel std (bench multi-frame DICOM vs sim multi-frame)",
+              "bench_mean_used": 37.212364196777344,
+              "bench_std_used": 9.401330947875977,
+              "sim_std_used": 0.14435255527496338,
+              "mean_abs_err_palette": 26.12139892578125
+            }
+          ],
+          "skipped_pairs": [
+            {
+              "gain": 40.0,
+              "diameter_mm": 60.0,
+              "reason": "AR-on deep tail clipped to device reject floor",
+              "on_mean": 11.0,
+              "on_std": 0.0
+            }
+          ],
+          "aggregate": {
+            "median_sigma_rel_err": 0.9851417444970801,
+            "median_mean_abs_err_palette": 26.645915985107422,
+            "median_corr_rel_err": 2.8227501332263563,
+            "median_radial_2d_corr_rel_err": 0.5665110168970896,
+            "median_azim_2d_corr_rel_err": 0.7305861659698175,
+            "worst_sigma_rel_err": 0.9856379697666489,
+            "worst_mean_abs_err_palette": 27.170433044433594,
+            "worst_corr_rel_err": 3.498821946041103
+          },
+          "envelope_domain_diagnostic": {
+            "note": "Envelope-domain noise residual on E6 water -- median per-pixel temporal std of inverted envelope. Reported for cross-check against the primary milk anchor; not gating (water has un-modelled coh reverb so operating points are biased).",
+            "per_pair": [
+              {
+                "gain": 50.0,
+                "diameter_mm": 30.0,
+                "bench_env_resid_std": 0.5301896441099415,
+                "sim_env_resid_std": NaN,
+                "bench_palette_mean": 38.26139831542969,
+                "sim_palette_mean": 11.090965270996094,
+                "bench_envelope_mean": 1.8923130274513669,
+                "sim_envelope_mean": NaN,
+                "bench_env_n_valid_pixels": 12424,
+                "sim_env_n_valid_pixels": 0,
+                "rel_err": NaN,
+                "rel_err_note": "skipped: at least one side palette mean is below the soft-reject knee (operating points not comparable; expected for E6 water at slider 50 where sim has no un-modelled coh)"
+              },
+              {
+                "gain": 50.0,
+                "diameter_mm": 60.0,
+                "bench_env_resid_std": 0.5009740441722508,
+                "sim_env_resid_std": NaN,
+                "bench_palette_mean": 37.212364196777344,
+                "sim_palette_mean": 11.090965270996094,
+                "bench_envelope_mean": 1.824609707870027,
+                "sim_envelope_mean": NaN,
+                "bench_env_n_valid_pixels": 5770,
+                "sim_env_n_valid_pixels": 0,
+                "rel_err": NaN,
+                "rel_err_note": "skipped: at least one side palette mean is below the soft-reject knee (operating points not comparable; expected for E6 water at slider 50 where sim has no un-modelled coh)"
+              }
+            ],
+            "median_rel_err": NaN,
+            "worst_rel_err": NaN
+          },
+          "legacy_pass_criteria": {
+            "median_mean_within_10_palette": {
+              "value": 26.645915985107422,
+              "ok": false,
+              "tier": "INFO (legacy magnitude diagnostic)"
+            },
+            "median_sigma_within_25pct": {
+              "value": 0.9851417444970801,
+              "ok": false,
+              "tier": "INFO (legacy magnitude diagnostic)",
+              "compare_basis": "frame-to-frame per-pixel std"
+            },
+            "median_corr_length_within_50pct": {
+              "value": 2.8227501332263563,
+              "ok": false,
+              "tier": "INFO (legacy shape diagnostic)"
+            },
+            "median_radial_2d_corr_length_rel_err": {
+              "value": 0.5665110168970896,
+              "ok": false,
+              "tier": "INFO -- 2-D incoherent radial autocorrelation"
+            },
+            "median_azim_2d_corr_length_rel_err": {
+              "value": 0.7305861659698175,
+              "ok": false,
+              "tier": "INFO -- 2-D incoherent azimuthal autocorrelation"
+            },
+            "legacy_all_pass": false
+          },
+          "world": "water (no scatter, anechoic) -- matches E6 AR-on",
+          "bench_source": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_summary_v2.json + multi-frame DICOM (FILE000X.dcm via manifest_subset.csv) for per-pixel frame-to-frame std; r in [4, 9.84] mm deep-tail."
+        },
+        "ac_tier": "magnitude (sensor property) -- median |env_resid - bench_env_resid| / bench_env_resid <= 30% on milk anchor",
+        "pass_criteria": {
+          "milk_anchor_median_rel_err_within_30pct_e4c": {
+            "value": 0.01659735704401653,
+            "ok": true,
+            "tier": "PRIMARY (gate -- E4c milk-water 1:1)"
+          },
+          "milk_anchor_median_rel_err_within_30pct_e4a": {
+            "value": 0.07224944126178502,
+            "ok": true,
+            "tier": "CROSS-CHECK (E4a undiluted milk; expected to agree with E4c)"
+          }
+        },
+        "noise_yaml": {
+          "envelope_noise_mean": 0.0,
+          "envelope_noise_sigma": 0.3786,
+          "envelope_noise_reference_gain_db": 54.09,
+          "noise_sigma_legacy": 0.0
+        },
+        "bench_source_primary": "ivus_test_0515/raw/e4c_milk_water_gain_p{1,2,3}/manifest_subset.csv -> multi-frame DICOMs at sliders {50,56,62,68}, D=15 mm, r in [3, 6.5] mm. Cross-checked against e4a_milk_gain_p{1,2,3} (undiluted milk).",
+        "figure": "figures/noise_distribution_paired.png",
+        "milk_anchor_figure": "figures/milk_anchor_paired.png"
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "F-diag. E6 anechoic-water envelope diagnostic (informational)",
+      "status": "diagnostic",
+      "summary": "E6 anechoic-water envelope-domain diagnostic across 2 (gain, D) pairs.  Operating-point biased by un-modelled coherent reverb (bench water palette sits above the soft-reject knee in the bench but not in the sim noise-only render); informational only, does NOT gate Test F.",
+      "detail": {
+        "note": "INFORMATIONAL only.  Test F is gated by milk_anchor_primary (multi-slider milk envelope-domain residual).  The legacy E6 ff_std_palette / corr / 2-D-corr metrics are kept here to show the operating-point bias: bench water palette ~38 sits above the soft-reject knee thanks to un-modelled coherent reverb, while sim's noise-only water palette ~12 is below.",
+        "n_pairs_evaluated": 2,
+        "per_pair": [
+          {
+            "gain": 50.0,
+            "diameter_mm": 30.0,
+            "sim_gain_db": 54.09000015258789,
+            "bench": {
+              "mean_palette": 36.92856979370117,
+              "std_palette": 2.019989252090454,
+              "p50_palette": 37.0,
+              "p05_palette": 33.25,
+              "p95_palette": 39.69999694824219,
+              "n_pixels": 49,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ]
+            },
+            "bench_multiframe_on": {
+              "mean_palette": 38.26139831542969,
+              "ff_std_palette": 10.050985336303711,
+              "sf_std_palette": 16.290233612060547,
+              "coherent_std_palette": 12.863751411437988,
+              "n_frames": 45,
+              "n_pixels_per_frame": 25088,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ],
+              "envelope_residual_std": 0.5301896441099415,
+              "envelope_residual_std_mean": 0.5521887507192829,
+              "envelope_residual_std_p25": 0.46092039113976363,
+              "envelope_residual_std_p75": 0.6144532077609174,
+              "envelope_mean": 1.8923130274513669,
+              "envelope_n_valid_pixels": 12424,
+              "envelope_valid_fraction": 0.49521683673469385
+            },
+            "bench_multiframe_off": {
+              "mean_palette": 34.95530319213867,
+              "ff_std_palette": 9.874361038208008,
+              "sf_std_palette": 15.115245819091797,
+              "coherent_std_palette": 11.307138442993164,
+              "n_frames": 54,
+              "n_pixels_per_frame": 25088,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ],
+              "envelope_residual_std": 0.5424854539928856,
+              "envelope_residual_std_mean": 0.5524123182025555,
+              "envelope_residual_std_p25": 0.47922807169921583,
+              "envelope_residual_std_p75": 0.6151366822798955,
+              "envelope_mean": 1.7820798146837402,
+              "envelope_n_valid_pixels": 9631,
+              "envelope_valid_fraction": 0.38388871173469385
+            },
+            "bench_ar_off_diagnostic": {
+              "mean_palette": 34.17856979370117,
+              "std_palette": 4.693406105041504,
+              "p50_palette": 35.0,
+              "p05_palette": 26.0,
+              "p95_palette": 39.5,
+              "n_pixels": 49,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ]
+            },
+            "bench_file_on": "FILE0001.dcm",
+            "bench_file_off": "FILE0000.dcm",
+            "bench_corr_mm": 0.16827259210959541,
+            "bench_corr_detail": {
+              "corr_length_mm": 0.16827259210959541,
+              "dr_mm": 0.12,
+              "n_samples": 49,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ],
+              "threshold": 0.5
+            },
+            "bench_corr_2d": null,
+            "sim": {
+              "mean_palette": 11.090965270996094,
+              "std_palette": 0.19332396984100342,
+              "ff_std_palette": 0.14435255527496338,
+              "sf_std_palette": 0.19215694069862366,
+              "p50_palette": 11.000139236450195,
+              "p05_palette": 11.0,
+              "p95_palette": 11.479874610900879,
+              "n_frames": 8,
+              "n_pixels": 364544,
+              "envelope_residual_std": NaN,
+              "envelope_residual_std_mean": NaN,
+              "envelope_residual_std_p25": NaN,
+              "envelope_residual_std_p75": NaN,
+              "envelope_mean": NaN,
+              "envelope_n_valid_pixels": 0,
+              "envelope_valid_fraction": 0.0
+            },
+            "sim_corr_mm": 0.7570284302998709,
+            "sim_corr_detail": {
+              "corr_length_mm": 0.7570284302998709,
+              "dr_mm": 0.029296875,
+              "n_samples": 177,
+              "r_band_mm": [
+                4.6,
+                9.84
+              ],
+              "threshold": 0.5
+            },
+            "sim_corr_2d": {
+              "radial_corr_length_mm": 0.08692077371292797,
+              "azim_corr_length_mm": 0.08848665114362361,
+              "n_frames": 8,
+              "n_theta": 256,
+              "n_r_band": 178,
+              "dr_mm": 0.029296875,
+              "dtheta_deg": 1.40625,
+              "r_mid_mm": 7.1923828125,
+              "r_band_mm": [
+                4.599609375,
+                9.78515625
+              ],
+              "threshold": 0.5
+            },
+            "radial_2d_rel_err": NaN,
+            "azim_2d_rel_err": NaN,
+            "corr_rel_err": 3.498821946041103,
+            "sigma_rel_err": 0.9856379697666489,
+            "sigma_compare_basis": "frame-to-frame per-pixel std (bench multi-frame DICOM vs sim multi-frame)",
+            "bench_mean_used": 38.26139831542969,
+            "bench_std_used": 10.050985336303711,
+            "sim_std_used": 0.14435255527496338,
+            "mean_abs_err_palette": 27.170433044433594
+          },
+          {
+            "gain": 50.0,
+            "diameter_mm": 60.0,
+            "sim_gain_db": 54.09000015258789,
+            "bench": {
+              "mean_palette": 37.591835021972656,
+              "std_palette": 3.270810127258301,
+              "p50_palette": 38.5,
+              "p05_palette": 32.400001525878906,
+              "p95_palette": 42.29999923706055,
+              "n_pixels": 49,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ]
+            },
+            "bench_multiframe_on": {
+              "mean_palette": 37.212364196777344,
+              "ff_std_palette": 9.401330947875977,
+              "sf_std_palette": 15.512871742248535,
+              "coherent_std_palette": 11.640231132507324,
+              "n_frames": 39,
+              "n_pixels_per_frame": 12544,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ],
+              "envelope_residual_std": 0.5009740441722508,
+              "envelope_residual_std_mean": 0.510236272881637,
+              "envelope_residual_std_p25": 0.4340060249924579,
+              "envelope_residual_std_p75": 0.5796371623067096,
+              "envelope_mean": 1.824609707870027,
+              "envelope_n_valid_pixels": 5770,
+              "envelope_valid_fraction": 0.45998086734693877
+            },
+            "bench_multiframe_off": {
+              "mean_palette": 35.151344299316406,
+              "ff_std_palette": 9.25026798248291,
+              "sf_std_palette": 14.58834457397461,
+              "coherent_std_palette": 11.450273513793945,
+              "n_frames": 42,
+              "n_pixels_per_frame": 12544,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ],
+              "envelope_residual_std": 0.5073000178543524,
+              "envelope_residual_std_mean": 0.5164852225741482,
+              "envelope_residual_std_p25": 0.4416829857618318,
+              "envelope_residual_std_p75": 0.5870294372856153,
+              "envelope_mean": 1.7844296063583232,
+              "envelope_n_valid_pixels": 4914,
+              "envelope_valid_fraction": 0.39174107142857145
+            },
+            "bench_ar_off_diagnostic": {
+              "mean_palette": 34.54081726074219,
+              "std_palette": 4.691869258880615,
+              "p50_palette": 35.250003814697266,
+              "p05_palette": 27.349998474121094,
+              "p95_palette": 41.000003814697266,
+              "n_pixels": 49,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ]
+            },
+            "bench_file_on": "FILE0005.dcm",
+            "bench_file_off": "FILE0004.dcm",
+            "bench_corr_mm": 0.24058017795757589,
+            "bench_corr_detail": {
+              "corr_length_mm": 0.24058017795757589,
+              "dr_mm": 0.12,
+              "n_samples": 49,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ],
+              "threshold": 0.5
+            },
+            "bench_corr_2d": {
+              "radial_corr_length_mm": 0.2005143777605369,
+              "azim_corr_length_mm": 0.32844137890005465,
+              "n_frames": 39,
+              "n_theta": 256,
+              "n_r_band": 49,
+              "dr_mm": 0.11999999999999998,
+              "dtheta_deg": 1.40625,
+              "r_mid_mm": 6.92,
+              "r_band_mm": [
+                4.0,
+                9.84
+              ],
+              "threshold": 0.5
+            },
+            "sim": {
+              "mean_palette": 11.090965270996094,
+              "std_palette": 0.19332396984100342,
+              "ff_std_palette": 0.14435255527496338,
+              "sf_std_palette": 0.19215694069862366,
+              "p50_palette": 11.000139236450195,
+              "p05_palette": 11.0,
+              "p95_palette": 11.479874610900879,
+              "n_frames": 8,
+              "n_pixels": 364544,
+              "envelope_residual_std": NaN,
+              "envelope_residual_std_mean": NaN,
+              "envelope_residual_std_p25": NaN,
+              "envelope_residual_std_p75": NaN,
+              "envelope_mean": NaN,
+              "envelope_n_valid_pixels": 0,
+              "envelope_valid_fraction": 0.0
+            },
+            "sim_corr_mm": 0.7570284302998709,
+            "sim_corr_detail": {
+              "corr_length_mm": 0.7570284302998709,
+              "dr_mm": 0.029296875,
+              "n_samples": 177,
+              "r_band_mm": [
+                4.6,
+                9.84
+              ],
+              "threshold": 0.5
+            },
+            "sim_corr_2d": {
+              "radial_corr_length_mm": 0.08692077371292797,
+              "azim_corr_length_mm": 0.08848665114362361,
+              "n_frames": 8,
+              "n_theta": 256,
+              "n_r_band": 178,
+              "dr_mm": 0.029296875,
+              "dtheta_deg": 1.40625,
+              "r_mid_mm": 7.1923828125,
+              "r_band_mm": [
+                4.599609375,
+                9.78515625
+              ],
+              "threshold": 0.5
+            },
+            "radial_2d_rel_err": 0.5665110168970896,
+            "azim_2d_rel_err": 0.7305861659698175,
+            "corr_rel_err": 2.146678320411609,
+            "sigma_rel_err": 0.9846455192275114,
+            "sigma_compare_basis": "frame-to-frame per-pixel std (bench multi-frame DICOM vs sim multi-frame)",
+            "bench_mean_used": 37.212364196777344,
+            "bench_std_used": 9.401330947875977,
+            "sim_std_used": 0.14435255527496338,
+            "mean_abs_err_palette": 26.12139892578125
+          }
+        ],
+        "skipped_pairs": [
+          {
+            "gain": 40.0,
+            "diameter_mm": 60.0,
+            "reason": "AR-on deep tail clipped to device reject floor",
+            "on_mean": 11.0,
+            "on_std": 0.0
+          }
+        ],
+        "aggregate": {
+          "median_sigma_rel_err": 0.9851417444970801,
+          "median_mean_abs_err_palette": 26.645915985107422,
+          "median_corr_rel_err": 2.8227501332263563,
+          "median_radial_2d_corr_rel_err": 0.5665110168970896,
+          "median_azim_2d_corr_rel_err": 0.7305861659698175,
+          "worst_sigma_rel_err": 0.9856379697666489,
+          "worst_mean_abs_err_palette": 27.170433044433594,
+          "worst_corr_rel_err": 3.498821946041103
+        },
+        "envelope_domain_diagnostic": {
+          "note": "Envelope-domain noise residual on E6 water -- median per-pixel temporal std of inverted envelope. Reported for cross-check against the primary milk anchor; not gating (water has un-modelled coh reverb so operating points are biased).",
+          "per_pair": [
+            {
+              "gain": 50.0,
+              "diameter_mm": 30.0,
+              "bench_env_resid_std": 0.5301896441099415,
+              "sim_env_resid_std": NaN,
+              "bench_palette_mean": 38.26139831542969,
+              "sim_palette_mean": 11.090965270996094,
+              "bench_envelope_mean": 1.8923130274513669,
+              "sim_envelope_mean": NaN,
+              "bench_env_n_valid_pixels": 12424,
+              "sim_env_n_valid_pixels": 0,
+              "rel_err": NaN,
+              "rel_err_note": "skipped: at least one side palette mean is below the soft-reject knee (operating points not comparable; expected for E6 water at slider 50 where sim has no un-modelled coh)"
+            },
+            {
+              "gain": 50.0,
+              "diameter_mm": 60.0,
+              "bench_env_resid_std": 0.5009740441722508,
+              "sim_env_resid_std": NaN,
+              "bench_palette_mean": 37.212364196777344,
+              "sim_palette_mean": 11.090965270996094,
+              "bench_envelope_mean": 1.824609707870027,
+              "sim_envelope_mean": NaN,
+              "bench_env_n_valid_pixels": 5770,
+              "sim_env_n_valid_pixels": 0,
+              "rel_err": NaN,
+              "rel_err_note": "skipped: at least one side palette mean is below the soft-reject knee (operating points not comparable; expected for E6 water at slider 50 where sim has no un-modelled coh)"
+            }
+          ],
+          "median_rel_err": NaN,
+          "worst_rel_err": NaN
+        },
+        "legacy_pass_criteria": {
+          "median_mean_within_10_palette": {
+            "value": 26.645915985107422,
+            "ok": false,
+            "tier": "INFO (legacy magnitude diagnostic)"
+          },
+          "median_sigma_within_25pct": {
+            "value": 0.9851417444970801,
+            "ok": false,
+            "tier": "INFO (legacy magnitude diagnostic)",
+            "compare_basis": "frame-to-frame per-pixel std"
+          },
+          "median_corr_length_within_50pct": {
+            "value": 2.8227501332263563,
+            "ok": false,
+            "tier": "INFO (legacy shape diagnostic)"
+          },
+          "median_radial_2d_corr_length_rel_err": {
+            "value": 0.5665110168970896,
+            "ok": false,
+            "tier": "INFO -- 2-D incoherent radial autocorrelation"
+          },
+          "median_azim_2d_corr_length_rel_err": {
+            "value": 0.7305861659698175,
+            "ok": false,
+            "tier": "INFO -- 2-D incoherent azimuthal autocorrelation"
+          },
+          "legacy_all_pass": false
+        },
+        "world": "water (no scatter, anechoic) -- matches E6 AR-on",
+        "bench_source": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_summary_v2.json + multi-frame DICOM (FILE000X.dcm via manifest_subset.csv) for per-pixel frame-to-frame std; r in [4, 9.84] mm deep-tail."
+      },
+      "bank": "phenomenology"
+    },
+    {
+      "name": "G. Log-compression mapping",
+      "status": "pass",
+      "summary": "Synthetic envelope sweep: |\u0394palette| \u2264 0.0 \u2264 3 across 6 amplitudes spanning ~3.5 decades. K2v2 kernel matches the spec mapping exactly (log_floor = 1).",
+      "detail": {
+        "log_multiplier": 137.4,
+        "log_floor": 1.0,
+        "kernel_formula": "log_multiplier * log10(max(amp, eps) / max(log_floor, eps))",
+        "spec_formula": "log_multiplier * log10(amp / log_floor)",
+        "rows": [
+          {
+            "envelope_amp": 1.0,
+            "spec_palette": 0.0,
+            "kernel_palette": 0.0,
+            "delta_palette": 0.0,
+            "delta_dB": 0.0
+          },
+          {
+            "envelope_amp": 1.0,
+            "spec_palette": 0.0,
+            "kernel_palette": 0.0,
+            "delta_palette": 0.0,
+            "delta_dB": 0.0
+          },
+          {
+            "envelope_amp": 10.0,
+            "spec_palette": 137.4,
+            "kernel_palette": 137.4,
+            "delta_palette": 0.0,
+            "delta_dB": 0.0
+          },
+          {
+            "envelope_amp": 100.0,
+            "spec_palette": 274.8,
+            "kernel_palette": 274.8,
+            "delta_palette": 0.0,
+            "delta_dB": 0.0
+          },
+          {
+            "envelope_amp": 1000.0,
+            "spec_palette": 412.20000000000005,
+            "kernel_palette": 412.20000000000005,
+            "delta_palette": 0.0,
+            "delta_dB": 0.0
+          },
+          {
+            "envelope_amp": 5000.0,
+            "spec_palette": 508.238478595769,
+            "kernel_palette": 508.238478595769,
+            "delta_palette": 0.0,
+            "delta_dB": 0.0
+          }
+        ],
+        "max_abs_palette_error": 0.0,
+        "tolerance_palette": 3.0
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "H. TGC schedule",
+      "status": "pass",
+      "summary": "True simulator round-trip: differential render of T_B (5-CP 0->+6 dB ramp) minus T_A (flat 0 dB) recovers the YAML Delta_TGC with RMS=0.183 dB (<= 0.5 dB tol), max-abs=0.566 dB (<= 1.0 dB tol) over r in [5.0, 25.0] mm.  Ramp slope: sim +0.3680 dB/mm vs YAML +0.4000 dB/mm.",
+      "detail": {
+        "method": "simulator_round_trip_differential",
+        "tgc_A_cps": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            3.0,
+            0.0
+          ]
+        ],
+        "tgc_B_cps": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.5,
+            0.0
+          ],
+          [
+            1.0,
+            0.0
+          ],
+          [
+            2.5,
+            6.0
+          ],
+          [
+            3.0,
+            6.0
+          ]
+        ],
+        "n_frames": 8,
+        "gain_bump_db_for_milk_signal": 24.0,
+        "envelope_noise_mean_override": 0.0,
+        "envelope_noise_sigma_override": 0.0,
+        "noise_sigma_override": 0.0,
+        "reject_softness_override": 0.0,
+        "saved_envelope_noise_mean": 0.0,
+        "saved_envelope_noise_sigma": 0.3786,
+        "saved_noise_sigma": 0.0,
+        "saved_reject_palette_softness": 32.0,
+        "eval_band_mm": [
+          5.0,
+          25.0
+        ],
+        "log_multiplier": 137.4,
+        "rms_dB": 0.18325662103139817,
+        "max_abs_dB": 0.5656941430900773,
+        "rms_tolerance_dB": 0.5,
+        "max_tolerance_dB": 1.0,
+        "ramp_band_mm": [
+          10.0,
+          25.0
+        ],
+        "ramp_slope_meas_dB_per_mm": 0.36799659641349414,
+        "ramp_slope_yaml_dB_per_mm": 0.39999999999999997,
+        "delta_tgc_meas_max_dB": 5.438028709702682,
+        "delta_tgc_yaml_max_dB": 5.990234375,
+        "figure": "figures/tgc_roundtrip.png"
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "B2. Gain alignment (B2a function / B2b sim-internal / B2c milk E2E)",
+      "status": "n/a",
+      "summary": "B2a function-check vs bench wire peaks: n/a (median |dB err| = nan dB, worst nan dB, tol nan dB).  B2b sim-internal 6dB delta in milk (palette_pre domain): pass (measured 40.6 vs expected 41.2 palette_pre = +0.09 dB err, tol 3.0 palette).  B2c E2E milk at slider 68 D=15: pass (sim 58.6 vs bench 56.0 palette = +0.38 dB, tol 10.0 palette).  Overall: n/a (at least one sub-test n/a (bench data missing); see per-sub-test 'reason').",
+      "detail": {
+        "ac_tier": "magnitude (sensor property -- gain pipeline calibration)",
+        "decomposition": "B2a (function check) + B2b (sim-internal) + B2c (E2E milk)",
+        "B2a_function_check": {
+          "status": "n/a",
+          "reason": "pass25c_bench_full.json missing under /home/jocelynbarker/i4h-sensor-simulation/instrument-calibration/p035_visions/tier1_results/pass25c_bench_full.json (run _pass25c_bench_full_lut.py first)."
+        },
+        "B2b_sim_internal_delta": {
+          "status": "pass",
+          "ok": true,
+          "metric": "|median(palette_pre)_hi - median(palette_pre)_lo - log_multiplier * delta_dB / 20|",
+          "log_multiplier": 137.4,
+          "expected_delta_palette_pre": 41.22,
+          "measured_delta_palette_pre": 40.578995281210844,
+          "abs_err_palette": 0.641004718789155,
+          "abs_err_dB": 0.09330490812069213,
+          "tol_palette": 3.0,
+          "anchor_dB_above_ref": 14.0,
+          "delta_dB_tested": 6.0,
+          "anchor_median_palette_pre": 49.176896666160864,
+          "shifted_median_palette_pre": 89.75589194737171,
+          "raw_median_palette_lo": 57.37971496582031,
+          "raw_median_palette_hi": 92.6353759765625,
+          "n_valid_lo": 243735,
+          "n_valid_hi": 240112,
+          "valid_fraction_lo": 0.99176025390625,
+          "valid_fraction_hi": 0.9770182291666667,
+          "r_band_mm": [
+            3.0,
+            6.5
+          ],
+          "world": "build_uniform_milk_world",
+          "n_frames": 8,
+          "note": "Sim-internal check (operates in palette_pre): validates that gain_db is applied as a true RF-gain knob through the simulator's log compression chain.  In palette_pre the shift is exactly linear in delta_dB, independent of the soft-reject mapping and robust to upper-tail saturation in milk speckle (which would bias the post-LUT palette mean)."
+        },
+        "B2c_e2e_milk_slider68": {
+          "status": "pass",
+          "ok": true,
+          "metric": "|sim_palette_mean - bench_palette_mean|",
+          "slider": 68.0,
+          "diameter_mm": 15.0,
+          "r_band_mm": [
+            3.0,
+            6.5
+          ],
+          "sim_gain_db": 70.69000015258788,
+          "gain_bump_db": 12.600000000000001,
+          "bench_palette_mean": 55.97052001953125,
+          "sim_palette_mean": 58.60615921020508,
+          "delta_palette": 2.635639190673828,
+          "abs_delta_palette": 2.635639190673828,
+          "delta_dB": 0.3836447147996838,
+          "tol_palette": 10.0,
+          "bench_take_id": "p1",
+          "bench_n_frames": 37,
+          "sim_n_frames": 8,
+          "bench_envelope_residual_std": 0.4088986591262703,
+          "sim_envelope_residual_std": 0.8486812937109622,
+          "world": "build_uniform_milk_world",
+          "bench_source": "ivus_test_0515/raw/e4c_milk_water_gain_p{1,2,3} :: multi-frame DICOM at slider 68, D=15 mm, r in [3, 6.5] mm.",
+          "note": "End-to-end composition check.  Uses MILK (not wires) so no tungsten material model is required.  Operating point (slider 68 D=15) was chosen because the bench palette is well above the soft-reject knee here (mean ~56)."
+        },
+        "overall_status_basis": "at least one sub-test n/a (bench data missing); see per-sub-test 'reason'",
+        "yaml_knobs": {
+          "log_multiplier": 137.4,
+          "log_floor": 1.0,
+          "reject_palette": 11.0,
+          "saturation_palette": 239.0,
+          "reject_palette_softness": 32.0,
+          "gain_db": 58.09
+        }
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "B2c-diag. Gain E2E milk anchor (informational)",
+      "status": "diagnostic",
+      "summary": "B2c E2E milk anchor at slider 68 D = 15 mm: sim palette mean = 58.6 vs bench 56.0 (\u0394 = +0.38 dB, tol 10.0 palette; sub-status: pass).  Compounds every sim layer (gain pipeline, log compression, material, noise); does NOT gate B2 PASS/FAIL on its own (B2b -- sim-internal gain delta -- is the parameter-level gate).",
+      "detail": {
+        "status": "pass",
+        "ok": true,
+        "metric": "|sim_palette_mean - bench_palette_mean|",
+        "slider": 68.0,
+        "diameter_mm": 15.0,
+        "r_band_mm": [
+          3.0,
+          6.5
+        ],
+        "sim_gain_db": 70.69000015258788,
+        "gain_bump_db": 12.600000000000001,
+        "bench_palette_mean": 55.97052001953125,
+        "sim_palette_mean": 58.60615921020508,
+        "delta_palette": 2.635639190673828,
+        "abs_delta_palette": 2.635639190673828,
+        "delta_dB": 0.3836447147996838,
+        "tol_palette": 10.0,
+        "bench_take_id": "p1",
+        "bench_n_frames": 37,
+        "sim_n_frames": 8,
+        "bench_envelope_residual_std": 0.4088986591262703,
+        "sim_envelope_residual_std": 0.8486812937109622,
+        "world": "build_uniform_milk_world",
+        "bench_source": "ivus_test_0515/raw/e4c_milk_water_gain_p{1,2,3} :: multi-frame DICOM at slider 68, D=15 mm, r in [3, 6.5] mm.",
+        "note": "End-to-end composition check.  Uses MILK (not wires) so no tungsten material model is required.  Operating point (slider 68 D=15) was chosen because the bench palette is well above the soft-reject knee here (mean ~56)."
+      },
+      "bank": "phenomenology"
+    },
+    {
+      "name": "I. Depth uniformity (uniform milk bath)",
+      "status": "pass",
+      "summary": "Milk sim vs E4a bench mean palette over r \u2208 [5.0, 20.0] mm @ slider 68: SHAPE (primary): sim peak-to-trough = 5.4 vs bench 5.5 (ratio 0.98, |ratio\u22121| \u2264 0.5 required); slope sim/bench = +0.03 / +0.13 palette/mm. MAGNITUDE (informational, milk not literature-anchored): RMS = 2.0 palette (strict \u2264 10, partial-band \u2264 40), max |\u0394| = 6.0, bias = +1.4. Sim milk-bath depth uniformity matches bench shape; magnitude within tolerance.",
+      "detail": {
+        "rms_palette": 2.031820421258953,
+        "max_abs_palette": 5.997585751581937,
+        "bias_palette": 1.353024611144065,
+        "sim_peak_to_trough_palette": 5.411308587063104,
+        "bench_peak_to_trough_palette": 5.546422600746148,
+        "sim_span_over_bench_span": 0.9756394304204539,
+        "sim_slope_palette_per_mm": 0.03170810408848442,
+        "bench_slope_palette_per_mm": 0.13272940884168477,
+        "rms_tolerance_palette_strict": 10.0,
+        "rms_tolerance_palette_loose": 40.0,
+        "span_ratio_dev_tolerance": 0.5,
+        "rms_pass_strict": true,
+        "rms_pass_loose": true,
+        "span_ratio_pass": true,
+        "evaluation_band_mm": [
+          5.0,
+          20.0
+        ],
+        "ringdown_excluded_mm": 3.6,
+        "bench_slider": 68.0,
+        "ref_slider": 54.0,
+        "sim_gain_db_bumped": 70.69000015258788,
+        "gain_bump_db_measured": 12.600000000000001,
+        "gain_bump_db_naive_lut": 14.0,
+        "n_sim_frames": 8,
+        "n_bench_takes": 3,
+        "bench_meta": {
+          "gain_slider": 68.0,
+          "diameter_mm": 60.0,
+          "sources": [
+            "e4a_milk_gain_p1/FILE0004.dcm",
+            "e4a_milk_gain_p2/FILE0005.dcm",
+            "e4a_milk_gain_p3/FILE0005.dcm"
+          ],
+          "num_theta": 720,
+          "num_r": 320,
+          "dr_mm": 0.1
+        },
+        "figure": "figures/depth_uniformity.png",
+        "ac_tier": "shape-primary (milk -- no published BSC vs frequency curve)",
+        "pass_criteria": {
+          "span_ratio_within_50pct": {
+            "value": 0.024360569579546132,
+            "ok": true,
+            "tier": "shape (primary)"
+          },
+          "rms_palette_le_10": {
+            "value": 2.031820421258953,
+            "ok": true,
+            "tier": "magnitude (informational -- milk BSC not literature-anchored)"
+          },
+          "rms_palette_le_40_partial_band": {
+            "value": 2.031820421258953,
+            "ok": true,
+            "tier": "magnitude (partial-band fallback, ~5 dB)"
+          }
+        }
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "M. Speckle (residual-domain milk anchor + mu0-invariance)",
+      "status": "pass",
+      "summary": "Residual radial_corr: sim 0.132 mm vs bench E4c 0.130 mm (\u0394=+0.002 mm, 1%; \u2713 25% tol). Bench E4a cross-check radial_corr 0.134 mm (3% E4a-E4c spread).  mu0-invariance: max_rel_shift 2.0% (\u226420% tol; \u2713).  per_scale: x1.0->0.132mm, x2.0->0.129mm.",
+      "detail": {
+        "primary_residual_anchor": {
+          "bench_e4c": {
+            "radial_corr_mm": 0.13016411940165326,
+            "lateral_corr_arc_mm": 0.32919115434142754,
+            "residual_std_palette": 8.302176926944904,
+            "coherent_std_palette": 36.84691225635952,
+            "palette_mean": 55.97052122287379,
+            "r_mid_mm": 4.760000000000001,
+            "n_frames": 37,
+            "n_theta": 256,
+            "n_r_band": 58,
+            "dr_mm": 0.06000000000000005,
+            "r_band_mm": [
+              3.0,
+              6.5
+            ],
+            "take_id": "p1",
+            "phantom": "e4c",
+            "slider": 68.0,
+            "diameter_mm": 15.0
+          },
+          "bench_e4a_cross": {
+            "radial_corr_mm": 0.13370660990141248,
+            "lateral_corr_arc_mm": 0.3459348314639505,
+            "residual_std_palette": 8.832034249190759,
+            "coherent_std_palette": 37.221691051808016,
+            "palette_mean": 56.90362498202806,
+            "r_mid_mm": 4.760000000000001,
+            "n_frames": 35,
+            "n_theta": 256,
+            "n_r_band": 58,
+            "dr_mm": 0.06000000000000005,
+            "r_band_mm": [
+              3.0,
+              6.5
+            ],
+            "take_id": "p1",
+            "phantom": "e4a",
+            "slider": 68.0,
+            "diameter_mm": 15.0
+          },
+          "sim": {
+            "radial_corr_mm": 0.13193508639150406,
+            "lateral_corr_arc_mm": 0.07379852402431912,
+            "residual_std_palette": 8.721310251200798,
+            "coherent_std_palette": 36.23478212307671,
+            "palette_mean": 57.50948960506745,
+            "r_mid_mm": 4.74609375,
+            "n_frames": 8,
+            "n_theta": 256,
+            "n_r_band": 120,
+            "dr_mm": 0.029296875,
+            "r_band_mm": [
+              3.0,
+              6.5
+            ]
+          },
+          "comparison": {
+            "rel_err_radial_corr_mm": 0.013605646456117795,
+            "rel_err_lateral_corr_arc_mm": 0.7758186298415011,
+            "rel_err_residual_std_palette": 0.05048474971613613,
+            "bench_e4a_vs_e4c_radial_corr_rel": 0.027215568438088485,
+            "operating_point": {
+              "bench_slider": 68.0,
+              "ref_slider": 54.0,
+              "gain_bump_db": 12.600000000000001,
+              "diameter_mm": 15.0,
+              "r_band_mm": [
+                3.0,
+                6.5
+              ],
+              "n_frames_sim": 8
+            }
+          },
+          "tolerance_radial_corr_rel": 0.25,
+          "passed": true
+        },
+        "mu0_invariance_check": {
+          "per_scale": [
+            {
+              "mu0_scale": 1.0,
+              "mu0": 0.5,
+              "radial_corr_mm": 0.13193508639150406,
+              "lateral_corr_arc_mm": 0.07379852402431912,
+              "residual_std_palette": 8.721310251200798,
+              "palette_mean": 57.50948960506745
+            },
+            {
+              "mu0_scale": 2.0,
+              "mu0": 1.0,
+              "radial_corr_mm": 0.1293241078249931,
+              "lateral_corr_arc_mm": 0.07372143649280238,
+              "residual_std_palette": 8.027834664502091,
+              "palette_mean": 40.67178778081434
+            }
+          ],
+          "max_rel_shift_radial_corr": 0.01978987271636862,
+          "invariance_tolerance": 0.2,
+          "invariance_ok": true
+        },
+        "legacy_palette_diagnostic": {
+          "anchor_label": "E4a (uniform milk, slider 68 D60, n=3 takes)",
+          "bench": {
+            "cov_log_palette": 0.3843242941194472,
+            "cov_linear_depth_norm": 0.11398100123127287,
+            "radial_corr_mm": 0.4575662322747097,
+            "lateral_corr_arc_mm": 3.665191429188092
+          },
+          "sim": {
+            "cov_log_palette": 0.524183702979989,
+            "cov_linear_depth_norm": 0.35026578672164105,
+            "radial_corr_mm": 0.1656587471203883,
+            "lateral_corr_arc_mm": 1.3553442647394283,
+            "palette_mean": 47.68301773071289,
+            "n_frames_measurable": 8
+          },
+          "deltas": {
+            "cov_log_delta": 0.13985940886054177,
+            "cov_log_rel": 0.3639098828789464,
+            "radial_corr_delta_mm": -0.2919074851543214,
+            "radial_corr_rel": 0.6379567908740881
+          },
+          "note": "Informational only: palette-domain metrics are biased by un-modelled bench coherent reverb.  Primary gating is the residual-domain radial_corr above."
+        },
+        "log_multiplier_assumed": 137.4,
+        "rayleigh_target_cov_linear": 0.5227,
+        "passes": {
+          "residual_radial_corr_within_25pct": true,
+          "mu0_invariance_within_20pct": true
+        },
+        "residual_autocorr_figure": "figures/speckle_residual_autocorr_paired.png"
+      },
+      "bank": "parameter"
+    },
+    {
+      "name": "M-diag. Legacy palette CoV_log + radial_corr (informational)",
+      "status": "diagnostic",
+      "summary": "Legacy palette-domain speckle diagnostic vs E4a Wave 0 anchor.  CoV_log: sim 0.524 vs bench 0.384 (36% rel.err).  Palette radial_corr: sim 0.166 mm vs bench 0.458 mm (64% rel.err).  Both metrics biased by un-modelled coherent reverb (see test_speckle_wave0 docstring); does NOT gate Test M.",
+      "detail": {
+        "anchor_label": "E4a (uniform milk, slider 68 D60, n=3 takes)",
+        "bench": {
+          "cov_log_palette": 0.3843242941194472,
+          "cov_linear_depth_norm": 0.11398100123127287,
+          "radial_corr_mm": 0.4575662322747097,
+          "lateral_corr_arc_mm": 3.665191429188092
+        },
+        "sim": {
+          "cov_log_palette": 0.524183702979989,
+          "cov_linear_depth_norm": 0.35026578672164105,
+          "radial_corr_mm": 0.1656587471203883,
+          "lateral_corr_arc_mm": 1.3553442647394283,
+          "palette_mean": 47.68301773071289,
+          "n_frames_measurable": 8
+        },
+        "deltas": {
+          "cov_log_delta": 0.13985940886054177,
+          "cov_log_rel": 0.3639098828789464,
+          "radial_corr_delta_mm": -0.2919074851543214,
+          "radial_corr_rel": 0.6379567908740881
+        },
+        "note": "Informational only: palette-domain metrics are biased by un-modelled bench coherent reverb.  Primary gating is the residual-domain radial_corr above."
+      },
+      "bank": "phenomenology"
     }
-  }
-]
+  ]
+}

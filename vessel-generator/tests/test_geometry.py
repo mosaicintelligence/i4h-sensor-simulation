@@ -16,6 +16,14 @@ from vesselgen.config import (
 )
 from vesselgen.cross_section import build_cross_sections
 from vesselgen.sweep import sweep_branch
+from vesselgen.sampling import (
+    PoseSample,
+    _build_probe_rotation,
+    ground_truth_is_valid_pose,
+    ground_truth_shows_endcap,
+    ground_truth_side_branch_sector_invalid,
+    side_branch_imaging_sector_mask,
+)
 from vesselgen.vessel import Vessel
 from vesselgen.wall import build_wall
 
@@ -142,6 +150,7 @@ def test_sample_pose_inside_lumen_and_ground_truth_makes_sense():
     assert finite_lumen.size > 0
     assert gt.lumen_csa_mm2 > 0
     assert gt.equivalent_lumen_diameter_mm > 0
+    assert ground_truth_is_valid_pose(v, pose, gt)
 
 
 def test_sample_pose_with_bifurcation_returns_visible_branches():
@@ -195,6 +204,15 @@ def test_pose_at_explicit_position():
     assert pose.centerline_offset_mm < 1e-3
 
 
+def test_side_branch_length_at_least_parent():
+    cfg = _basic_vessel(side_branch=True)
+    parent_len = cfg.parent.centerline.length_mm
+    assert cfg.side_branches[0].branch.centerline.length_mm < parent_len
+    v = Vessel.from_config(cfg)
+    side = v.branch_by_name("side_branch")
+    assert side.centerline.length_mm >= parent_len
+
+
 def test_sample_pose_in_branch_pins_to_branch():
     cfg = _basic_vessel(side_branch=True)
     v = Vessel.from_config(cfg)
@@ -204,3 +222,106 @@ def test_sample_pose_in_branch_pins_to_branch():
         assert pose.branch_name == "side_branch"
         assert abs(pose.arclength_mm - 5.0) < 1e-6
         assert v.contains_point(pose.position)
+
+
+def test_frame_00074_shows_parent_proximal_endcap():
+    """Regression when stored GT shows coincident lumen/outer hits on side branch."""
+    from pathlib import Path
+    import json
+
+    repo = Path(__file__).resolve().parents[2]
+    meta_path = repo / "vessel-generator/out/paired_dataset_100/frames/frame_00074/metadata.json"
+    vessel_dir = repo / "vessel-generator/out/paired_dataset_100/vessels/vessel_0006"
+    if not meta_path.is_file() or not vessel_dir.is_dir():
+        return
+
+    with meta_path.open() as f:
+        meta = json.load(f)
+    stored_wall = (
+        np.array(meta["ground_truth_geometric"]["distance_to_outer_wall_mm"])
+        - np.array(meta["ground_truth_geometric"]["distance_to_lumen_wall_mm"])
+    )
+    if not np.any(np.isfinite(stored_wall) & (stored_wall < 0.08)):
+        return
+
+    vessel = Vessel.load(vessel_dir)
+    p = meta["pose"]
+    probe_axis = np.array(p["probe_axis_world"])
+    pose = PoseSample(
+        position=np.array(p["position_mm"]),
+        rotation_euler_deg=np.array(p["rotation_euler_deg_xyz"]),
+        rotation_matrix=_build_probe_rotation(probe_axis),
+        probe_axis_world=probe_axis,
+        branch_id=p["branch_id"],
+        branch_name=p["branch_name"],
+        arclength_mm=p["arclength_mm"],
+        centerline_offset_mm=p["centerline_offset_mm"],
+        tilt_deg=p["tilt_deg"],
+    )
+    t_far = float(meta.get("sim_parameters", {}).get("t_far_mm", 30.0))
+    gt = vessel.ground_truth_at(pose, n_angles=256, max_distance_mm=t_far)
+    assert ground_truth_side_branch_sector_invalid(vessel, pose, gt)
+    assert not ground_truth_is_valid_pose(vessel, pose, gt)
+
+
+def test_frame_00025_side_branch_sector_missing_wall():
+    """Side-branch sector seg QC fails even when parent-wall A-lines are fine."""
+    from pathlib import Path
+    import json
+
+    repo = Path(__file__).resolve().parents[2]
+    meta_path = repo / "vessel-generator/out/paired_dataset_100/frames/frame_00025/metadata.json"
+    vessel_dir = repo / "vessel-generator/out/paired_dataset_100/vessels/vessel_0002"
+    seg_path = repo / "vessel-generator/out/paired_dataset_100/frames/frame_00025/segmentation.npy"
+    if not meta_path.is_file() or not vessel_dir.is_dir() or not seg_path.is_file():
+        return
+
+    with meta_path.open() as f:
+        meta = json.load(f)
+    vessel = Vessel.load(vessel_dir)
+    p = meta["pose"]
+    probe_axis = np.array(p["probe_axis_world"])
+    pose = PoseSample(
+        position=np.array(p["position_mm"]),
+        rotation_euler_deg=np.array(p["rotation_euler_deg_xyz"]),
+        rotation_matrix=_build_probe_rotation(probe_axis),
+        probe_axis_world=probe_axis,
+        branch_id=p["branch_id"],
+        branch_name=p["branch_name"],
+        arclength_mm=p["arclength_mm"],
+        centerline_offset_mm=p["centerline_offset_mm"],
+        tilt_deg=p["tilt_deg"],
+    )
+    t_far = float(meta.get("sim_parameters", {}).get("t_far_mm", 30.0))
+    gt = vessel.ground_truth_at(pose, n_angles=256, max_distance_mm=t_far)
+    seg = np.load(seg_path)
+    sector = side_branch_imaging_sector_mask(vessel, pose, gt.thetas_rad, gt)
+    assert sector.any()
+    # Bad seg columns from manual inspection fall mostly outside parent cone.
+    n_r = seg.shape[1]
+    min_lumen_r = int(n_r * 0.08)
+    bad_in_sector = 0
+    for i in np.flatnonzero(sector):
+        lumen_rs = np.where(seg[i] == 1)[0]
+        if len(lumen_rs) == 0:
+            continue
+        max_l = int(lumen_rs.max())
+        if max_l < min_lumen_r:
+            continue
+        wall_rs = np.where(seg[i] == 2)[0]
+        if len(wall_rs) == 0 or not np.any(wall_rs > max_l):
+            bad_in_sector += 1
+    assert bad_in_sector / max(1, sector.sum()) > 0.05
+
+
+def test_reject_endcap_poses_on_bifurcation_vessel():
+    cfg = _basic_vessel(side_branch=True)
+    v = Vessel.from_config(cfg)
+    rng = np.random.default_rng(123)
+    accepted = 0
+    for _ in range(80):
+        pose = v.sample_pose(rng, max_tilt_deg=15.0, edge_margin_mm=0.15)
+        gt = v.ground_truth_at(pose, n_angles=256)
+        if ground_truth_is_valid_pose(v, pose, gt):
+            accepted += 1
+    assert accepted >= 40

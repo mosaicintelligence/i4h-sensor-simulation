@@ -33,8 +33,30 @@ depend on earlier ones.
 | 7 | `extract_psf.py` | E2 | `derived/psf/*` → `probe.{element_radius_mm,focal_length_mm,pulse_duration_cycles}` |
 | 8 | `extract_gain_lut.py` | E7 | `derived/gain_lut/*` → `processing.{log_multiplier,log_floor,dynamic_range_db,gain_db,…}` |
 
-All `derived/*` outputs land in `../../P_035_PointScatter/derived/` (data
-folder), keeping this code folder free of generated artifacts.
+Extended extracts (0515 bench): `extract_speckle.py`, `extract_tgc_wirefree.py`,
+`annotate_cysts.py`.
+
+### YAML population (`derive_*.py`)
+
+Re-derive individual `volcano_s5i.yaml` fields from staged bench outputs:
+`derive_gain_db.py`, `derive_noise_sigma.py`, `derive_slider_to_db.py`,
+`derive_axial_psf_pulse_duration.py`, `derive_lateral_psf_sigma_theta.py`,
+`derive_ringdown_amplitude.py`.
+
+Most `derived/*` outputs land under `../../P_035_PointScatter/derived/` or
+`../../ivus_test_0508/raw/*/derived/` (see each script's header).
+
+### Evaluation
+
+| Script | Output |
+|--------|--------|
+| `tier1_evaluation.py` | `tier1_results/tier1_results.md` — Tier 1 physical-fidelity gate |
+| `tier1_self_validate.py` | `tier1_results/self_validate/` — metric self-validation harness |
+| `bench_evidence.py` | Bench-anchor figures embedded in the tier1 report |
+| `vessel_evaluation.py` | `vessel_evaluation_output/VESSEL_EVALUATION_REPORT.md` |
+| `rerender_tier1.py` | Re-render tier1 figures without a full re-eval |
+
+Diagnostics: `visualize_wave0_psf.py`, `visualize_b2_diagnostic.py`.
 
 ### Shared helpers
 

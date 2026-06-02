@@ -51,6 +51,24 @@ struct Params {
   // shoulder at r ≈ 4-7 mm. See ivus_implementation_writeup.md §11.x.
   uint32_t scatter_angular_decorrelate;  // non-zero enables per-ray scatter offset
   uint32_t frame_seed;                   // per-frame seed for decorrelation hash (0 = use 0)
+
+  // Pass 5f -- IVUS angular ray super-sampling.
+  //
+  // The IVUS probe fires one OptiX ray per scanline; for a sub-wavelength
+  // wire scatterer at deep r the wire's angular subtense (R/r ~ 0.4 deg at
+  // r=10 mm with R=0.0635 mm) is much smaller than the scanline pitch
+  // (~1.4 deg with 256 scanlines), so whether a wire is "seen" at all
+  // depends on accidental alignment between its true angle and the nearest
+  // scanline.  This produced a bimodal hit/miss pattern in the B2 wire
+  // phantom (5 bright wires, 7 dim ones), which the post-raytrace lateral
+  // PSF kernel cannot fix.
+  //
+  // When `rays_per_scanline > 1`, the IVUS raygen kernel fires K sub-rays
+  // per scanline at deterministic sub-bin angular offsets, accumulating
+  // into the *same* scanline buffer with weight 1/K.  This forward-models
+  // the beam's angular integral so any sub-pixel wire is captured by at
+  // least one sub-ray.  Default K = 1 is backward-compatible.
+  uint32_t ivus_rays_per_scanline;       // >= 1; 1 = legacy single-ray-per-scanline behaviour
 };
 
 struct RayGenData {

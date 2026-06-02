@@ -92,20 +92,21 @@ def main() -> None:
     p.add_argument("--name", default="vessel", help="Name written into the manifest.")
     p.add_argument("--seed", type=int, default=0)
 
-    p.add_argument("--length-mm", type=float, default=30.0)
-    p.add_argument("--radius-mm", type=float, default=3.0)
+    p.add_argument("--length-mm", type=float, default=55.0)
+    p.add_argument("--radius-mm", type=float, default=5.0,
+                   help="Mean lumen radius (mm); 5 mm ≈ 10 mm femoral-scale diameter.")
     p.add_argument("--taper", type=float, default=0.95, help="Distal/proximal radius ratio.")
-    p.add_argument("--wall-mm", type=float, default=0.7)
+    p.add_argument("--wall-mm", type=float, default=0.85)
     p.add_argument("--n-stations", type=int, default=64)
-    p.add_argument("--lumen-perturbation", type=float, default=0.18)
-    p.add_argument("--wall-perturbation", type=float, default=0.5)
+    p.add_argument("--lumen-perturbation", type=float, default=0.15)
+    p.add_argument("--wall-perturbation", type=float, default=0.45)
 
     p.add_argument("--side-branch", action="store_true")
     p.add_argument("--side-arclength-frac", type=float, default=0.5)
     p.add_argument("--side-azimuth-deg", type=float, default=0.0)
     p.add_argument("--side-polar-deg", type=float, default=60.0)
-    p.add_argument("--side-length-mm", type=float, default=15.0)
-    p.add_argument("--side-radius-mm", type=float, default=1.5)
+    p.add_argument("--side-length-mm", type=float, default=45.0)
+    p.add_argument("--side-radius-mm", type=float, default=3.5)
 
     p.add_argument("--no-preview", action="store_true")
 

@@ -64,6 +64,7 @@ def iter_dataset(
     base_seed: int = 0,
     name_prefix: str = "vessel",
     max_resamples_per_vessel: int = 5,
+    require_side_branch: bool = False,
 ) -> Iterator[tuple[VesselConfig, Vessel]]:
     """Iterator variant of :func:`generate_dataset` for in-memory consumption."""
     config = config or GenerationConfig()
@@ -71,7 +72,12 @@ def iter_dataset(
         for retry in range(max_resamples_per_vessel):
             seed = base_seed + i * 1000 + retry
             rng = np.random.default_rng(seed)
-            cfg = config.sample(rng, seed=seed, name=f"{name_prefix}_{i:04d}")
+            cfg = config.sample(
+                rng,
+                seed=seed,
+                name=f"{name_prefix}_{i:04d}",
+                force_side_branch=require_side_branch,
+            )
             try:
                 vessel = Vessel.from_config(cfg)
             except BifurcationError:

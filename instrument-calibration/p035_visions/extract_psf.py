@@ -15,10 +15,13 @@ prediction and:
   1. Search for the actual peak palette pixel within +/- search_radius_mm
      in r and +/- search_angle_deg in theta (residual fit error <= 1 mm).
   2. Estimate a local background from the patch border (10th percentile).
-  3. Compute the -6 dB extent (palette > peak - 6) along the peak's row
-     (axial, in mm) and column (lateral, in arc-length mm = r_w * dtheta).
-  4. Discard wires whose peak excess over background is < 6 dB (can't
-     measure -6 dB FWHM cleanly), or whose peak is saturated (>= 235).
+  3. Compute the -threshold_db FWHM (default 6 dB amplitude, i.e. peak >
+     half envelope; converted to palette delta = log_multiplier * 6/20 ~
+     41 on this device) along the peak's row (axial, in mm) and column
+     (lateral, in arc-length mm = r_w * dtheta).
+  4. Discard wires whose peak excess over background is < peak_excess_required_db
+     dB (can't measure −threshold_db FWHM cleanly), or whose peak is
+     saturated (>= 235).
 
 We use 1 palette unit = 1 dB (assumes log_multiplier = 20). E7 will
 refine; the FWHM measurement is tolerant to a moderate change in
@@ -167,10 +170,12 @@ def fwhm_walkout_bins(profile: np.ndarray, peak_idx: int,
     never crossed `threshold` on one or both sides (FWHM is a lower
     bound).
 
-    This is log_multiplier-independent IF `threshold = peak - 0.301 *
-    log_multiplier` (= where amplitude drops to half). The caller
-    chooses `threshold` based on its log_multiplier assumption (or
-    just `threshold = peak - 6` for log_multiplier = 20).
+    The caller is responsible for choosing `threshold` correctly for
+    the desired dB drop on the device: for a true −N dB amplitude FWHM
+    on a device with palette = log_multiplier * log10(envelope) + offset,
+    use `threshold = peak - log_multiplier * N / 20`.  See
+    `db_to_palette_delta` and `measure_psf_fwhm` for the wrapping
+    abstraction that handles the conversion.
     """
     n = len(profile)
     if profile[peak_idx] <= threshold:
@@ -206,36 +211,69 @@ def fwhm_walkout_bins(profile: np.ndarray, peak_idx: int,
     return left_x + right_x, border_clipped
 
 
+def db_to_palette_delta(db: float, log_multiplier: float) -> float:
+    """Convert an amplitude-dB drop into a palette-unit delta on this device.
+
+    `palette = log_multiplier * log10(amplitude) + offset`, so a `db`
+    amplitude drop corresponds to a palette drop of
+    `log_multiplier * db / 20`.  For the canonical "−6 dB FWHM"
+    convention (where the envelope drops to half its peak) on this
+    device's calibrated log_multiplier = 137.4, this is ≈ 41.2 palette,
+    not the 6 palette the original extractor assumed (which only held
+    for the legacy log_multiplier = 20 case).
+    """
+    return float(log_multiplier) * float(db) / 20.0
+
+
 def measure_psf_fwhm(
     patch: np.ndarray, peak_t: int, peak_r: int, dr_mm: float,
     arc_per_bin_mm: float, peak_excess_required_db: float = 6.0,
     bg_percentile: float = 10.0, threshold_db: float = 6.0,
     secondary_peak_max_db: float = 6.0,
+    log_multiplier: float = 137.4,
 ):
-    """Compute -threshold_db FWHM along axial and lateral cross-sections.
+    """Compute true −threshold_db FWHM along axial and lateral cross-sections.
 
-    * Direct -<threshold_db> walk-out with sub-bin linear interpolation
-      at the crossings (no parabolic extrapolation, which would
-      under-report FWHM for wide PSFs).
+    * `threshold_db` is genuine **amplitude dB** (so 6.0 means the
+      canonical −6 dB FWHM at half-envelope).  We convert dB → palette
+      delta internally using `log_multiplier` (the device-calibrated log
+      compression scale; volcano_s5i = 137.4).  The legacy behaviour
+      where `threshold_db` was used directly as a palette delta only
+      gave true −6 dB widths under the long-since-obsolete assumption
+      `log_multiplier = 20`; on the real device that was a
+      ~−0.87 dB pseudo-FWHM, which significantly *underestimates*
+      true FWHM widths.
+    * `peak_excess_required_db` is also amplitude dB on the same
+      convention; bg here is the local 10th-percentile palette.  Note
+      the historical naming (the variable was *named* "_db" but used
+      directly as palette units) is preserved for API compatibility,
+      but the conversion is now done correctly.
+    * Direct walk-out with sub-bin linear interpolation at the
+      crossings (no parabolic extrapolation, which would under-report
+      FWHM for wide PSFs).
     * Quality flag `multilobed` if any pixel outside the primary lobe
-      exceeds peak - `secondary_peak_max_db` (indicates a competing
-      reflector or reverberation contaminating the patch).
+      exceeds the threshold (= within −secondary_peak_max_db dB of the
+      peak).
 
     Returns dict or None if the peak excess is below
     `peak_excess_required_db`.
     """
     peak = float(patch[peak_t, peak_r])
     bg = float(np.percentile(patch, bg_percentile))
-    excess_db = peak - bg
-    if excess_db < peak_excess_required_db:
+    excess_palette = peak - bg
+    excess_db = excess_palette * 20.0 / max(log_multiplier, 1e-6)
+    excess_required_palette = db_to_palette_delta(
+        peak_excess_required_db, log_multiplier)
+    if excess_palette < excess_required_palette:
         return None
     if peak >= 235.0:
         # Hard saturation against the palette ceiling.
         return dict(saturated=True, peak=peak, bg=bg, excess_db=excess_db)
 
-    threshold = peak - threshold_db
+    threshold_palette = db_to_palette_delta(threshold_db, log_multiplier)
+    threshold = peak - threshold_palette
 
-    # Direct -threshold_db FWHM with linear sub-bin interpolation.
+    # Direct −threshold_db FWHM with linear sub-bin interpolation.
     axial = fwhm_walkout_bins(patch[peak_t, :], peak_r, threshold)
     lateral = fwhm_walkout_bins(patch[:, peak_r], peak_t, threshold)
     if axial is None or lateral is None:
@@ -259,8 +297,14 @@ def measure_psf_fwhm(
     outside = patch.copy()
     outside[t_lo:t_hi + 1, r_lo:r_hi + 1] = bg
     second_peak = float(outside.max())
-    multilobed = (peak - second_peak) < secondary_peak_max_db
+    # "multilobed" = a secondary peak outside the primary lobe is within
+    # `secondary_peak_max_db` (amplitude dB) of the main peak.  Compare on
+    # palette units, with the dB→palette conversion routed through
+    # log_multiplier as for the main threshold.
+    multilobed = (peak - second_peak) < db_to_palette_delta(
+        secondary_peak_max_db, log_multiplier)
 
+    primary_above_secondary_db = (peak - second_peak) * 20.0 / max(log_multiplier, 1e-6)
     return dict(
         saturated=False,
         peak=peak,
@@ -270,7 +314,7 @@ def measure_psf_fwhm(
         lateral_fwhm_arc_mm=lateral_bins * arc_per_bin_mm,
         border_clipped=border_clipped,
         multilobed=multilobed,
-        primary_lobe_db_above_secondary=peak - second_peak,
+        primary_lobe_db_above_secondary=primary_above_secondary_db,
         t_lo=t_lo, t_hi=t_hi, r_lo=r_lo, r_hi=r_hi,
     )
 
@@ -352,7 +396,9 @@ def render_overview(
     plt.close(fig)
 
 
-def render_patch_montage(rows: list[dict], out_path: Path):
+def render_patch_montage(rows: list[dict], out_path: Path,
+                         log_multiplier: float = 137.4,
+                         threshold_db: float = 6.0):
     if plt is None:
         return
     n = len(rows)
@@ -364,6 +410,7 @@ def render_patch_montage(rows: list[dict], out_path: Path):
                              squeeze=False)
     for ax in axes.flat:
         ax.set_axis_off()
+    threshold_palette = db_to_palette_delta(threshold_db, log_multiplier)
     for ax, r in zip(axes.flat, rows):
         patch = r["_patch"]
         peak = r["peak_palette"]
@@ -372,7 +419,8 @@ def render_patch_montage(rows: list[dict], out_path: Path):
                           r["_theta_offsets"][-1], r["_theta_offsets"][0]),
                   vmin=r["bg_palette"], vmax=peak)
         ax.contour(r["_r_offsets"], r["_theta_offsets"], patch,
-                   levels=[peak - 6.0], colors=["#ff00ff"], linewidths=0.8)
+                   levels=[peak - threshold_palette],
+                   colors=["#ff00ff"], linewidths=0.8)
         ax.scatter([0], [0], s=12, c="#00ff00", marker="+",
                    label="prediction")
         ax.scatter([(r["peak_local_r"] - len(r["_r_offsets"]) // 2) * r["_dr"]],
@@ -384,8 +432,9 @@ def render_patch_montage(rows: list[dict], out_path: Path):
                      f"r={r['r_actual_mm']:.2f} mm",
                      fontsize=8)
         ax.tick_params(labelsize=6)
-    fig.suptitle("Per-wire PSF patches — -6 dB contour (magenta), prediction (+), peak (x)",
-                 fontsize=11)
+    fig.suptitle(f"Per-wire PSF patches — −{threshold_db:g} dB contour (magenta, Δ="
+                 f"{threshold_palette:.1f} palette @ log_mult={log_multiplier:g}), "
+                 "prediction (+), peak (x)", fontsize=10)
     fig.tight_layout()
     fig.savefig(out_path, dpi=140)
     plt.close(fig)
@@ -429,6 +478,17 @@ def main(argv: list[str] | None = None) -> int:
                         "saturation at any usable gain on this dataset, and "
                         "their displayed PSF reflects the clipped top, not "
                         "the true beam profile.")
+    p.add_argument("--log-multiplier", type=float, default=137.4,
+                   help="Device log compression scale: palette = log_multiplier "
+                        "* log10(envelope) + offset. Default 137.4 is the "
+                        "calibrated value for the volcano_s5i / p035 pipeline. "
+                        "Used to convert --threshold-db into the palette delta "
+                        "applied during the FWHM walk-out. Set to 20 only when "
+                        "reproducing the legacy un-calibrated extraction (which "
+                        "measured a -0.87 dB pseudo-FWHM on this device).")
+    p.add_argument("--threshold-db", type=float, default=6.0,
+                   help="Amplitude-dB threshold for the FWHM walk-out (default "
+                        "6.0 = the canonical -6 dB FWHM at half envelope).")
     args = p.parse_args(argv)
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -469,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
             psf = measure_psf_fwhm(
                 patch, ext["peak_local_t"], ext["peak_local_r"],
                 fr.dr_mm, arc_per_bin_mm,
+                log_multiplier=args.log_multiplier,
             )
             if psf is None:
                 skipped.append((fr.file, w_idx, "low excess"))
@@ -558,8 +619,22 @@ def main(argv: list[str] | None = None) -> int:
             for r in rows
         ])
 
-    w0, zf, w0_err, zf_err = fit_gaussian_beam(z[keep], w_arc[keep], lam_mm)
-    a_mm = lam_mm * zf / (2.0 * w0)
+    # If the per-frame configuration just doesn't have enough wires past
+    # lateral_min_r_mm to constrain a Gaussian-beam fit (typical for D=30 mm
+    # scans where every visible wire is pre-focus), skip the fit and still
+    # write per-wire axial+lateral FWHM rows. The aggregate Gaussian-beam fit
+    # is the responsibility of a downstream multi-subfolder anchor script.
+    lateral_fit_ok = keep.sum() >= 2
+    if lateral_fit_ok:
+        try:
+            w0, zf, w0_err, zf_err = fit_gaussian_beam(z[keep], w_arc[keep], lam_mm)
+            a_mm = lam_mm * zf / (2.0 * w0)
+        except Exception as exc:
+            print(f"Gaussian-beam fit failed: {exc}; skipping lateral fit.",
+                  file=sys.stderr)
+            lateral_fit_ok = False
+    if not lateral_fit_ok:
+        w0 = zf = w0_err = zf_err = a_mm = float("nan")
 
     out_json = {
         "gain_sliders": list(args.gain_sliders),
@@ -569,6 +644,7 @@ def main(argv: list[str] | None = None) -> int:
         "wavelength_mm": lam_mm,
         "n_wires_used": int(len(rows)),
         "n_wires_for_lateral_fit": int(keep.sum()),
+        "lateral_fit_ok": bool(lateral_fit_ok),
         "axial_fwhm_mm_median": float(np.median(ax_fwhm_clean)),
         "axial_fwhm_mm_std": float(np.std(ax_fwhm_clean)),
         "axial_fwhm_n_clean_wires": int(keep_axial.sum()),
@@ -582,8 +658,8 @@ def main(argv: list[str] | None = None) -> int:
         "gaussian_beam_fit": {
             "w0_mm": w0, "w0_err_mm": w0_err,
             "z_f_mm": zf, "z_f_err_mm": zf_err,
-            "z_R_mm": float(math.pi * w0 ** 2 / lam_mm),
-            "lateral_fwhm_at_focus_mm": float(w0 * TWO_SQRT_LN2),
+            "z_R_mm": float(math.pi * w0 ** 2 / lam_mm) if lateral_fit_ok else float("nan"),
+            "lateral_fwhm_at_focus_mm": float(w0 * TWO_SQRT_LN2) if lateral_fit_ok else float("nan"),
         },
         "derived": {
             "focal_length_mm": zf,
@@ -595,13 +671,19 @@ def main(argv: list[str] | None = None) -> int:
     with (args.out_dir / "psf_fit.json").open("w") as f:
         json.dump(out_json, f, indent=2)
 
-    if plt is not None:
+    if plt is not None and lateral_fit_ok:
         render_overview(rows, w0, zf, lam_mm,
                         args.out_dir / "psf_overview.png",
                         args.frequency_mhz, args.sound_speed_mm_per_us,
                         args.lateral_peak_max_palette,
                         args.lateral_min_r_mm)
-        render_patch_montage(rows, args.out_dir / "psf_patches.png")
+        render_patch_montage(rows, args.out_dir / "psf_patches.png",
+                             log_multiplier=args.log_multiplier,
+                             threshold_db=args.threshold_db)
+    elif plt is not None:
+        render_patch_montage(rows, args.out_dir / "psf_patches.png",
+                             log_multiplier=args.log_multiplier,
+                             threshold_db=args.threshold_db)
 
     # Console summary
     print()
@@ -610,11 +692,16 @@ def main(argv: list[str] | None = None) -> int:
           f"median FWHM = {np.median(ax_fwhm_clean)*1000:.0f} um  "
           f"(std={np.std(ax_fwhm_clean)*1000:.0f} um)")
     print(f"  => pulse_duration_cycles = {n_cycles:.2f}")
-    print(f"Lateral PSF (Gaussian beam fit, n={keep.sum()}/{len(rows)}):")
-    print(f"  w_0 = {w0:.3f} +/- {w0_err:.3f} mm  "
-          f"(FWHM at focus = {w0 * TWO_SQRT_LN2:.3f} mm)")
-    print(f"  z_f = {zf:.2f} +/- {zf_err:.2f} mm  (focal_length_mm)")
-    print(f"  a   = {a_mm:.3f} mm                 (element_radius_mm)")
+    if lateral_fit_ok:
+        print(f"Lateral PSF (Gaussian beam fit, n={keep.sum()}/{len(rows)}):")
+        print(f"  w_0 = {w0:.3f} +/- {w0_err:.3f} mm  "
+              f"(FWHM at focus = {w0 * TWO_SQRT_LN2:.3f} mm)")
+        print(f"  z_f = {zf:.2f} +/- {zf_err:.2f} mm  (focal_length_mm)")
+        print(f"  a   = {a_mm:.3f} mm                 (element_radius_mm)")
+    else:
+        print(f"Lateral PSF: insufficient wires past r >= {args.lateral_min_r_mm} mm "
+              f"(n={keep.sum()}); skipping Gaussian-beam fit. Per-wire FWHM CSV "
+              f"is still written.")
     print(f"\nWrote: {args.out_dir}")
     return 0
 

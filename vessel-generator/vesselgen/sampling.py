@@ -243,12 +243,33 @@ def _interpolate_lumen_contour(
     return (1.0 - t) * a + t * b
 
 
+def _sample_branch_arclength(
+    branch: BranchHandle,
+    rng: np.random.Generator,
+    *,
+    side_branch_ostium_bias_prob: float = 0.0,
+    side_branch_ostium_arclength_frac: float = 0.25,
+) -> float:
+    """Sample arclength along ``branch``, optionally biasing side branches to the ostium."""
+    length = branch.centerline.length_mm
+    if (
+        branch.name != "parent"
+        and side_branch_ostium_bias_prob > 0.0
+        and rng.random() < side_branch_ostium_bias_prob
+    ):
+        ostium_extent = max(length * side_branch_ostium_arclength_frac, 1e-3)
+        return float(rng.uniform(0.0, ostium_extent))
+    return float(rng.uniform(0.0, length))
+
+
 def sample_pose(
     vessel: Vessel,
     rng: np.random.Generator,
     max_tilt_deg: float = 15.0,
     edge_margin_mm: float = 0.2,
     max_attempts: int = 64,
+    side_branch_ostium_bias_prob: float = 0.0,
+    side_branch_ostium_arclength_frac: float = 0.25,
 ) -> PoseSample:
     """Sample a random catheter pose inside the vessel lumen.
 
@@ -272,7 +293,12 @@ def sample_pose(
         :class:`RuntimeError` if exceeded.
     """
     branch = _pick_branch(vessel, rng)
-    s = float(rng.uniform(0.0, branch.centerline.length_mm))
+    s = _sample_branch_arclength(
+        branch,
+        rng,
+        side_branch_ostium_bias_prob=side_branch_ostium_bias_prob,
+        side_branch_ostium_arclength_frac=side_branch_ostium_arclength_frac,
+    )
     contour_local = _interpolate_lumen_contour(branch, s)
 
     bbox_min = contour_local.min(axis=0)
@@ -606,3 +632,176 @@ def ground_truth_at(
         branch_ids_visible=visible,
         equivalent_lumen_diameter_mm=eq_diam,
     )
+
+
+def _imaging_ray_directions_world(
+    pose: PoseSample, thetas_rad: np.ndarray
+) -> np.ndarray:
+    """Unit ray directions in world space for each imaging-plane angle."""
+    probe_x = pose.rotation_matrix[:, 0]
+    probe_z = pose.rotation_matrix[:, 2]
+    dirs = np.stack([np.cos(thetas_rad), np.sin(thetas_rad)], axis=1)
+    dirs_w = dirs[:, 0:1] * probe_x + dirs[:, 1:2] * probe_z
+    dirs_w /= np.linalg.norm(dirs_w, axis=1, keepdims=True) + 1e-12
+    return dirs_w
+
+
+def _project_to_imaging_plane(vector: np.ndarray, probe_axis: np.ndarray) -> np.ndarray:
+    """Remove probe-axis component so ``vector`` lies in the imaging plane."""
+    axis = probe_axis / (np.linalg.norm(probe_axis) + 1e-12)
+    vector = np.asarray(vector, dtype=float)
+    return vector - np.dot(vector, axis) * axis
+
+
+def _sector_around_planar_direction(
+    pose: PoseSample,
+    thetas_rad: np.ndarray,
+    direction_world: np.ndarray,
+    *,
+    half_angle_deg: float,
+) -> np.ndarray:
+    """Angles whose rays fall within a cone around ``direction_world`` (in-plane)."""
+    in_plane = _project_to_imaging_plane(direction_world, pose.probe_axis_world)
+    norm = float(np.linalg.norm(in_plane))
+    if norm < 1e-6:
+        return np.zeros(len(thetas_rad), dtype=bool)
+    dir_u = in_plane / norm
+    cos_angle = (_imaging_ray_directions_world(pose, thetas_rad) @ dir_u).ravel()
+    return cos_angle >= float(np.cos(np.radians(half_angle_deg)))
+
+
+def _branch_mean_lumen_radius_mm(branch: BranchHandle, arclength_mm: float) -> float:
+    """Typical in-plane lumen radius at ``arclength_mm`` (mm)."""
+    contour = _interpolate_lumen_contour(branch, arclength_mm)
+    return float(np.mean(np.linalg.norm(contour, axis=1)))
+
+
+def side_branch_imaging_sector_mask(
+    vessel: Vessel,
+    pose: PoseSample,
+    thetas_rad: np.ndarray,
+    gt: GroundTruth | None = None,
+    *,
+    half_angle_deg: float = 45.0,
+    local_lumen_median_frac: float = 0.75,
+    local_lumen_max_mm: float | None = None,
+) -> np.ndarray:
+    """Angles that view the sampled side branch toward its caps or ostium.
+
+    When the probe is aligned with the branch, rays are nearly perpendicular
+    to the centerline tangent, so a tangent cone is empty.  Wedges aimed at
+    the side branch distal cap, proximal cap, and parent ostium are combined
+    with rays whose nearest lumen hit is much closer than the pose median
+    (local side-branch lumen vs parent lumen in the same frame).
+    """
+    branch = None
+    for b in vessel.branches:
+        if b.branch_id == pose.branch_id:
+            branch = b
+            break
+    if branch is None or branch.is_parent:
+        return np.zeros(len(thetas_rad), dtype=bool)
+
+    sector = np.zeros(len(thetas_rad), dtype=bool)
+    sector |= _sector_around_planar_direction(
+        pose,
+        thetas_rad,
+        branch.centerline.positions[-1] - pose.position,
+        half_angle_deg=half_angle_deg,
+    )
+    sector |= _sector_around_planar_direction(
+        pose,
+        thetas_rad,
+        branch.centerline.positions[0] - pose.position,
+        half_angle_deg=half_angle_deg,
+    )
+    if branch.parent_attachment_arclength_mm is not None:
+        parent = vessel.branches[0]
+        attach_pt = parent.centerline.position(branch.parent_attachment_arclength_mm)
+        sector |= _sector_around_planar_direction(
+            pose,
+            thetas_rad,
+            attach_pt - pose.position,
+            half_angle_deg=half_angle_deg,
+        )
+
+    if gt is not None:
+        d_lumen = np.asarray(gt.distance_to_lumen_wall_mm, dtype=float)
+        finite = np.isfinite(d_lumen)
+        if finite.any():
+            median_d = float(np.nanmedian(d_lumen[finite]))
+            if local_lumen_max_mm is None:
+                local_lumen_max_mm = max(
+                    8.0, 1.5 * _branch_mean_lumen_radius_mm(branch, pose.arclength_mm)
+                )
+            cutoff = min(median_d * local_lumen_median_frac, local_lumen_max_mm)
+            sector |= finite & (d_lumen <= cutoff)
+
+    return sector
+
+
+def ground_truth_side_branch_sector_invalid(
+    vessel: Vessel,
+    pose: PoseSample,
+    gt: GroundTruth,
+    *,
+    endcap_wall_mm: float = 0.08,
+    half_angle_deg: float = 45.0,
+) -> bool:
+    """True when the side-branch angular sector shows a mesh end cap."""
+    if pose.branch_name == "parent":
+        return False
+    sector = side_branch_imaging_sector_mask(
+        vessel, pose, gt.thetas_rad, gt, half_angle_deg=half_angle_deg
+    )
+    if not sector.any():
+        return False
+    wall = np.asarray(gt.wall_thickness_mm, dtype=float)
+    finite = sector & np.isfinite(wall)
+    if not finite.any():
+        return True
+    return bool(np.any(wall[finite] < endcap_wall_mm))
+
+
+def ground_truth_shows_endcap(
+    gt: GroundTruth,
+    *,
+    min_wall_mm: float = 0.08,
+) -> bool:
+    """Return True when any ray sees coincident lumen/outer hits (mesh end cap).
+
+    Branch meshes are closed with centroid fan caps. When the imaging plane
+    intersects a cap disc, lumen and outer surfaces coincide and the computed
+    wall thickness collapses to ~0. This is a GT artifact, not real anatomy.
+    """
+    wall = np.asarray(gt.wall_thickness_mm, dtype=float)
+    finite = np.isfinite(wall)
+    if not finite.any():
+        return True
+    return bool(np.any(wall[finite] < min_wall_mm))
+
+
+def ground_truth_is_valid_pose(
+    vessel: Vessel,
+    pose: PoseSample,
+    gt: GroundTruth,
+    *,
+    min_finite_fraction: float = 0.85,
+    endcap_wall_mm: float = 0.08,
+    side_branch_cone_half_angle_deg: float = 45.0,
+) -> bool:
+    """Reject poses whose GT is incomplete or includes mesh cap artifacts."""
+    finite = np.isfinite(gt.distance_to_lumen_wall_mm) & np.isfinite(
+        gt.distance_to_outer_wall_mm
+    )
+    if finite.mean() < min_finite_fraction or gt.lumen_csa_mm2 <= 0.0:
+        return False
+    if pose.branch_name != "parent":
+        return not ground_truth_side_branch_sector_invalid(
+            vessel,
+            pose,
+            gt,
+            endcap_wall_mm=endcap_wall_mm,
+            half_angle_deg=side_branch_cone_half_angle_deg,
+        )
+    return not ground_truth_shows_endcap(gt, min_wall_mm=endcap_wall_mm)

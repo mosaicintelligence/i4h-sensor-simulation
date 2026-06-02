@@ -11,6 +11,7 @@ Run:
 """
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from xhtml2pdf import pisa
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS_DIR = ROOT / "docs"
+TIER1_RESULTS_DIR = ROOT / "p035_visions" / "tier1_results"
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,14 @@ class DocSpec:
 
 
 DOCS: dict[str, DocSpec] = {
+    "tier1_results": DocSpec(
+        name="tier1_results",
+        src=TIER1_RESULTS_DIR / "tier1_results.md",
+        out=TIER1_RESULTS_DIR / "tier1_results.pdf",
+        title="IVUS Results Summary &amp; Characterization",
+        subtitle="Volcano s5i / Eagle Eye Gold &nbsp;·&nbsp; simulation results summary",
+        footer_label="IVUS Calibration & Characterization Results Summary — Volcano s5i",
+    ),
     "tier1": DocSpec(
         name="tier1",
         src=DOCS_DIR / "ivus_calibration_protocol.md",
@@ -288,11 +298,35 @@ def _substitute(text: str, table: dict[str, str]) -> str:
     return text
 
 
+_TABLE_SEPARATOR_RE = re.compile(r"^\|[\s\-:|]+\|$")
+# Absolute-value / norm pipes inside a cell (e.g. "|Δ|", "|peak|") are not column
+# delimiters; escape them so python-markdown keeps the intended column count.
+_INTRACELLULAR_PIPE_RE = re.compile(r"(?<=\s)\|([^|\s][^|]*?)\|(?=\s|$|\|)")
+
+
+def _escape_intracellular_table_pipes(line: str) -> str:
+    """Backslash-escape |...| tokens inside a markdown table row."""
+    stripped = line.strip()
+    if not stripped.startswith("|") or _TABLE_SEPARATOR_RE.fullmatch(stripped):
+        return line
+    padded = f" {line} "
+    return _INTRACELLULAR_PIPE_RE.sub(
+        lambda m: f"\\|{m.group(1)}\\|",
+        padded,
+    ).strip()
+
+
+def _normalize_markdown_tables(md_text: str) -> str:
+    """Preprocess markdown so table rows with |abs| notation parse correctly."""
+    return "\n".join(_escape_intracellular_table_pipes(line) for line in md_text.splitlines())
+
+
 def _render_one(spec: DocSpec, sans: str, mono: str) -> None:
     print(f"[{spec.name}] {spec.src.relative_to(ROOT)} -> {spec.out.relative_to(ROOT)}")
     css = CSS_TEMPLATE.replace("{sans}", sans).replace("{mono}", mono)
     md_text = spec.src.read_text(encoding="utf-8")
     md_text = _substitute(md_text, PRE_MD_SUBSTITUTIONS)
+    md_text = _normalize_markdown_tables(md_text)
     md = markdown.Markdown(
         extensions=[
             "tables",

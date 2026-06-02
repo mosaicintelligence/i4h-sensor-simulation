@@ -329,6 +329,67 @@ static __global__ void add_gaussian_noise_kernel(float* __restrict__ buffer, uin
   buffer[offset] += sigma * z;
 }
 
+// Pass 20: post-envelope additive Gaussian noise (`N(mean, sigma^2)`).
+// Same Box-Muller draw as `add_gaussian_noise_kernel`, but the offset is
+// shifted by `mean` so the post-stage envelope mean is bumped to a calibrated
+// baseline (the bench's anechoic noise floor in envelope-amplitude units).
+// Intended placement: post-Hilbert, pre-LPF (the `psf_env_lp_` smoother), so
+// the LPF convolves the noise with a ~1-wavelength radial kernel and produces
+// the bench's coarse-grained speckle texture.
+//
+// Distinct hash salt (`0x9E3779B1u`) keeps the realization independent of the
+// pre-PSF noise stage's draw when both are active under the same frame_seed.
+static __global__ void add_gaussian_noise_offset_kernel(float* __restrict__ buffer, uint2 size,
+                                                        float mean, float sigma, uint32_t seed) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  const uint32_t offset = index.y * size.x + index.x;
+  const uint32_t base = offset * 2u + seed * 0x9E3779B1u;
+  const float u1 = pcg_to_unit_float_noise(pcg_hash_noise(base + 0u)) + (1.f / 16777216.f);
+  const float u2 = pcg_to_unit_float_noise(pcg_hash_noise(base + 1u));
+  const float radius = sqrtf(-2.f * logf(u1));
+  const float z = radius * __cosf(6.28318530717958647692f * u2);
+  buffer[offset] += mean + sigma * z;
+}
+
+// Pass 28i: depth-gain-scaled envelope-noise variant.
+//
+// Same Box-Muller draw as `add_gaussian_noise_offset_kernel` -- importantly the
+// hash salt is IDENTICAL so flipping `envelope_noise_apply_tgc_depth_scaling`
+// changes only the per-sample amplitude, not the underlying noise realization
+// (so noise_seed-anchored regression tests stay stable apart from the desired
+// depth-shape change).
+//
+// `depth_gain[index.x]` carries the post-TGC linear gain at the sample's
+// physical depth (normalised to 1.0 at r = 0 by the kernel that built it,
+// `create_piece_wise_tgc`).  Both the additive mean and the Gaussian draw are
+// multiplied by `depth_gain[index.x]`, so the per-sample noise statistics are
+// (depth_gain[r] * mean, (depth_gain[r] * sigma)^2).  This makes the
+// post-Hilbert envelope-noise floor physically correct: it represents the
+// bench's analog electronic noise floor THAT HAS BEEN TGC-AMPLIFIED in the
+// receive chain (mirroring how a real analog VGA amplifies signal AND noise
+// together by the same TGC schedule).  See Pass 28i in
+// `raytracing_ultrasound_simulator.cpp` and the `volcano_s5i.yaml` envelope_noise
+// commentary for the motivation and Tier 1 calibration impact.
+static __global__ void add_gaussian_noise_offset_depth_scaled_kernel(
+    float* __restrict__ buffer, uint2 size, float mean, float sigma,
+    const float* __restrict__ depth_gain, uint32_t seed) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  const uint32_t offset = index.y * size.x + index.x;
+  const uint32_t base = offset * 2u + seed * 0x9E3779B1u;
+  const float u1 = pcg_to_unit_float_noise(pcg_hash_noise(base + 0u)) + (1.f / 16777216.f);
+  const float u2 = pcg_to_unit_float_noise(pcg_hash_noise(base + 1u));
+  const float radius = sqrtf(-2.f * logf(u1));
+  const float z = radius * __cosf(6.28318530717958647692f * u2);
+  const float g = depth_gain[index.x];
+  buffer[offset] += g * (mean + sigma * z);
+}
+
 // Pass 7: depth-weighted additive Gaussian noise. Same Box-Muller draw as
 // `add_gaussian_noise_kernel`, but `sigma` is multiplied per-bin by
 // `depth_weight[index.x]`, where `index.x` is the radial-sample index. The
@@ -366,16 +427,23 @@ static __global__ void add_gaussian_noise_depth_weighted_kernel(
 // display window) so the masked palette is exactly 0, deeper than the
 // device's reject_palette (11). This matches the bench appearance.
 //
-// `dead_zone_samples` is the number of leading radial samples to zero.
+// `dead_zone_samples` is the number of leading radial samples to overwrite.
+// `fill_value` is the palette value written into the dead-zone band (legacy
+// default 0; Pass 28j set this to `reject_palette` so the simulator's
+// dead-zone palette matches the bench's [r < dead_zone_mm] floor, which
+// sits at the soft-reject floor rather than literal palette 0 across the
+// c_take2_water E6 corpus).
+//
 // Default (dead_zone_samples == 0) is a no-op; the wrapper short-circuits.
-static __global__ void zero_inner_radial_kernel(float* __restrict__ buffer, uint2 size,
-                                                uint32_t dead_zone_samples) {
+static __global__ void set_inner_radial_kernel(float* __restrict__ buffer, uint2 size,
+                                                uint32_t dead_zone_samples,
+                                                float fill_value) {
   const uint2 index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
   if ((index.x >= size.x) || (index.y >= size.y)) { return; }
   if (index.x < dead_zone_samples) {
     const uint32_t offset = index.y * size.x + index.x;
-    buffer[offset] = 0.f;
+    buffer[offset] = fill_value;
   }
 }
 
@@ -407,6 +475,47 @@ static __global__ void display_window_kernel(float* __restrict__ buffer, uint2 s
 
   const uint32_t offset = index.y * size.x + index.x;
   buffer[offset] = fminf(fmaxf(buffer[offset], reject_palette), saturation_palette);
+}
+
+// Pass 20: soft reject-floor variant of `display_window_kernel`.
+//
+// Replaces the hard `max(palette, reject_palette)` clamp with a softplus
+// blend that asymptotes to the hard clamp for palette >> reject_palette but
+// smoothly fades pixels at and below the floor:
+//
+//   palette = reject + softness * log1p(exp((palette - reject) / softness))
+//
+// This removes the spurious histogram spike at the reject floor that the hard
+// clamp produces when the envelope-noise distribution has tails below the
+// floor (visible in the Pass 20 bench/sim histogram comparison).
+//
+// `softness` is in palette units; larger values blend more smoothly. The
+// saturation ceiling remains a hard clamp because the bench data shows a
+// genuine ceiling spike at `saturation_palette`.
+static __global__ void display_window_soft_kernel(float* __restrict__ buffer, uint2 size,
+                                                  float reject_palette,
+                                                  float saturation_palette,
+                                                  float softness) {
+  const uint2 index =
+      make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
+  if ((index.x >= size.x) || (index.y >= size.y)) { return; }
+
+  const uint32_t offset = index.y * size.x + index.x;
+  const float v = buffer[offset];
+  const float x = (v - reject_palette) / softness;
+  // log1p(exp(x)) computed in a numerically-stable form: for large positive
+  // x we return x + log1p(exp(-x)), for large negative x we return exp(x)
+  // directly (log1p domain is fine because exp(x) << 1).
+  float sp;
+  if (x > 20.f) {
+    sp = x + log1pf(__expf(-x));
+  } else if (x < -20.f) {
+    sp = __expf(x);
+  } else {
+    sp = log1pf(__expf(x));
+  }
+  float out = reject_palette + softness * sp;
+  buffer[offset] = fminf(out, saturation_palette);
 }
 
 static __global__ void median_clip_kernel(const float* __restrict__ source, uint2 size,
@@ -731,8 +840,12 @@ CUDAAlgorithms::CUDAAlgorithms()
       add_gaussian_noise_launcher_((void*)&add_gaussian_noise_kernel),
       add_gaussian_noise_depth_weighted_launcher_(
           (void*)&add_gaussian_noise_depth_weighted_kernel),
-      zero_inner_radial_launcher_((void*)&zero_inner_radial_kernel),
+      add_gaussian_noise_offset_launcher_((void*)&add_gaussian_noise_offset_kernel),
+      add_gaussian_noise_offset_depth_scaled_launcher_(
+          (void*)&add_gaussian_noise_offset_depth_scaled_kernel),
+      zero_inner_radial_launcher_((void*)&set_inner_radial_kernel),
       display_window_launcher_((void*)&display_window_kernel),
+      display_window_soft_launcher_((void*)&display_window_soft_kernel),
       median_clip_launcher_((void*)&median_clip_kernel),
       scan_convert_curvilinear_launcher_((void*)&scan_convert_curvilinear_kernel),
       scan_convert_linear_launcher_((void*)&scan_convert_linear_kernel),
@@ -919,8 +1032,51 @@ void CUDAAlgorithms::add_gaussian_noise_depth_weighted(CudaMemory* buffer, uint2
       seed);
 }
 
+void CUDAAlgorithms::add_gaussian_noise_offset(CudaMemory* buffer, uint2 size, float mean,
+                                               float sigma, uint32_t seed,
+                                               cudaStream_t stream) {
+  // No-op when both knobs are at their defaults (mean == 0 AND sigma <= 0).
+  if (!(sigma > 0.f) && (mean == 0.f)) { return; }
+
+  add_gaussian_noise_offset_launcher_.launch(size,
+                                              stream,
+                                              reinterpret_cast<float*>(buffer->get_ptr(stream)),
+                                              size,
+                                              mean,
+                                              sigma,
+                                              seed);
+}
+
+void CUDAAlgorithms::add_gaussian_noise_offset_depth_scaled(
+    CudaMemory* buffer, uint2 size, float mean, float sigma,
+    CudaMemory* depth_gain, uint32_t seed, cudaStream_t stream) {
+  // No-op when both knobs are at their defaults (mean == 0 AND sigma <= 0).
+  if (!(sigma > 0.f) && (mean == 0.f)) { return; }
+  if (depth_gain == nullptr) {
+    throw std::runtime_error(
+        "add_gaussian_noise_offset_depth_scaled: depth_gain buffer is null");
+  }
+  if (depth_gain->get_size() / sizeof(float) != size.x) {
+    throw std::runtime_error(
+        "add_gaussian_noise_offset_depth_scaled: depth_gain length does not "
+        "match buffer row length (size.x)");
+  }
+
+  add_gaussian_noise_offset_depth_scaled_launcher_.launch(
+      size,
+      stream,
+      reinterpret_cast<float*>(buffer->get_ptr(stream)),
+      size,
+      mean,
+      sigma,
+      reinterpret_cast<const float*>(depth_gain->get_ptr(stream)),
+      seed);
+}
+
+
 void CUDAAlgorithms::zero_inner_radial(CudaMemory* buffer, uint2 size,
-                                       uint32_t dead_zone_samples, cudaStream_t stream) {
+                                       uint32_t dead_zone_samples,
+                                       float fill_value, cudaStream_t stream) {
   // No-op when there's no dead zone (default SimParams::catheter_dead_zone_mm
   // == 0.f maps to dead_zone_samples == 0); existing callers pay no cost.
   if (dead_zone_samples == 0u) { return; }
@@ -929,7 +1085,8 @@ void CUDAAlgorithms::zero_inner_radial(CudaMemory* buffer, uint2 size,
                                      stream,
                                      reinterpret_cast<float*>(buffer->get_ptr(stream)),
                                      size,
-                                     dead_zone_samples);
+                                     dead_zone_samples,
+                                     fill_value);
 }
 
 void CUDAAlgorithms::apply_display_window(CudaMemory* buffer, uint2 size, float reject_palette,
@@ -944,6 +1101,20 @@ void CUDAAlgorithms::apply_display_window(CudaMemory* buffer, uint2 size, float 
                                   size,
                                   reject_palette,
                                   saturation_palette);
+}
+
+void CUDAAlgorithms::apply_display_window_soft(CudaMemory* buffer, uint2 size,
+                                               float reject_palette, float saturation_palette,
+                                               float softness, cudaStream_t stream) {
+  if (!(saturation_palette > reject_palette) || !(softness > 0.f)) { return; }
+
+  display_window_soft_launcher_.launch(size,
+                                       stream,
+                                       reinterpret_cast<float*>(buffer->get_ptr(stream)),
+                                       size,
+                                       reject_palette,
+                                       saturation_palette,
+                                       softness);
 }
 
 void CUDAAlgorithms::hilbert_row(CudaMemory* buffer, uint2 size, cudaStream_t stream) {

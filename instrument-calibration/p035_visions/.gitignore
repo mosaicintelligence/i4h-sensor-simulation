@@ -1,5 +1,6 @@
 tier1_results/arrays/
 tier1_results/figures/
+tier1_results/self_validate/*.png
 
 # Python bytecode produced when running the extract_*.py scripts.
 __pycache__/

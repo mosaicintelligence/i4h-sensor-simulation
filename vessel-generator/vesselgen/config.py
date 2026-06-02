@@ -1,10 +1,19 @@
 """Generation parameters for vessel segments.
 
 These dataclasses are the public schema for everything the generator does.
-Each field has a sensible default for a peripheral-vessel-sized segment
-(typical lumen radius 2-5 mm, length 20-40 mm). For batch generation,
-``GenerationConfig`` carries distributions over these parameters and
-``GenerationConfig.sample()`` draws a concrete ``VesselConfig`` from them.
+Each field has a sensible default sized for **large peripheral vasculature**
+as imaged with the PV .035 (femoral / iliac / renal vein / aortic segments),
+not coronary scale. For batch generation, ``GenerationConfig`` carries
+distributions over these parameters and ``GenerationConfig.sample()`` draws
+a concrete ``VesselConfig`` from them.
+
+Typical targets (lumen diameter ≈ 2 × mean_radius_mm):
+  * Femoral / iliac artery: 8–14 mm lumen, wall ~0.7–1.2 mm
+  * Renal vein / large vein: similar lumen, slightly thinner wall
+  * Aortic segment (occasional draw): 16–24 mm lumen, wall ~1.0–1.5 mm
+
+At 10 MHz the catheter ring-down occupies roughly r < 2–3.6 mm; lumen radii
+≥ 4 mm place the vessel wall clearly outside the ring-down disc in the image.
 
 All distances are in millimetres. All angles are in degrees unless the
 field name says otherwise. Coordinate convention matches the simulator:
@@ -13,7 +22,7 @@ vessel axis along Y, cross-sections in the xz plane.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal, Optional
 
 import numpy as np
@@ -40,8 +49,8 @@ class CenterlineConfig:
     ignored by the sweep code.
     """
 
-    length_mm: float = 30.0
-    origin: tuple[float, float, float] = (0.0, -15.0, 0.0)
+    length_mm: float = 55.0
+    origin: tuple[float, float, float] = (0.0, -27.5, 0.0)
     direction: tuple[float, float, float] = (0.0, 1.0, 0.0)
     n_stations: int = 64
 
@@ -80,8 +89,8 @@ class CrossSectionConfig:
     identical.
     """
 
-    mean_radius_mm: float = 3.0
-    """Mean lumen radius at the proximal end of the branch."""
+    mean_radius_mm: float = 5.0
+    """Mean lumen radius at the proximal end (~10 mm lumen diameter)."""
 
     distal_radius_mm: Optional[float] = None
     """Mean lumen radius at the distal end. ``None`` -> same as mean_radius_mm."""
@@ -133,7 +142,7 @@ class WallConfig:
     as "thicker on one side than the other" rather than as fine speckle.
     """
 
-    mean_thickness_mm: float = 0.7
+    mean_thickness_mm: float = 0.85
     perturbation_modes: tuple[int, ...] = (1, 2, 3)
     max_perturbation_frac: float = 0.6
     """Allows >50% modulation so walls clearly vary thick/thin around the
@@ -196,9 +205,9 @@ class SideBranchConfig:
     azimuth_deg: float = 0.0
     polar_deg: float = 60.0
     branch: BranchConfig = field(default_factory=lambda: BranchConfig(
-        centerline=CenterlineConfig(length_mm=15.0),
-        cross_section=CrossSectionConfig(mean_radius_mm=1.6),
-        wall=WallConfig(mean_thickness_mm=0.5),
+        centerline=CenterlineConfig(length_mm=45.0),
+        cross_section=CrossSectionConfig(mean_radius_mm=3.5),
+        wall=WallConfig(mean_thickness_mm=0.7),
         name="side_branch",
     ))
 
@@ -235,10 +244,44 @@ class VesselConfig:
             if sb.branch.seed is None:
                 sb.branch.seed = self.seed + 100 + i
 
+    def with_minimum_side_branch_lengths(self) -> "VesselConfig":
+        """Ensure every side branch is at least as long as the parent."""
+        parent_length = self.parent.centerline.length_mm
+        updated: list[SideBranchConfig] = []
+        changed = False
+        for sb in self.side_branches:
+            requested = sb.branch.centerline.length_mm
+            min_length = minimum_side_branch_length_mm(parent_length, requested)
+            if min_length > requested + 1e-9:
+                changed = True
+                branch = replace(
+                    sb.branch,
+                    centerline=replace(
+                        sb.branch.centerline,
+                        length_mm=min_length,
+                        n_stations=side_branch_n_stations(min_length),
+                    ),
+                )
+                updated.append(replace(sb, branch=branch))
+            else:
+                updated.append(sb)
+        if not changed:
+            return self
+        return replace(self, side_branches=updated)
+
 
 # ---------------------------------------------------------------------------
 # Batch / library generation
 # ---------------------------------------------------------------------------
+
+
+def minimum_side_branch_length_mm(parent_length_mm: float, requested_length_mm: float) -> float:
+    """Side branches must extend at least as far as the parent centerline."""
+    return max(float(requested_length_mm), float(parent_length_mm))
+
+
+def side_branch_n_stations(length_mm: float) -> int:
+    return int(max(24, min(64, round(length_mm * 2))))
 
 
 @dataclass
@@ -254,31 +297,46 @@ class _UniformRange:
 class GenerationConfig:
     """Distributions over vessel parameters for batch generation.
 
-    A call to :meth:`sample` returns one concrete :class:`VesselConfig`
-    drawn from these distributions. The defaults span a peripheral-vessel
-    range that covers the porcine-lab evaluation envelope (lumen radius
-    1.2-4.5 mm, length 20-40 mm, mixed bifurcation states).
+    Defaults target large peripheral arteries and veins (femoral, iliac, renal,
+  EVAR-scale aorta) for the PV .035 ICE catheter. Lumen radii place the wall
+  outside the ring-down zone (r >~ 4 mm). ~18% of draws use aortic-scale lumina.
     """
 
-    length_mm_range: tuple[float, float] = (20.0, 40.0)
-    parent_radius_mm_range: tuple[float, float] = (1.5, 4.5)
-    parent_radius_taper_frac_range: tuple[float, float] = (0.85, 1.05)
+    length_mm_range: tuple[float, float] = (45.0, 75.0)
+    parent_radius_mm_range: tuple[float, float] = (4.0, 6.5)
+    parent_radius_taper_frac_range: tuple[float, float] = (0.88, 1.02)
     """Distal radius as a fraction of proximal radius."""
 
-    parent_wall_thickness_mm_range: tuple[float, float] = (0.4, 1.2)
-    parent_wall_perturbation_frac_range: tuple[float, float] = (0.3, 0.7)
-    parent_lumen_perturbation_frac_range: tuple[float, float] = (0.08, 0.22)
+    parent_wall_thickness_mm_range: tuple[float, float] = (0.65, 1.2)
+    parent_wall_perturbation_frac_range: tuple[float, float] = (0.25, 0.65)
+    parent_lumen_perturbation_frac_range: tuple[float, float] = (0.06, 0.18)
+
+    aortic_scale_probability: float = 0.18
+    aortic_radius_mm_range: tuple[float, float] = (8.0, 11.5)
+    aortic_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
 
     side_branch_probability: float = 0.45
-    side_branch_radius_frac_range: tuple[float, float] = (0.4, 0.75)
-    side_branch_length_mm_range: tuple[float, float] = (10.0, 20.0)
+    side_branch_radius_frac_range: tuple[float, float] = (0.55, 0.80)
+    side_branch_length_mm_range: tuple[float, float] = (40.0, 75.0)
     side_branch_polar_deg_range: tuple[float, float] = (35.0, 75.0)
     max_side_branches: int = 1
 
-    def sample(self, rng: np.random.Generator, seed: int, name: str = "vessel") -> VesselConfig:
+    def sample(
+        self,
+        rng: np.random.Generator,
+        seed: int,
+        name: str = "vessel",
+        *,
+        force_side_branch: bool = False,
+    ) -> VesselConfig:
         """Draw one VesselConfig from the configured distributions."""
         length = _UniformRange(*self.length_mm_range).sample(rng)
-        r_proximal = _UniformRange(*self.parent_radius_mm_range).sample(rng)
+        if rng.random() < self.aortic_scale_probability:
+            r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
+            wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
+        else:
+            r_proximal = _UniformRange(*self.parent_radius_mm_range).sample(rng)
+            wall_lo, wall_hi = self.parent_wall_thickness_mm_range
         taper = _UniformRange(*self.parent_radius_taper_frac_range).sample(rng)
         r_distal = r_proximal * taper
 
@@ -297,9 +355,7 @@ class GenerationConfig:
                 ).sample(rng),
             ),
             wall=WallConfig(
-                mean_thickness_mm=_UniformRange(
-                    *self.parent_wall_thickness_mm_range
-                ).sample(rng),
+                mean_thickness_mm=_UniformRange(wall_lo, wall_hi).sample(rng),
                 max_perturbation_frac=_UniformRange(
                     *self.parent_wall_perturbation_frac_range
                 ).sample(rng),
@@ -310,13 +366,16 @@ class GenerationConfig:
 
         side_branches: list[SideBranchConfig] = []
         n_side = 0
-        if rng.random() < self.side_branch_probability:
+        if force_side_branch or rng.random() < self.side_branch_probability:
             n_side = int(rng.integers(1, self.max_side_branches + 1))
         for i in range(n_side):
             sb_radius = r_proximal * _UniformRange(
                 *self.side_branch_radius_frac_range
             ).sample(rng)
-            sb_length = _UniformRange(*self.side_branch_length_mm_range).sample(rng)
+            sb_length = minimum_side_branch_length_mm(
+                length,
+                _UniformRange(*self.side_branch_length_mm_range).sample(rng),
+            )
             side_branches.append(
                 SideBranchConfig(
                     parent_arclength_frac=float(rng.uniform(0.25, 0.8)),
@@ -327,7 +386,7 @@ class GenerationConfig:
                     branch=BranchConfig(
                         centerline=CenterlineConfig(
                             length_mm=sb_length,
-                            n_stations=int(max(24, min(64, round(sb_length * 2)))),
+                            n_stations=side_branch_n_stations(sb_length),
                         ),
                         cross_section=CrossSectionConfig(
                             mean_radius_mm=sb_radius,
@@ -335,7 +394,9 @@ class GenerationConfig:
                             max_perturbation_frac=0.18,
                         ),
                         wall=WallConfig(
-                            mean_thickness_mm=max(0.3, parent.wall.mean_thickness_mm * 0.8),
+                            mean_thickness_mm=max(
+                                0.5, parent.wall.mean_thickness_mm * 0.85
+                            ),
                             max_perturbation_frac=0.4,
                         ),
                         name=f"side_{i}",

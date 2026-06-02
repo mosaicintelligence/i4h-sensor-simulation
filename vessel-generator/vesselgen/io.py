@@ -39,12 +39,28 @@ from vesselgen.vessel import Vessel
 
 
 def _save_inward_obj(mesh, out_path: Path) -> None:
-    """Write ``mesh`` to OBJ with face winding flipped (so normals point inward)."""
-    import trimesh as _trimesh
+    """Write ``mesh`` to OBJ with face winding flipped (so normals point inward).
 
+    The raysim simulator requires per-vertex normals (``v//vn`` faces); trimesh's
+    default OBJ writer omits them, so we emit a minimal Wavefront file ourselves.
+    """
     flipped = mesh.copy()
     flipped.invert()
-    flipped.export(out_path)
+    verts = flipped.vertices
+    normals = flipped.vertex_normals
+    faces = flipped.faces
+
+    with out_path.open("w") as f:
+        f.write("# vesselgen inward-facing mesh for raysim\n")
+        for x, y, z in verts:
+            f.write(f"v {x:.6f} {y:.6f} {z:.6f}\n")
+        f.write("\n")
+        for nx, ny, nz in normals:
+            f.write(f"vn {nx:.6f} {ny:.6f} {nz:.6f}\n")
+        f.write("\n")
+        for i, j, k in faces:
+            a, b, c = i + 1, j + 1, k + 1
+            f.write(f"f {a}//{a} {b}//{b} {c}//{c}\n")
 
 
 def save_vessel(vessel: Vessel, out_dir: str | Path) -> Path:

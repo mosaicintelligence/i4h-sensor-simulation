@@ -22,7 +22,7 @@ and polar format for performance evaluation.
 
 Wire phantom design (aligned with phasedArray_psf / rotatingSingleElm style):
 - One wire per ring in a spiral (5 wires at 1–5 mm radius, each at a different angle)
-- IVUS imaging plane (x-z); wires are point-like spheres (bone material) for visible echoes
+- IVUS imaging plane (x-z); wires are point-like spheres (tungsten) matching the bench fixture
 
 Usage:
     python examples/wire_phantom_evaluation.py [--output-dir DIR]
@@ -93,12 +93,11 @@ def build_wire_phantom_world(materials, wire_positions_mm, wire_radius_mm=WIRE_R
     Build a World containing only the wire phantom (no vessel wall).
 
     - Background: lumen (blood) or water; use background="water" for stronger contrast.
-    - Wires: small spheres with a high-impedance material so the reflection coefficient
-      is large enough to be visible. We use "bone" (Z ≈ 7.8 MRayl) so the echo is visible
-      after log compression.
+    - Wires: small spheres with tungsten (Z ≈ 101 MRayl) matching the bench fixture
+      (30 µm tungsten wires in water / milk).
     """
     world = rs.World(background)
-    wire_material = materials.get_index("bone")
+    wire_material = materials.get_index("tungsten")
 
     for pos in wire_positions_mm:
         x, y, z = pos[0], pos[1], pos[2]

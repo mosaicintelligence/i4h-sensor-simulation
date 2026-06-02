@@ -82,6 +82,23 @@ class SimConfig:
     contact_epsilon_mm: float = 0.0
     conv_psf: bool = True
     median_clip_filter: bool = True
+    # Pass 5f -- IVUS angular ray super-sampling.
+    #
+    # When > 1, the IVUS raygen kernel fires K = ``ivus_rays_per_scanline``
+    # sub-rays per scanline at deterministic sub-bin angular offsets and
+    # accumulates into the same scanline buffer with weight 1/K. This
+    # forward-models the bench's finite beam width at the raycasting stage
+    # so sub-wavelength wire scatterers (e.g. the 0.0635 mm-radius B2
+    # tungsten wires whose angular subtense is ~0.4° at r=10 mm, much
+    # smaller than the 1.4° scanline pitch) are captured by at least one
+    # sub-ray instead of being hit-or-missed by accidental alignment.
+    #
+    # K=1 (default) is the legacy single-ray-per-scanline behaviour;
+    # K=8 is recommended for B2 wire-phantom Tier 1 PSF tests. Speckle
+    # renders are insensitive to K (the integral over a uniform medium is
+    # K-invariant) so the only cost is render time (~linear in K for the
+    # OptiX raygen stage).
+    ivus_rays_per_scanline: int = 1
     # --- Future ---
     sampling_freq_mhz: float = 40.0
 
@@ -102,6 +119,76 @@ class MedianClipConfig:
 class NoiseConfig:
     type: str = "gaussian"  # gaussian | rayleigh | none
     sigma: float = 0.0
+
+
+@dataclass
+class EnvelopeNoiseConfig:
+    """Pass 20 — post-envelope additive Gaussian noise.
+
+    Adds ``N(mean, sigma**2)`` per envelope pixel at the post-Hilbert /
+    pre-LPF stage, so the post-Hilbert low-pass smooths the noise with a
+    ~1-wavelength radial kernel and produces the bench's coarse-grained
+    speckle texture. ``mean`` seeds a baseline noise floor for anechoic
+    materials (e.g. water) where the upstream envelope is ~0; the post-
+    log mean palette of an anechoic region is then determined entirely
+    by ``mean`` and the calibrated ``log_floor`` / ``log_multiplier``.
+
+    ``sigma`` controls per-pixel CV of the noise floor independently of
+    the Rayleigh fixed-point that constrains the pre-PSF RF noise stage
+    (``NoiseConfig.sigma``). Use both knobs together to match the bench
+    distribution's mean and CV.
+
+    Both default to 0 (no-op). When ``processing.noise.sigma`` is also 0
+    the simulator's noise pipeline is fully disabled. The post-envelope
+    stage is intended to *replace* the pre-PSF RF noise stage on the
+    PV .035 calibration; the pre-PSF stage is kept for backward
+    compatibility with other YAMLs.
+
+    Calibrate via
+    ``instrument-calibration/p035_visions/derive_envelope_noise.py``.
+
+    ``reference_gain_db``: the ``processing.gain_db`` value at which
+    ``mean`` / ``sigma`` were measured against the bench. The simulator
+    multiplies the effective noise mean / sigma by
+    ``10 ** ((sim_gain_db - reference_gain_db) / 20)`` at simulate-time so
+    the noise floor tracks the receive-chain gain (Pass 20b). For the PV
+    .035 calibration the noise was measured against a slider-50 bench
+    capture, so ``reference_gain_db = processing.gain_db - 4.0`` (4 dB
+    below the simulator's slider-54 reference). Default 0 keeps the
+    legacy (un-scaled) behaviour for callers that don't set it.
+    """
+    mean: float = 0.0
+    sigma: float = 0.0
+    reference_gain_db: float = 0.0
+    # Pass 28i -- when true, the C++ envelope-noise stage multiplies both
+    # `mean` and `sigma` per sample by the cached TGC linear-gain curve
+    # (normalised to 1.0 at r = 0).  This models bench analog electronic
+    # noise being amplified by the receive chain's TGC schedule, so the
+    # post-envelope noise floor inherits the TGC's depth-dependent gain.
+    # Default false preserves the legacy depth-flat behaviour.  See
+    # `SimParams::envelope_noise_apply_tgc_depth_scaling` and the
+    # `volcano_s5i.yaml` envelope_noise block for the calibration rationale.
+    apply_tgc_depth_scaling: bool = False
+
+
+@dataclass
+class LateralPsfKernelConfig:
+    """Pass 5d — lateral-PSF kernel-type switch.
+
+    ``type`` selects the depth-dependent lateral PSF used by the IVUS pipeline:
+
+    * ``"gaussian_beam"`` (default) — legacy fixed-focus Gaussian beam,
+      ``sigma_mm(r) = w0 * sqrt(1 + ((r - z_f) / z_R)^2)`` with a pre-focal
+      clamp. Pre-Pass-5d behaviour; keeps existing calibrations unchanged.
+    * ``"constant_angular"`` — every depth bin uses the same angular spread
+      ``sigma_theta_rad`` (so ``sigma_bins`` is independent of depth).
+      Motivated by the s5i synthetic-aperture probe's bench data showing
+      a constant ~7.3° angular FWHM across r ∈ [4, 26] mm. Calibrate
+      ``sigma_theta_rad`` against the median bench angular FWHM via
+      ``instrument-calibration/p035_visions/derive_lateral_psf_sigma_theta.py``.
+    """
+    type: str = "gaussian_beam"  # gaussian_beam | constant_angular
+    sigma_theta_rad: float = 0.054164779787691845  # ~3.103 deg; PV .035 calibrated
 
 
 @dataclass
@@ -186,11 +273,27 @@ class ProcessingConfig:
     # reject_palette=11, saturation_palette=239 from gain_lut.json).
     reject_palette: float = 0.0
     saturation_palette: float = 0.0
+    # Pass 20 — softplus scale applied to the reject floor in the display-
+    # window kernel. When > 0 the floor uses a smooth (softplus) blend
+    # instead of a hard `max(palette, reject)` clamp, removing the
+    # spurious histogram spike that the hard clamp creates under post-
+    # envelope Gaussian noise with tails below the floor. Default 0 keeps
+    # the hard-clamp behaviour.
+    reject_palette_softness: float = 0.0
     # --- Future ---
     compression_lut: Optional[str] = None
     noise: NoiseConfig = field(default_factory=NoiseConfig)
+    # Pass 20 — post-envelope additive Gaussian noise; see EnvelopeNoiseConfig.
+    envelope_noise: EnvelopeNoiseConfig = field(default_factory=EnvelopeNoiseConfig)
     catheter: CatheterConfig = field(default_factory=CatheterConfig)
     ring_down: RingDownConfig = field(default_factory=RingDownConfig)
+    # Pass 5d — lateral-PSF kernel selector. Default keeps the pre-Pass-5d
+    # gaussian_beam kernel so existing YAMLs that omit this block render
+    # identically. Set ``type: constant_angular`` in the YAML to opt in to
+    # the SA-aware constant-angular Gaussian kernel.
+    lateral_psf_kernel: LateralPsfKernelConfig = field(
+        default_factory=LateralPsfKernelConfig
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -419,6 +522,7 @@ class IvusSimConfig:
         params.contact_epsilon = float(self.sim.contact_epsilon_mm)
         params.conv_psf = bool(self.sim.conv_psf)
         params.median_clip_filter = bool(self.sim.median_clip_filter)
+        params.ivus_rays_per_scanline = max(1, int(self.sim.ivus_rays_per_scanline))
 
         # ---- processing block ----------------------------------------------
         proc = self.processing
@@ -463,6 +567,23 @@ class IvusSimConfig:
                 "expected one of 'gaussian', 'rayleigh', 'none'."
             )
         params.noise_sigma = float(proc.noise.sigma) if proc.noise.type.lower() != "none" else 0.0
+
+        # Pass 20 — post-envelope additive Gaussian noise (mean + sigma).
+        # See `EnvelopeNoiseConfig` for the model semantics. Both default to
+        # 0 (no-op), preserving prior YAMLs that omit the block.
+        params.envelope_noise_mean = float(proc.envelope_noise.mean)
+        params.envelope_noise_sigma = float(proc.envelope_noise.sigma)
+        # Pass 20b — gain-scaling reference (gain_db at which the noise was
+        # calibrated). The simulator multiplies the effective mean / sigma
+        # by 10^((sim_gain_db - reference_gain_db) / 20) so the noise floor
+        # tracks the receive-chain gain.
+        params.envelope_noise_reference_gain_db = float(
+            proc.envelope_noise.reference_gain_db)
+        params.envelope_noise_apply_tgc_depth_scaling = bool(
+            proc.envelope_noise.apply_tgc_depth_scaling)
+
+        # Pass 20 — softplus reject-floor softness (palette units). 0 = hard clamp.
+        params.reject_palette_softness = float(proc.reject_palette_softness)
 
         # Pass 6 v2 — catheter sheath dead-zone mask.
         #
@@ -566,6 +687,23 @@ class IvusSimConfig:
         # a no-op so YAMLs that omit the field keep the historical behaviour.
         params.gain_db = float(proc.gain_db)
 
+        # ---- Pass 5d: lateral-PSF kernel-type switch -----------------------
+        # 0 = gaussian_beam (legacy default), 1 = constant_angular (SA-aware).
+        # Validate the string before mapping so a typo at the YAML layer is
+        # caught here instead of silently falling back to the default.
+        kernel_type_str = str(proc.lateral_psf_kernel.type).lower()
+        kernel_type_map = {"gaussian_beam": 0, "constant_angular": 1}
+        if kernel_type_str not in kernel_type_map:
+            raise ValueError(
+                f"Unsupported processing.lateral_psf_kernel.type "
+                f"{proc.lateral_psf_kernel.type!r}; expected one of "
+                f"{sorted(kernel_type_map)}."
+            )
+        params.lateral_psf_kernel_type = kernel_type_map[kernel_type_str]
+        params.lateral_psf_sigma_theta_rad = float(
+            proc.lateral_psf_kernel.sigma_theta_rad
+        )
+
         return params
 
     # ---- Diagnostics -------------------------------------------------------
@@ -634,15 +772,29 @@ def _build_sim(d: dict[str, Any]) -> SimConfig:
 def _build_processing(d: dict[str, Any]) -> ProcessingConfig:
     median = d.pop("median_clip", None) if isinstance(d, dict) else None
     noise = d.pop("noise", None) if isinstance(d, dict) else None
+    envelope_noise = d.pop("envelope_noise", None) if isinstance(d, dict) else None
     catheter = d.pop("catheter", None) if isinstance(d, dict) else None
     ring_down = d.pop("ring_down", None) if isinstance(d, dict) else None
+    lateral_psf_kernel = (
+        d.pop("lateral_psf_kernel", None) if isinstance(d, dict) else None
+    )
     if "tgc_control_points" in d and d["tgc_control_points"] is not None:
         d["tgc_control_points"] = [tuple(pt) for pt in d["tgc_control_points"]]
     return ProcessingConfig(
         median_clip=MedianClipConfig(**median) if isinstance(median, dict) else MedianClipConfig(),
         noise=NoiseConfig(**noise) if isinstance(noise, dict) else NoiseConfig(),
+        envelope_noise=(
+            EnvelopeNoiseConfig(**envelope_noise)
+            if isinstance(envelope_noise, dict)
+            else EnvelopeNoiseConfig()
+        ),
         catheter=CatheterConfig(**catheter) if isinstance(catheter, dict) else CatheterConfig(),
         ring_down=RingDownConfig(**ring_down) if isinstance(ring_down, dict) else RingDownConfig(),
+        lateral_psf_kernel=(
+            LateralPsfKernelConfig(**lateral_psf_kernel)
+            if isinstance(lateral_psf_kernel, dict)
+            else LateralPsfKernelConfig()
+        ),
         **d,
     )
 
