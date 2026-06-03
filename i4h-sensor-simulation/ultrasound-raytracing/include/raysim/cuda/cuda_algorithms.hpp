@@ -227,25 +227,85 @@ class CUDAAlgorithms {
                                           cudaStream_t stream);
 
   /**
-   * @brief Zero the inner `dead_zone_samples` radial samples of every scanline.
+   * Pass 20: post-envelope additive Gaussian noise with non-zero mean.
+   *
+   * Adds N(mean, sigma^2) per element to the envelope buffer. Intended
+   * placement: post-Hilbert, BEFORE the post-Hilbert low-pass (`psf_env_lp_`),
+   * so the LPF convolves the noise with a ~1-wavelength radial kernel and
+   * produces the bench's coarse-grained speckle texture.
+   *
+   * No-op when `sigma <= 0` AND `mean == 0`. The hash uses a different salt
+   * than `add_gaussian_noise` so the two stages draw independent realizations
+   * under the same `seed`.
+   *
+   * @param buffer [in,out] Row-major envelope buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents in samples.
+   * @param mean [in] Mean of the per-pixel Gaussian (envelope-amplitude units).
+   * @param sigma [in] Stddev of the per-pixel Gaussian (envelope-amplitude units).
+   * @param seed [in] Per-frame seed; uses a Pass-20 salt internally.
+   * @param stream [in] CUDA stream.
+   */
+  void add_gaussian_noise_offset(CudaMemory* buffer, uint2 size, float mean, float sigma,
+                                 uint32_t seed, cudaStream_t stream);
+
+  /**
+   * Pass 28i: depth-gain-scaled variant of `add_gaussian_noise_offset`.
+   *
+   * Behaves like `add_gaussian_noise_offset` but multiplies BOTH the
+   * additive mean and the per-pixel Gaussian draw by `depth_gain[index.x]`
+   * before adding to the envelope buffer.  `depth_gain` is expected to be
+   * the post-TGC linear gain curve (built by `create_piece_wise_tgc`,
+   * normalised to 1.0 at r = 0) so that the post-Hilbert envelope-noise
+   * floor inherits the TGC's depth-dependent amplification -- the
+   * physically-correct picture of analog electronic noise being
+   * amplified by the same TGC schedule that amplifies the signal.
+   *
+   * The hash salt is identical to the un-scaled kernel so the noise
+   * realization is the same modulo per-sample amplitude; only the
+   * envelope of the noise across depth changes.
+   *
+   * No-op when `sigma <= 0` AND `mean == 0`.
+   *
+   * @param buffer [in,out] Row-major envelope buffer of shape (size.y, size.x).
+   * @param size [in] Buffer extents in samples; size.x is the radial axis.
+   * @param mean [in] Baseline Gaussian mean (envelope-amp units, pre-depth-scale).
+   * @param sigma [in] Baseline Gaussian stddev (envelope-amp units, pre-depth-scale).
+   * @param depth_gain [in] Length-`size.x` per-sample linear gain (typ. tgc_curve_).
+   * @param seed [in] Per-frame seed (same salt as un-scaled variant).
+   * @param stream [in] CUDA stream.
+   */
+  void add_gaussian_noise_offset_depth_scaled(
+      CudaMemory* buffer, uint2 size, float mean, float sigma,
+      CudaMemory* depth_gain, uint32_t seed, cudaStream_t stream);
+
+  /**
+   * @brief Overwrite the inner `dead_zone_samples` radial samples of every
+   *        scanline with `fill_value` (palette units).
    *
    * Used at the very end of the simulation pipeline (post log-compression,
    * post display window) to reproduce the bench's catheter-sheath dead zone
-   * (the inner ~1.4 mm reads as solid black on the device because the
+   * (the inner ~1.4 mm reads as a uniform floor on the device because the
    * catheter wall blocks signal acquisition entirely). Without this mask the
    * Pass 6 additive-noise stage fills the dead zone with a noise floor,
-   * which differs visibly from the bench's solid-black inner zone.
+   * which differs visibly from the bench's flat inner zone.
    *
-   * `dead_zone_samples` is the number of leading radial samples to zero
+   * `fill_value` controls the palette value written into the dead-zone band.
+   * The legacy default 0.f reproduces the previous "solid-black" behaviour;
+   * Pass 28j callers pass `reject_palette` so the sim's dead zone matches
+   * the bench's flat soft-reject floor (palette ~ 11 across the c_take2_water
+   * E6 corpus, slider-independent).
+   *
+   * `dead_zone_samples` is the number of leading radial samples to overwrite
    * (typically `int(catheter_dead_zone_mm / dr_mm)`). 0 disables the mask.
    *
    * @param buffer [in,out] Float buffer with shape `(num_elements, buffer_size)`.
    * @param size [in] Buffer dimensions (size.x = depth samples, size.y = angular bins).
-   * @param dead_zone_samples [in] Number of leading radial samples to zero.
+   * @param dead_zone_samples [in] Number of leading radial samples to overwrite.
+   * @param fill_value [in] Palette value written into the masked band.
    * @param stream [in] CUDA stream.
    */
   void zero_inner_radial(CudaMemory* buffer, uint2 size, uint32_t dead_zone_samples,
-                         cudaStream_t stream);
+                         float fill_value, cudaStream_t stream);
 
   /**
    * In-place display window after log compression: clamp every element of
@@ -271,6 +331,28 @@ class CUDAAlgorithms {
    */
   void apply_display_window(CudaMemory* buffer, uint2 size, float reject_palette,
                             float saturation_palette, cudaStream_t stream);
+
+  /**
+   * Pass 20: soft reject-floor variant of `apply_display_window`.
+   *
+   * Same as `apply_display_window` but replaces the hard `max(palette, reject)`
+   * clamp with a softplus blend that fades pixels at and below the floor
+   * smoothly instead of piling them up at a single value. `softness` is in
+   * palette units; the saturation ceiling remains a hard clamp.
+   *
+   * Reverts to a no-op when `saturation_palette <= reject_palette` (matching
+   * the hard-clamp variant). When `softness <= 0` the caller should use
+   * `apply_display_window` instead.
+   *
+   * @param buffer [in,out] Row-major buffer of shape (size.y, size.x) in palette.
+   * @param size [in] Buffer extents.
+   * @param reject_palette [in] Reject floor in palette units.
+   * @param saturation_palette [in] Saturation ceiling in palette units.
+   * @param softness [in] Softplus scale, palette units (must be > 0).
+   * @param stream [in] CUDA stream.
+   */
+  void apply_display_window_soft(CudaMemory* buffer, uint2 size, float reject_palette,
+                                 float saturation_palette, float softness, cudaStream_t stream);
 
   /**
    * Apply hilbert transform to each row.
@@ -366,8 +448,11 @@ class CUDAAlgorithms {
   const CudaLauncher scale_buffer_launcher_;
   const CudaLauncher add_gaussian_noise_launcher_;
   const CudaLauncher add_gaussian_noise_depth_weighted_launcher_;
+  const CudaLauncher add_gaussian_noise_offset_launcher_;
+  const CudaLauncher add_gaussian_noise_offset_depth_scaled_launcher_;
   const CudaLauncher zero_inner_radial_launcher_;
   const CudaLauncher display_window_launcher_;
+  const CudaLauncher display_window_soft_launcher_;
   const CudaLauncher median_clip_launcher_;
   const CudaLauncher scan_convert_curvilinear_launcher_;
   const CudaLauncher scan_convert_linear_launcher_;

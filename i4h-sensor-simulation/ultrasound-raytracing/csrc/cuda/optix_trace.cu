@@ -274,11 +274,23 @@ static __device__ bool calc_refracted_dir(float3 incident_dir, float3 normal, fl
  *
  * Eq. 5 Mattausch2016Monte-Carlo
  *
+ *     Ir = max(0, cos(angle_r)^n) + max(0, cos(angle_t)^n)
+ *
+ * where `n` is the per-material `specularity_` (directivity sharpness exponent).
+ *
+ * IMPORTANT semantic note: despite the name, `specularity_` is the EXPONENT,
+ * not a scale factor.  Counterintuitively, n=1 gives a broad Lambertian-like
+ * lobe, n>>1 gives a narrow mirror-like peak, and n=0 gives the maximum
+ * constant intensity at every interface hit (cos^0 = 1 for any angle).
+ * Setting specularity ~ 0 to mean "less mirror-like" is the OPPOSITE of the
+ * intended behaviour -- it produces a constant maximum-brightness rind at
+ * every interface.  See note on the Material constructor in material.cpp.
+ *
  * @param V_r reflected ray direction vector
  * @param V_i refracted ray direction vector
  * @param total_internal_reflection
  * @param D vector from intersection point to transducer origin
- * @param n surface specularity parameter
+ * @param n surface specularity parameter (exponent; default 1.0)
  * @return reflection intensity Ir
  */
 static __device__ float calculate_specular_intensity(float3 V_r, float3 V_i,
@@ -415,71 +427,103 @@ extern "C" __global__ void __raygen__rg() {
 
   const RayGenData* ray_gen_data = reinterpret_cast<RayGenData*>(optixGetSbtDataPointer());
 
-  const float d_x = (static_cast<float>(idx.x) / static_cast<float>(dim.x)) - 0.5f;
-
-  float3 origin;
-  float3 direction;
-
-  // Different ray generation based on probe type
-  switch (ray_gen_data->probe_type) {
-    case PROBE_TYPE_CURVILINEAR: {
-      generate_curvilinear_probe_ray_local(ray_gen_data, d_x, origin, direction);
-      break;
-    }
-
-    case PROBE_TYPE_LINEAR_ARRAY: {
-      generate_linear_array_probe_ray_local(ray_gen_data, d_x, origin, direction);
-      break;
-    }
-
-    case PROBE_TYPE_PHASED_ARRAY: {
-      generate_phased_array_probe_ray_local(ray_gen_data, d_x, origin, direction);
-      break;
-    }
-
-    case PROBE_TYPE_IVUS: {
-      generate_ivus_probe_ray_local(ray_gen_data, d_x, origin, direction);
-      break;
-    }
+  // Pass 5f -- IVUS angular ray super-sampling.
+  //
+  // For IVUS only, fire K = `params.ivus_rays_per_scanline` sub-rays per
+  // scanline at deterministic sub-bin angular offsets ((k+0.5)/K - 0.5 in
+  // bin units, k = 0..K-1).  This forward-models the bench's finite beam
+  // width at the raycasting stage so that any sub-pixel wire scatterer is
+  // captured by at least one sub-ray.  All K sub-rays deposit into the
+  // same scanline buffer; we normalise the accumulated result by 1/K
+  // after the trace loop so the per-scanline integral is independent of K
+  // for a uniform medium.
+  //
+  // Other probe types always fire K = 1 sub-ray (legacy behaviour).
+  uint32_t K = 1u;
+  if (ray_gen_data->probe_type == PROBE_TYPE_IVUS && params.ivus_rays_per_scanline > 1u) {
+    K = params.ivus_rays_per_scanline;
   }
 
-  // Add elevation in probe's local coordinate system (common for all probes)
-  const float d_y = (static_cast<float>(idx.y) / static_cast<float>(dim.y)) - 0.5f;
-  const float elevation = ray_gen_data->elevational_height * d_y;
-  origin.y = elevation;
+  for (uint32_t k = 0; k < K; ++k) {
+    const float sub_offset =
+        (K > 1u) ? ((static_cast<float>(k) + 0.5f) / static_cast<float>(K) - 0.5f) : 0.f;
+    const float d_x =
+        ((static_cast<float>(idx.x) + sub_offset) / static_cast<float>(dim.x)) - 0.5f;
 
-  // Transform from probe's local coordinate system to global coordinate system
-  origin = ray_gen_data->rotation_matrix * origin;
-  origin += ray_gen_data->position;
+    float3 origin;
+    float3 direction;
 
-  direction = ray_gen_data->rotation_matrix * direction;
+    // Different ray generation based on probe type
+    switch (ray_gen_data->probe_type) {
+      case PROBE_TYPE_CURVILINEAR: {
+        generate_curvilinear_probe_ray_local(ray_gen_data, d_x, origin, direction);
+        break;
+      }
 
-  Payload ray{};
-  ray.intensity = 1.f;
-  ray.depth = 0;
-  ray.t_ancestors = 0.f;  // Required: miss shader uses this for depth bins; unset = wrong scatter
-  ray.current_material_id = params.background_material_id;
-  ray.outter_material_id = 0;
-  ray.current_obj_id = static_cast<uint16_t>(-1);
-  ray.outter_obj_id = static_cast<uint16_t>(-1);
+      case PROBE_TYPE_LINEAR_ARRAY: {
+        generate_linear_array_probe_ray_local(ray_gen_data, d_x, origin, direction);
+        break;
+      }
 
-  optixTrace(params.handle,
-             origin,
-             direction,
-             0.f,           // tmin
-             params.t_far,  // tmax
-             0.f,           // rayTime
-             OptixVisibilityMask(1),
-             OPTIX_RAY_FLAG_NONE,
-             0,  // SBT offset
-             1,  // SBT stride
-             0,  // missSBTIndex
-             reinterpret_cast<uint32_t*>(&ray)[0],
-             reinterpret_cast<uint32_t*>(&ray)[1],
-             reinterpret_cast<uint32_t*>(&ray)[2],
-             reinterpret_cast<uint32_t*>(&ray)[3],
-             reinterpret_cast<uint32_t*>(&ray)[4]);
-  static_assert(sizeof(Payload) / sizeof(uint32_t) == 5);
+      case PROBE_TYPE_PHASED_ARRAY: {
+        generate_phased_array_probe_ray_local(ray_gen_data, d_x, origin, direction);
+        break;
+      }
+
+      case PROBE_TYPE_IVUS: {
+        generate_ivus_probe_ray_local(ray_gen_data, d_x, origin, direction);
+        break;
+      }
+    }
+
+    // Add elevation in probe's local coordinate system (common for all probes)
+    const float d_y = (static_cast<float>(idx.y) / static_cast<float>(dim.y)) - 0.5f;
+    const float elevation = ray_gen_data->elevational_height * d_y;
+    origin.y = elevation;
+
+    // Transform from probe's local coordinate system to global coordinate system
+    origin = ray_gen_data->rotation_matrix * origin;
+    origin += ray_gen_data->position;
+
+    direction = ray_gen_data->rotation_matrix * direction;
+
+    Payload ray{};
+    ray.intensity = 1.f;
+    ray.depth = 0;
+    ray.t_ancestors = 0.f;  // Required: miss shader uses this for depth bins; unset = wrong scatter
+    ray.current_material_id = params.background_material_id;
+    ray.outter_material_id = 0;
+    ray.current_obj_id = static_cast<uint16_t>(-1);
+    ray.outter_obj_id = static_cast<uint16_t>(-1);
+
+    optixTrace(params.handle,
+               origin,
+               direction,
+               0.f,           // tmin
+               params.t_far,  // tmax
+               0.f,           // rayTime
+               OptixVisibilityMask(1),
+               OPTIX_RAY_FLAG_NONE,
+               0,  // SBT offset
+               1,  // SBT stride
+               0,  // missSBTIndex
+               reinterpret_cast<uint32_t*>(&ray)[0],
+               reinterpret_cast<uint32_t*>(&ray)[1],
+               reinterpret_cast<uint32_t*>(&ray)[2],
+               reinterpret_cast<uint32_t*>(&ray)[3],
+               reinterpret_cast<uint32_t*>(&ray)[4]);
+    static_assert(sizeof(Payload) / sizeof(uint32_t) == 5);
+  }
+
+  // Normalise the accumulated scanline by 1/K so the per-scanline integral
+  // is K-invariant.  Only executes when K > 1 (cost = `buffer_size` writes
+  // per thread); skipped entirely in the legacy K=1 path.
+  if (K > 1u) {
+    const uint32_t ray_index = idx.y * dim.x + idx.x;
+    float* const scanline = &params.scanlines[ray_index * params.buffer_size];
+    const float inv_K = 1.f / static_cast<float>(K);
+    for (uint32_t b = 0; b < params.buffer_size; ++b) { scanline[b] *= inv_K; }
+  }
 }
 
 extern "C" __global__ void __miss__ms() {
@@ -584,7 +628,34 @@ static __device__ void closest_hit() {
                                                                  ray_dir,
                                                                  next_material->specularity_) *
                                     ray_coherence_attenuation;
-  scanline[hit_bin] += 2.f * specular_reflection;
+  // Physics-correct scaling (Pass 28, 2026-05-27):
+  //
+  // The empirical Mattausch-2016 directivity term `cos^n` represents the
+  // angular DISTRIBUTION of reflected energy at a non-mirror interface, not
+  // an independent intensity contribution.  The TOTAL reflected intensity is
+  // bounded by the Fresnel reflection coefficient R (computed above from the
+  // impedance contrast).  So the empirical specular contribution must be
+  // scaled by R to be physically consistent:
+  //
+  //     scanline += 2 * R * cos^n * coherence
+  //
+  // Previously the code added `2 * cos^n * coherence` without the R factor,
+  // which produced a constant ~2.0 intensity at every interface hit
+  // regardless of impedance.  That was OK for bone-wire phantoms (R ~ 0.44
+  // for bone-milk, so a fixed 2.0 was a tolerable approximation) but
+  // catastrophically wrong for soft-tissue interfaces (R ~ 0.002 for
+  // lumen/vessel_wall): the bright empirical peak ~1000x dominated the
+  // physically-correct Fresnel echo, painting an unrealistic saturated rim
+  // wherever any tissue boundary appeared.
+  //
+  // Multiplying by R gives both bench-anchored bone-wire calibration
+  // (relative differences preserved) and physics-correct soft-tissue
+  // interfaces (vessel walls now appear as texture transitions).
+  //
+  // Bench calibration implication: bone-wire absolute brightness drops by
+  // ~7 dB (factor 1/R ~ 2.3 for bone-milk), so `processing.gain_db` in
+  // volcano_s5i.yaml must be re-derived against the wire phantom (Test E).
+  scanline[hit_bin] += 2.f * specular_reflection * R;
 
   // Self-intersection avoidance
   float3 front_start, back_start, wld_norm;

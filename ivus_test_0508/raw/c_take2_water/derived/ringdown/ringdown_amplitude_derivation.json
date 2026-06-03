@@ -1,0 +1,149 @@
+{
+  "method": "Sim-in-the-loop bisection of ring_down.amplitude against E6 AR-off bench peak palette at slider 50.  Sim rendered with the full calibrated pipeline (gain_db, noise.sigma, all materials) and only ring_down.amplitude overridden per bisection step.",
+  "yaml_path": "instrument-calibration/p035_visions/volcano_s5i.yaml",
+  "yaml_gain_db_at_calibration": 58.09,
+  "yaml_noise_sigma_at_calibration": 0.0,
+  "yaml_ring_down_amplitude_before": 0.079446,
+  "calibrated_ring_down_amplitude": 0.08249741973876953,
+  "amplitude_change_dB": 0.3273665888555669,
+  "target_peak_palette": 222.125,
+  "ref_slider": 50.0,
+  "e6_anchor_pairs": [
+    {
+      "gain": 50.0,
+      "diameter_mm": 30.0,
+      "peak_palette_off": 222.25,
+      "peak_depth_mm": 2.1600000858306885,
+      "extent_mm": 3.4800000190734863
+    },
+    {
+      "gain": 50.0,
+      "diameter_mm": 60.0,
+      "peak_palette_off": 222.0,
+      "peak_depth_mm": 2.1600000858306885,
+      "extent_mm": 3.4800000190734863
+    }
+  ],
+  "verification_at_ref_slider": {
+    "peak_palette": 222.69862365722656,
+    "peak_depth_mm": 2.1533203125,
+    "extent_mm": 3.0322265625
+  },
+  "verification_at_slider_54": {
+    "peak_palette": 239.0,
+    "peak_depth_mm": 1.8017578125,
+    "extent_mm": 3.0322265625
+  },
+  "n_frames_per_step": 8,
+  "tol_palette": 1.0,
+  "history": [
+    {
+      "amplitude": 0.0001,
+      "peak_palette": 11.197896003723145,
+      "peak_depth_mm": 2.1533203125,
+      "extent_mm": 29.9853515625
+    },
+    {
+      "amplitude": 200.0,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4208984375,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 100.00005,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4208984375,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 50.000075,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4208984375,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 25.000087500000003,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4208984375,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 12.500093750000001,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4208984375,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 6.2500968750000006,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4208984375,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 3.1250984375,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4208984375,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 1.5625992187500002,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4208984375,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 0.7813496093750001,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4208984375,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 0.39072480468750004,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.4501953125,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 0.19541240234375,
+      "peak_palette": 239.0,
+      "peak_depth_mm": 1.6845703125,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 0.097756201171875,
+      "peak_palette": 232.81381225585938,
+      "peak_depth_mm": 2.1533203125,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 0.0489281005859375,
+      "peak_palette": 191.59605407714844,
+      "peak_depth_mm": 2.1533203125,
+      "extent_mm": 29.9853515625
+    },
+    {
+      "amplitude": 0.07334215087890625,
+      "peak_palette": 215.68991088867188,
+      "peak_depth_mm": 2.1533203125,
+      "extent_mm": 29.9853515625
+    },
+    {
+      "amplitude": 0.08554917602539062,
+      "peak_palette": 224.86334228515625,
+      "peak_depth_mm": 2.1533203125,
+      "extent_mm": 3.0322265625
+    },
+    {
+      "amplitude": 0.07944566345214843,
+      "peak_palette": 220.4525146484375,
+      "peak_depth_mm": 2.1533203125,
+      "extent_mm": 29.9853515625
+    },
+    {
+      "amplitude": 0.08249741973876953,
+      "peak_palette": 222.69862365722656,
+      "peak_depth_mm": 2.1533203125,
+      "extent_mm": 3.0322265625
+    }
+  ]
+}

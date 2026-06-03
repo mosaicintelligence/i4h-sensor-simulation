@@ -105,6 +105,22 @@ how the model learns to recognise bifurcations.
   pulled because the ostium geometry needs more work; see
   ``docs/design.md`` for what was tried.
 
+### Anatomical scale (PV .035 peripheral ICE)
+
+Batch defaults in :class:`vesselgen.config.GenerationConfig` target **large
+peripheral** vessels, not coronary scale:
+
+| Draw | Lumen diameter | Wall thickness | Segment length |
+|------|----------------|----------------|----------------|
+| Typical (82%) | 8–13 mm | 0.65–1.2 mm | 45–75 mm |
+| Aortic-scale (18%) | 16–23 mm | 1.0–1.5 mm | 45–75 mm |
+| Side branch | 55–80% of parent radius | ~85% of parent wall | 40–75 mm |
+
+Inner wall radii start around **4 mm** so anatomy sits outside the catheter
+ring-down disc (~2–3.6 mm), matching femoral/iliac EVAR-style imaging.
+Calibration reference: ``instrument-calibration/p035_visions/vessel_evaluation.py``
+scenarios 06 (femoral) and 07 (aorta).
+
 ## Install
 
 From repo root:
