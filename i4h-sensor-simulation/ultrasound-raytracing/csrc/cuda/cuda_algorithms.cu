@@ -18,9 +18,8 @@
 #include "raysim/cuda/cuda_algorithms.hpp"
 
 #include <sutil/vec_math.h>
-// cub/cub.cuh was previously included for the per-frame quantile sort in
-// log_compression; Pass 3 (K2) removed that reduction so the include is no
-// longer needed.
+// cub/cub.cuh is no longer needed because the fixed-reference log
+// compression mapping does not require a per-frame quantile sort.
 #include <cufftdx/cufftdx.hpp>
 
 namespace raysim {
@@ -85,13 +84,13 @@ static __global__ void convolve_columns_kernel(const float* __restrict__ source,
   dst[offset] = sum;
 }
 
-// Pass 5: depth-dependent column convolution with CYCLIC angular wrap.
+// Depth-dependent column convolution with CYCLIC angular wrap.
 //
 // IVUS images are intrinsically periodic in angle (360° = num_scanlines), so
 // the lateral PSF convolution must wrap around the angular boundary instead
-// of truncating at index.y == 0 / index.y == size.y - 1. Truncation produced
-// two depth-uniformity artifacts that the host-side kernel build (Pass 5
-// `update_psfs`) could not compensate for:
+// of truncating at index.y == 0 / index.y == size.y - 1. Truncation would
+// otherwise produce two depth-uniformity artifacts that the host-side kernel
+// build (`update_psfs`) cannot compensate for:
 //   * Boundary darkening within ~kernel_radius bins of the seam.
 //   * Loss of L1/L2 mass when the host-built kernel was wider than the
 //     truncation window, breaking the depth-dependent normalization that
@@ -193,7 +192,7 @@ static __global__ void mean_planes_kernel(const float* __restrict__ source, uint
   dst[offset] = sum / size.z;
 }
 
-// Pass 3 (K2v2): fixed-reference log compression.
+// Fixed-reference log compression.
 //
 // Implements the spec mapping
 //   pixel = log_multiplier * log10(amp / log_floor)
@@ -212,12 +211,9 @@ static __global__ void mean_planes_kernel(const float* __restrict__ source, uint
 //     `-30 * log_multiplier` instead of NaN/-inf. Downstream stages
 //     (display window) then clamp this to `reject_palette`.
 //
-// Note: this changes the meaning of the historical Pass 3a K2 mapping
-// `pixel = log_multiplier * log10(max(amp, log_floor))` by an additive
-// offset of `-log_multiplier * log10(log_floor)`. The Pass 1 default was
-// `log_floor = 1e-19`; that default is now `1.0` (see SimParams::log_floor)
-// so default callers get a useful `[-60, 0]`-ish palette range that matches
-// the existing `examples/ivus_example.py` `MIN_VAL/MAX_VAL` window.
+// The default `log_floor` is `1.0` (see SimParams::log_floor) so default
+// callers get a useful `[-60, 0]`-ish palette range that matches the
+// `MIN_VAL/MAX_VAL` window in `examples/ivus_example.py`.
 static __global__ void log_compression_kernel(float* __restrict__ buffer, uint2 size,
                                               float mutliplicator, float minimum) {
   const uint2 index =
@@ -242,7 +238,7 @@ static __global__ void mul_rows_kernel(float* __restrict__ buffer, uint2 size,
   buffer[index.y * size.x + index.x] *= multiplicator[index.x];
 }
 
-// Pass 2: add a per-depth vector to every row of the buffer in place.
+// Add a per-depth vector to every row of the buffer in place.
 // `addend` has length `addend_size` <= size.x; samples past addend_size are untouched.
 // Used by the ring-down injection stage.
 static __global__ void add_row_kernel(float* __restrict__ buffer, uint2 size,
@@ -258,7 +254,7 @@ static __global__ void add_row_kernel(float* __restrict__ buffer, uint2 size,
   }
 }
 
-// Pass 3: in-place scalar multiply on every element of `buffer`.
+// In-place scalar multiply on every element of `buffer`.
 //
 // Used by the reference-gain stage to bring raytraced RF amplitudes onto the
 // bench's calibrated linear scale before ring-down injection
@@ -277,7 +273,7 @@ static __global__ void scale_buffer_kernel(float* __restrict__ buffer, uint2 siz
   buffer[offset] *= scale;
 }
 
-// Pass 6: additive Gaussian RF noise.
+// Additive Gaussian RF noise.
 //
 // Per the calibration sheet (volcano_s5i.yaml processing.noise.{type, sigma})
 // the bench's measured noise is "complex Gaussian per quadrature" — i.e. the
@@ -293,7 +289,7 @@ static __global__ void scale_buffer_kernel(float* __restrict__ buffer, uint2 siz
 // previously evaluated).
 //
 // Box-Muller transform on two PCG-hashed uniforms per buffer element (the
-// same hash family used by Pass 5b's scatter decorrelation, see
+// same hash family used by the scatter decorrelation, see
 // optix_trace.cu::pcg_hash; standard Jarzynski & Olano 2020 / O'Neill 2014
 // PCG mix — adequate for per-sample additive-noise jitter, not for any
 // security-sensitive use). u1 is clamped to (0, 1] by adding 1/2^24 so the
@@ -329,7 +325,7 @@ static __global__ void add_gaussian_noise_kernel(float* __restrict__ buffer, uin
   buffer[offset] += sigma * z;
 }
 
-// Pass 20: post-envelope additive Gaussian noise (`N(mean, sigma^2)`).
+// Post-envelope additive Gaussian noise (`N(mean, sigma^2)`).
 // Same Box-Muller draw as `add_gaussian_noise_kernel`, but the offset is
 // shifted by `mean` so the post-stage envelope mean is bumped to a calibrated
 // baseline (the bench's anechoic noise floor in envelope-amplitude units).
@@ -354,7 +350,7 @@ static __global__ void add_gaussian_noise_offset_kernel(float* __restrict__ buff
   buffer[offset] += mean + sigma * z;
 }
 
-// Pass 28i: depth-gain-scaled envelope-noise variant.
+// Depth-gain-scaled envelope-noise variant.
 //
 // Same Box-Muller draw as `add_gaussian_noise_offset_kernel` -- importantly the
 // hash salt is IDENTICAL so flipping `envelope_noise_apply_tgc_depth_scaling`
@@ -370,9 +366,9 @@ static __global__ void add_gaussian_noise_offset_kernel(float* __restrict__ buff
 // post-Hilbert envelope-noise floor physically correct: it represents the
 // bench's analog electronic noise floor THAT HAS BEEN TGC-AMPLIFIED in the
 // receive chain (mirroring how a real analog VGA amplifies signal AND noise
-// together by the same TGC schedule).  See Pass 28i in
-// `raytracing_ultrasound_simulator.cpp` and the `volcano_s5i.yaml` envelope_noise
-// commentary for the motivation and Tier 1 calibration impact.
+// together by the same TGC schedule). See the depth-gain envelope-noise
+// stage in `raytracing_ultrasound_simulator.cpp` and the
+// `volcano_s5i.yaml` envelope_noise commentary for the motivation.
 static __global__ void add_gaussian_noise_offset_depth_scaled_kernel(
     float* __restrict__ buffer, uint2 size, float mean, float sigma,
     const float* __restrict__ depth_gain, uint32_t seed) {
@@ -390,7 +386,7 @@ static __global__ void add_gaussian_noise_offset_depth_scaled_kernel(
   buffer[offset] += g * (mean + sigma * z);
 }
 
-// Pass 7: depth-weighted additive Gaussian noise. Same Box-Muller draw as
+// Depth-weighted additive Gaussian noise. Same Box-Muller draw as
 // `add_gaussian_noise_kernel`, but `sigma` is multiplied per-bin by
 // `depth_weight[index.x]`, where `index.x` is the radial-sample index. The
 // weight equals sqrt(sigma_bins(z) / sigma_bins(z_focal)) so that after the
@@ -416,8 +412,8 @@ static __global__ void add_gaussian_noise_depth_weighted_kernel(
   buffer[offset] += sigma_base * w * z;
 }
 
-// Pass 6 v2: catheter dead-zone mask. Zero the inner radial samples where
-// the catheter sheath physically blocks any acquired signal -- on the bench
+// Catheter dead-zone mask. Zero the inner radial samples where the
+// catheter sheath physically blocks any acquired signal -- on the bench
 // this region renders as pure black (palette 0) for r < ~1.4 mm. Without
 // this mask the additive noise stage (and any leaking ring-down energy)
 // fills the dead zone with a noise floor, which differs visibly from the
@@ -428,8 +424,8 @@ static __global__ void add_gaussian_noise_depth_weighted_kernel(
 // device's reject_palette (11). This matches the bench appearance.
 //
 // `dead_zone_samples` is the number of leading radial samples to overwrite.
-// `fill_value` is the palette value written into the dead-zone band (legacy
-// default 0; Pass 28j set this to `reject_palette` so the simulator's
+// `fill_value` is the palette value written into the dead-zone band. The
+// calibrated PV .035 YAML sets this to `reject_palette` so the simulator's
 // dead-zone palette matches the bench's [r < dead_zone_mm] floor, which
 // sits at the soft-reject floor rather than literal palette 0 across the
 // c_take2_water E6 corpus).
@@ -447,21 +443,14 @@ static __global__ void set_inner_radial_kernel(float* __restrict__ buffer, uint2
   }
 }
 
-// Pass 3b: post-log display window. Direct clamp to
+// Post-log display window. Direct clamp to
 // `[reject_palette, saturation_palette]` in palette units. This reproduces
 // the device's reject / saturation palette behaviour: any amplitude whose
 // post-log palette is below `reject_palette` is pushed up to the reject
 // floor (no negative pixels leak through), and any amplitude above
 // `saturation_palette` is clipped to the saturation ceiling.
 //
-// The previous Pass 2 kernel did two things at once: clamp the dB window AND
-// re-zero the lower bound (subtract `reject_db`). The re-zero step shifted
-// the entire palette so that `reject_db` mapped to palette 0 and the
-// device's own `reject_palette` value (e.g. 11) was no longer reached;
-// worse, the input palette of 0 (which K2v2's negative outputs *should*
-// map to the reject floor) was instead shifted up to the saturation
-// ceiling. This kernel matches the calibration sheet semantics: the post-
-// log palette is *already* in absolute palette units (because
+// The post-log palette is *already* in absolute palette units (because
 // `log_compression_kernel` uses the calibrated `log_multiplier` /
 // `log_floor`), so the display window only has to enforce the device's
 // hard floor and ceiling.
@@ -477,7 +466,7 @@ static __global__ void display_window_kernel(float* __restrict__ buffer, uint2 s
   buffer[offset] = fminf(fmaxf(buffer[offset], reject_palette), saturation_palette);
 }
 
-// Pass 20: soft reject-floor variant of `display_window_kernel`.
+// Soft reject-floor variant of `display_window_kernel`.
 //
 // Replaces the hard `max(palette, reject_palette)` clamp with a softplus
 // blend that asymptotes to the hard clamp for palette >> reject_palette but
@@ -487,7 +476,7 @@ static __global__ void display_window_kernel(float* __restrict__ buffer, uint2 s
 //
 // This removes the spurious histogram spike at the reject floor that the hard
 // clamp produces when the envelope-noise distribution has tails below the
-// floor (visible in the Pass 20 bench/sim histogram comparison).
+// floor.
 //
 // `softness` is in palette units; larger values blend more smoothly. The
 // saturation ceiling remains a hard clamp because the bench data shows a
@@ -948,9 +937,9 @@ void CUDAAlgorithms::mean_planes(CudaMemory* source, uint3 size, CudaMemory* dst
 
 void CUDAAlgorithms::log_compression(CudaMemory* buffer, uint2 size, float mutliplicator,
                                      float minimum, cudaStream_t stream) {
-  // Pass 3 (K2): the kernel now uses the spec's fixed-reference mapping
+  // The kernel uses the spec's fixed-reference mapping
   // `pixel = mutliplicator * log10(max(amp, minimum))`, no per-frame quantile.
-  // The quantile-normalisation scratch buffers are no longer needed; they are
+  // The quantile-normalisation scratch buffers are not needed; they are
   // kept on the host as zero-size resize-able allocations so that downstream
   // bookkeeping (`CudaMemory` pool churn) is unchanged.
   float* const d_data = reinterpret_cast<float*>(buffer->get_ptr(stream));

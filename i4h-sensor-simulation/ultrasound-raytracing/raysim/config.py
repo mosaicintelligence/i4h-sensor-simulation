@@ -82,7 +82,7 @@ class SimConfig:
     contact_epsilon_mm: float = 0.0
     conv_psf: bool = True
     median_clip_filter: bool = True
-    # Pass 5f -- IVUS angular ray super-sampling.
+    # IVUS angular ray super-sampling.
     #
     # When > 1, the IVUS raygen kernel fires K = ``ivus_rays_per_scanline``
     # sub-rays per scanline at deterministic sub-bin angular offsets and
@@ -123,7 +123,7 @@ class NoiseConfig:
 
 @dataclass
 class EnvelopeNoiseConfig:
-    """Pass 20 — post-envelope additive Gaussian noise.
+    """Post-envelope additive Gaussian noise.
 
     Adds ``N(mean, sigma**2)`` per envelope pixel at the post-Hilbert /
     pre-LPF stage, so the post-Hilbert low-pass smooths the noise with a
@@ -151,8 +151,8 @@ class EnvelopeNoiseConfig:
     ``mean`` / ``sigma`` were measured against the bench. The simulator
     multiplies the effective noise mean / sigma by
     ``10 ** ((sim_gain_db - reference_gain_db) / 20)`` at simulate-time so
-    the noise floor tracks the receive-chain gain (Pass 20b). For the PV
-    .035 calibration the noise was measured against a slider-50 bench
+    the noise floor tracks the receive-chain gain. For the PV .035
+    calibration the noise was measured against a slider-50 bench
     capture, so ``reference_gain_db = processing.gain_db - 4.0`` (4 dB
     below the simulator's slider-54 reference). Default 0 keeps the
     legacy (un-scaled) behaviour for callers that don't set it.
@@ -160,9 +160,9 @@ class EnvelopeNoiseConfig:
     mean: float = 0.0
     sigma: float = 0.0
     reference_gain_db: float = 0.0
-    # Pass 28i -- when true, the C++ envelope-noise stage multiplies both
-    # `mean` and `sigma` per sample by the cached TGC linear-gain curve
-    # (normalised to 1.0 at r = 0).  This models bench analog electronic
+    # When true, the C++ envelope-noise stage multiplies both `mean` and
+    # `sigma` per sample by the cached TGC linear-gain curve (normalised
+    # to 1.0 at r = 0). This models bench analog electronic
     # noise being amplified by the receive chain's TGC schedule, so the
     # post-envelope noise floor inherits the TGC's depth-dependent gain.
     # Default false preserves the legacy depth-flat behaviour.  See
@@ -173,7 +173,7 @@ class EnvelopeNoiseConfig:
 
 @dataclass
 class LateralPsfKernelConfig:
-    """Pass 5d — lateral-PSF kernel-type switch.
+    """Lateral-PSF kernel-type switch.
 
     ``type`` selects the depth-dependent lateral PSF used by the IVUS pipeline:
 
@@ -193,7 +193,7 @@ class LateralPsfKernelConfig:
 
 @dataclass
 class CatheterConfig:
-    """Catheter sheath geometry (Pass 6 v2).
+    """Catheter sheath geometry.
 
     `dead_zone_mm` is the radial extent (mm) inside which any acquired signal
     is blocked by the catheter wall. The simulator zeros the final palette
@@ -253,27 +253,27 @@ class ProcessingConfig:
         default_factory=lambda: [(0.0, 0.0), (1.0, 2.0)]
     )
     log_multiplier: float = 20.0
-    # Pass 3b: log_floor is the calibration anchor (amp == log_floor maps to
-    # palette 0). Default 1.0 makes the K2v2 mapping reduce to
-    # `log_multiplier * log10(amp)` for amp >= 1, which matches the legacy
+    # log_floor is the calibration anchor (amp == log_floor maps to
+    # palette 0). Default 1.0 makes the mapping reduce to
+    # `log_multiplier * log10(amp)` for amp >= 1, which matches the baseline
     # `examples/ivus_example.py` MIN_VAL/MAX_VAL = (-60, 0) display window
     # at log_multiplier = 20. Calibrated YAMLs override.
     log_floor: float = 1.0
     median_clip: MedianClipConfig = field(default_factory=MedianClipConfig)
-    # Pass 3a: reference gain applied to the envelope buffer between Hilbert
-    # and log compression: amp <- amp * 10^(gain_db / 20). 0.0 = no-op
-    # (default); calibrated YAMLs set this to the renderer-specific offset
+    # Reference gain applied to the RF buffer between TGC and ring-down:
+    # rf <- rf * 10^(gain_db / 20). 0.0 = no-op (default); calibrated
+    # YAMLs set this to the renderer-specific offset
     # that puts the simulator's envelope onto the bench's reference scale
     # (see SimParams::gain_db doc and calibration_delta.md).
     gain_db: float = 0.0
-    # Pass 3b: post-log display-window palette anchors. With both at 0.0
-    # (default) the display-window stage is skipped entirely, so YAMLs that
-    # omit these fields keep the historical pure-log palette mapping.
+    # Post-log display-window palette anchors. With both at 0.0 (default)
+    # the display-window stage is skipped entirely, so YAMLs that omit
+    # these fields keep the pure-log palette mapping.
     # Calibrated configs set both to non-zero (e.g. PV .035:
     # reject_palette=11, saturation_palette=239 from gain_lut.json).
     reject_palette: float = 0.0
     saturation_palette: float = 0.0
-    # Pass 20 — softplus scale applied to the reject floor in the display-
+    # Softplus scale applied to the reject floor in the display-
     # window kernel. When > 0 the floor uses a smooth (softplus) blend
     # instead of a hard `max(palette, reject)` clamp, removing the
     # spurious histogram spike that the hard clamp creates under post-
@@ -283,13 +283,13 @@ class ProcessingConfig:
     # --- Future ---
     compression_lut: Optional[str] = None
     noise: NoiseConfig = field(default_factory=NoiseConfig)
-    # Pass 20 — post-envelope additive Gaussian noise; see EnvelopeNoiseConfig.
+    # Post-envelope additive Gaussian noise; see EnvelopeNoiseConfig.
     envelope_noise: EnvelopeNoiseConfig = field(default_factory=EnvelopeNoiseConfig)
     catheter: CatheterConfig = field(default_factory=CatheterConfig)
     ring_down: RingDownConfig = field(default_factory=RingDownConfig)
-    # Pass 5d — lateral-PSF kernel selector. Default keeps the pre-Pass-5d
-    # gaussian_beam kernel so existing YAMLs that omit this block render
-    # identically. Set ``type: constant_angular`` in the YAML to opt in to
+    # Lateral-PSF kernel selector. Default keeps the gaussian_beam kernel
+    # so existing YAMLs that omit this block render with the focused-beam
+    # model. Set ``type: constant_angular`` in the YAML to opt in to
     # the SA-aware constant-angular Gaussian kernel.
     lateral_psf_kernel: LateralPsfKernelConfig = field(
         default_factory=LateralPsfKernelConfig
@@ -326,11 +326,10 @@ _FUTURE_PATHS: tuple[str, ...] = (
     "probe.synthetic_aperture",
     "sim.sampling_freq_mhz",
     "processing.compression_lut",
-    # Pass 2 wired the ring-down stage. Pass 3a wired `processing.gain_db`
-    # (reference gain) and Pass 3b replaced the dB-shift display window with
-    # `processing.reject_palette` / `processing.saturation_palette` (direct
-    # palette clamp). Pass 6 wired `processing.noise.{type, sigma}` (the
-    # additive RF noise floor stage; see SimParams.noise_sigma).
+    # The ring-down stage, the reference gain (`processing.gain_db`), the
+    # palette display window (`processing.reject_palette` /
+    # `processing.saturation_palette`), and the additive RF noise floor
+    # (`processing.noise.{type, sigma}`) are all wired through to SimParams.
     # `ring_down.subtract_reference` is informational only (the device
     # already does the subtraction; we model the residual) and stays out of
     # the wiring.
@@ -338,9 +337,9 @@ _FUTURE_PATHS: tuple[str, ...] = (
 
 # Likewise: Config rows that are in the schema but not yet exposed via SimParams
 # bindings. The loader will use whatever is configured but log a one-time notice.
-# As of Pass 1 of the simulator wiring all of the previously partially-wired
-# processing parameters (TGC, log compression, median clip, scatter scale) are
-# now plumbed straight through to SimParams, so this list is empty. Add new
+# All processing parameters (TGC, log compression, median clip, scatter
+# scale) are plumbed straight through to SimParams, so this list is
+# empty. Add new
 # entries here whenever a Config-row knob lands in the YAML schema before its
 # C++ binding does.
 _PARTIALLY_WIRED_PATHS: tuple[str, ...] = ()
@@ -505,9 +504,9 @@ class IvusSimConfig:
     def to_sim_params(self):
         """Build SimParams from the YAML config.
 
-        Pass 1 of the simulator wiring exposes the bucket-B processing knobs
-        (TGC schedule, log compression, median clip filter, scatter scale) as
-        SimParams fields. Anything still missing from the C++ pipeline is tracked
+        The simulator exposes the bucket-B processing knobs (TGC schedule,
+        log compression, median clip filter, scatter scale) as SimParams
+        fields. Anything still missing from the C++ pipeline is tracked
         by ``pending_fields()`` and surfaced via ``warn_about_unwired()``.
         """
         rs = _import_raysim()
@@ -549,7 +548,7 @@ class IvusSimConfig:
         params.scattering_resolution_mm = float(proc.scattering_resolution_mm)
         params.scatter_integral_scale = float(proc.scatter_integral_scale)
 
-        # Pass 6 — additive Gaussian RF noise floor.
+        # Additive Gaussian RF noise floor.
         #
         # The bench's calibrated RF noise std (in RF amplitude units at the
         # reference gain) is forwarded directly; `SimParams.noise_sigma <= 0`
@@ -568,12 +567,12 @@ class IvusSimConfig:
             )
         params.noise_sigma = float(proc.noise.sigma) if proc.noise.type.lower() != "none" else 0.0
 
-        # Pass 20 — post-envelope additive Gaussian noise (mean + sigma).
-        # See `EnvelopeNoiseConfig` for the model semantics. Both default to
-        # 0 (no-op), preserving prior YAMLs that omit the block.
+        # Post-envelope additive Gaussian noise (mean + sigma). See
+        # `EnvelopeNoiseConfig` for the model semantics. Both default to
+        # 0 (no-op).
         params.envelope_noise_mean = float(proc.envelope_noise.mean)
         params.envelope_noise_sigma = float(proc.envelope_noise.sigma)
-        # Pass 20b — gain-scaling reference (gain_db at which the noise was
+        # Gain-scaling reference (gain_db at which the noise was
         # calibrated). The simulator multiplies the effective mean / sigma
         # by 10^((sim_gain_db - reference_gain_db) / 20) so the noise floor
         # tracks the receive-chain gain.
@@ -582,10 +581,10 @@ class IvusSimConfig:
         params.envelope_noise_apply_tgc_depth_scaling = bool(
             proc.envelope_noise.apply_tgc_depth_scaling)
 
-        # Pass 20 — softplus reject-floor softness (palette units). 0 = hard clamp.
+        # Softplus reject-floor softness (palette units). 0 = hard clamp.
         params.reject_palette_softness = float(proc.reject_palette_softness)
 
-        # Pass 6 v2 — catheter sheath dead-zone mask.
+        # Catheter sheath dead-zone mask.
         #
         # `processing.catheter.dead_zone_mm` (default 0) zeros the inner
         # radial samples of the final palette buffer so the catheter region
@@ -593,7 +592,7 @@ class IvusSimConfig:
         # signal acquisition for ~1.4-1.9 mm depending on probe).
         params.catheter_dead_zone_mm = float(proc.catheter.dead_zone_mm)
 
-        # ---- Pass 2: ring-down injection ------------------------------------
+        # ---- Ring-down injection -------------------------------------------
         # Off by default (RingDownConfig.enabled = False) => no signal at all.
         # When enabled and decay == "measured", load the palette template from
         # `waveform_path` and convert to envelope amplitude using the calibrated
@@ -672,7 +671,7 @@ class IvusSimConfig:
                     ).astype(np.float32, copy=False)
             params.ring_down.waveform = envelope_amp
 
-        # ---- Pass 3b: display window (palette clamp) ------------------------
+        # ---- Display window (palette clamp) --------------------------------
         # Calibrated PV .035 YAML sets reject_palette = 11 and
         # saturation_palette = 239 from gain_lut.json. With both at 0.0
         # (default) the SimParams kernel skips the display-window stage and
@@ -680,15 +679,15 @@ class IvusSimConfig:
         params.reject_palette = float(proc.reject_palette)
         params.saturation_palette = float(proc.saturation_palette)
 
-        # ---- Pass 3: reference gain ----------------------------------------
+        # ---- Reference gain ------------------------------------------------
         # Calibrated YAMLs set this to the renderer-specific scalar that puts
         # the simulator's envelope onto the bench's reference scale at the
         # bench's reference gain (slider 54 for the PV .035). Default 0.0 is
         # a no-op so YAMLs that omit the field keep the historical behaviour.
         params.gain_db = float(proc.gain_db)
 
-        # ---- Pass 5d: lateral-PSF kernel-type switch -----------------------
-        # 0 = gaussian_beam (legacy default), 1 = constant_angular (SA-aware).
+        # ---- Lateral-PSF kernel-type switch --------------------------------
+        # 0 = gaussian_beam (default), 1 = constant_angular (SA-aware).
         # Validate the string before mapping so a typo at the YAML layer is
         # caught here instead of silently falling back to the default.
         kernel_type_str = str(proc.lateral_psf_kernel.type).lower()
@@ -720,8 +719,8 @@ class IvusSimConfig:
         """Return Config fields that exist in the schema but are still hard-coded
         in the C++ pipeline (not yet exposed via SimParams).
 
-        After Pass 1 of the simulator wiring this list is empty; it remains here
-        so future schema additions can be flagged before their bindings land.
+        This list is currently empty; it remains here so future schema
+        additions can be flagged before their bindings land.
         """
         defaults = IvusSimConfig()
         return [

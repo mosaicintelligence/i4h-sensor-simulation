@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Derive ``processing.ring_down.amplitude`` against the E6 AR-off bench peak.
 
-Calibration history:
+Calibration approach:
 
-  * Pass 6 (legacy): ``ring_down.amplitude`` was analytically computed from
-    the P_035 wedge-masked bench peak_palette_excess (187.1 at slider 54)
-    under the new ``log_multiplier = 137.4``, giving amplitude = 23.0
+  An earlier iteration analytically computed ``ring_down.amplitude``
+  from the P_035 wedge-masked bench peak_palette_excess (187.1 at
+  slider 54) under ``log_multiplier = 137.4``, giving amplitude = 23.0
     envelope-amp at slider 54.  Anchor source was a saturated P_035
     template (peak = 232 palette, near the 239 saturation ceiling), so
     the envelope-amp number was inferred from a clamped measurement.

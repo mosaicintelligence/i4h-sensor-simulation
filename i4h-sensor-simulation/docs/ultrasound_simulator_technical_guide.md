@@ -2,6 +2,10 @@
 
 This guide explains the technical implementation and physical principles behind the GPU-accelerated raytracing ultrasound simulator.
 
+> 💡 **Looking for an end-to-end picture first?** Jump to [§2 Pipeline overview](#2-pipeline-overview) for the 4-stage block diagram.
+>
+> 📖 **For IVUS-specific implementation details** (probe class, depth-dependent lateral PSF, IVUS scan conversion, etc.), see the companion [IVUS Implementation Writeup](../ultrasound-raytracing/docs/ivus_implementation_writeup.md).
+
 ## 1. Ultrasound Physics and Ray-Based Modeling
 
 ### 1.1 Basic Ultrasound Physics
@@ -70,16 +74,61 @@ Ray-based models have inherent limitations in capturing certain wave phenomena:
 
 Despite these limitations, ray-based models provide an excellent compromise between physical accuracy and computational efficiency, especially for real-time applications.
 
-## 2. System Overview
+## 2. Pipeline overview
 
-The ultrasound simulator uses NVIDIA OptiX ray tracing and CUDA to deliver high-performance real-time ultrasound image generation. The system currently implements deterministic ray tracing techniques as described by Bürger et al. (2013).
+The ultrasound simulator uses NVIDIA OptiX ray tracing and CUDA to deliver high-performance real-time ultrasound image generation. Every frame flows through four stages: acoustic forward model on the GPU, an RF-domain processing chain, envelope detection, and finally display formatting.
+
+```mermaid
+flowchart TB
+  subgraph physics ["1 — Acoustic forward model (OptiX)"]
+    W[World geometry + materials]
+    P["Probe (e.g. IVUS: 256 rays × t_far depth samples)"]
+    RT[GPU ray trace]
+    SC[Bulk scatter + Beer-Lambert attenuation]
+    IF[Fresnel R + R-scaled specular at interfaces]
+    RF[(Raw scanline buffer)]
+    W --> P --> RT
+    RT --> SC --> RF
+    RT --> IF --> RF
+  end
+
+  subgraph rfchain ["2 — RF-domain processing"]
+    N0[Pre-PSF additive RF noise]
+    AX[Axial PSF convolution]
+    LAT[Lateral PSF — depth-dependent for IVUS]
+    TGC[Time-gain compensation curve]
+    GAIN[Reference gain gain_db]
+    RF --> N0 --> AX --> LAT --> TGC --> GAIN
+  end
+
+  subgraph envelope ["3 — Envelope detection"]
+    H[Hilbert transform → envelope magnitude]
+    N1[Post-envelope Gaussian noise]
+    LPF[Post-Hilbert radial low-pass]
+    RD[Ring-down template add — optional]
+    GAIN --> H --> N1 --> LPF --> RD
+  end
+
+  subgraph display ["4 — Display / B-mode"]
+    LOG[Log compression log_multiplier]
+    DW[Display window reject / saturation palette]
+    DZ[Catheter dead-zone mask]
+    SCNV[Scan conversion → palette image]
+    OUT[(B-mode 0–255)]
+    RD --> LOG --> DW --> DZ --> SCNV --> OUT
+  end
+```
+
+Stage-1 implements the underlying acoustic physics: OptiX casts rays from the probe, accumulates bulk scattering with Beer–Lambert attenuation along each ray, and adds **Fresnel-coefficient–scaled specular returns at each interface** so the bench-tunable specular term cannot exceed physical reflection. Stages 2–4 mirror a clinical signal-processing chain: noise injection, PSF convolution (axial and depth-dependent lateral for IVUS), TGC, envelope detection, optional ring-down injection, log compression, and probe-specific scan conversion.
+
+Every block in the diagram corresponds to either a CUDA kernel or a step in `RaytracingUltrasoundSimulator::simulate()`; each section below points to the implementation.
 
 ### Key Components
 
 - **Core Physics Engine**: Ray tracing implementation using OptiX [`csrc/cuda/optix_trace.cu`]
 - **Ultrasound Simulation**: Main simulation pipeline [`csrc/core/raytracing_ultrasound_simulator.cpp`]
-- **CUDA Algorithms**: Post-processing pipelines for RF data to B-mode conversion [`csrc/cuda/cuda_algorithms.cu`]
-- **Python Interface**: Bindings for ease of use [`raysim/cuda/__init__.py`]
+- **CUDA Algorithms**: RF processing, envelope detection, log compression, scan conversion [`csrc/cuda/cuda_algorithms.cu`]
+- **Python Interface**: Bindings + the `raysim.config` YAML-driven configuration layer [`raysim/cuda/__init__.py`, `raysim/config.py`]
 
 ## 3. Simulation Pipeline
 
@@ -148,11 +197,18 @@ In addition to the primary lateral scanning plane, our simulator models the elev
 When rays intersect with objects in the scene, several physical phenomena are simulated based on acoustic principles:
 
 - **Reflection and Refraction**: Using acoustic impedance differences and Snell's law
-  - Implementation: [`csrc/cuda/optix_trace.cu` – see `calculate_specular_intensity()`]
+  - Implementation: [`csrc/cuda/optix_trace.cu` – see `calculate_specular_intensity()` and `closest_hit()`]
   - Physics principle: At tissue interfaces, ultrasound waves are partially reflected and refracted
   - Mathematical model:
-    - Reflection coefficient: `R = ((Z₂*cos(θ) - Z₁)/(Z₂*cos(θ) + Z₁))²` where Z₁, Z₂ are acoustic impedances
+    - Reflection coefficient (oblique incidence): `R = ((Z₂·cosθ_i - Z₁·cosθ_t)/(Z₂·cosθ_i + Z₁·cosθ_t))²` with Snell's law providing `cosθ_t`
     - Snell's law: `sin(θ₁)/sin(θ₂) = c₁/c₂` where c₁, c₂ are speeds of sound
+  - **Fresnel-coefficient–scaled specular term**: the Mattausch-2016 empirical directivity term `cos^n(θ)` is multiplied by **R** before being deposited at the interface bin:
+
+    ```
+    scanline[hit_bin] += 2.f * specular_reflection * R;   // (optix_trace.cu)
+    ```
+
+    The empirical Mattausch directivity term represents the angular **distribution** of reflected energy at a non-mirror interface, not an independent intensity channel. Multiplying by R ties the empirical term to the physical Fresnel envelope so the total reflected intensity at any interface is bounded by R. This keeps the high-contrast wire-target calibration consistent with realistic soft-tissue interfaces, where the much smaller R (e.g. ≈ 0.002 for lumen–vessel_wall) prevents the empirical term from overwhelming the physical echo.
 
 - **Attenuation**: Frequency-dependent attenuation is applied according to the Beer–Lambert law
   - Implementation: [`csrc/cuda/optix_trace.cu` – see `get_intensity_at_distance()`]
@@ -202,41 +258,49 @@ The resulting scanline data represents maximum resolution RF signals that would 
 
 #### RF Data to B-mode Processing
 
-After ray-tracing has populated the scanlines with raw reflection data, the data undergoes a series of transformations that mirror the signal processing chain in clinical ultrasound systems:
+After ray-tracing has populated the scanlines with raw reflection data, the data undergoes a series of transformations that mirror the signal processing chain in clinical ultrasound systems. The processing order is:
 
-1. **PSF Convolution**: Simulating Transducer Resolution Limits
+1. **Pre-PSF additive RF noise** (optional, IVUS): Gaussian noise with σ given by `sim_params.noise_sigma` is added to the raw scanline buffer **before** PSF convolution so that PSF broadening operates on a realistic noise floor and the simulator can match measured per-frame variance from the bench. Disabled when `noise_sigma <= 0`.
+
+2. **PSF Convolution**: Simulating Transducer Resolution Limits
    - Implementation: [`csrc/core/raytracing_ultrasound_simulator.cpp` – PSF convolution in `RaytracingUltrasoundSimulator::simulate()`]
-   - Real transducers have finite bandwidth and aperture size, limiting their ability to resolve small structures
-   - We model this by convolving raw data with a Gaussian-cosine kernel: the Gaussian component represents the latteral beam width, while the cosine modulation simulates the transmitted pulse waveform
-   - This 3D convolution operates in axial, lateral, and elevational dimensions, modeling the limited resolution of real transducers
+   - Real transducers have finite bandwidth and aperture size, limiting their ability to resolve small structures.
+   - **Axial**: 1D Gaussian-cosine kernel. For IVUS the axial kernel is **causal** and Hanning-windowed so the strong vessel-wall echo cannot smear backward into the lumen.
+   - **Lateral**: Gaussian. For IVUS this is **depth-dependent** (Gaussian-beam waist at focus, Rayleigh length, σ(depth)) and applied as a 2D kernel via a dedicated depth-dependent column convolution. For other probes it is depth-invariant.
+   - **Elevational** (when `num_el_samples > 1`): Gaussian PSF across the elevational planes followed by averaging.
 
-2. **Time Gain Compensation**: Apmplifying over propagation distance
+3. **Time Gain Compensation**: Amplifying over propagation distance
    - Implementation: [`csrc/core/raytracing_ultrasound_simulator.cpp` – Time-Gain-Compensation in `RaytracingUltrasoundSimulator::simulate()`]
-   - Deeper tissues naturally return weaker echoes due to attenuation
-   - The TGC applies a depth-dependent amplification using a piecewise linear curve
-   - This allows for constant structure brightness as is with the TGC controls on clinical machines
+   - A piecewise-linear gain curve indexed by depth. Schedules are **probe-type-specific** by default (IVUS uses a much shorter / lower-slope curve than abdominal) and can be overridden frame-to-frame via `SimParams.tgc_control_points` (list of `(depth_cm, gain_db)`).
 
-3. **Envelope Detection**: Extracting the Signal Amplitude
+4. **Reference gain** (`gain_db`): Single scalar in dB applied after TGC. This is the "system gain" knob the calibration pipeline derives from bench reference targets.
+
+5. **Envelope Detection**: Extracting the Signal Amplitude
    - Implementation: [`csrc/core/raytracing_ultrasound_simulator.cpp` – Envelope detection in `RaytracingUltrasoundSimulator::simulate()`]
-   - The [Hilbert transform](https://en.wikipedia.org/wiki/Hilbert_transform) converts oscillating RF signals into [analytic representation](https://en.wikipedia.org/wiki/Analytic_signal)
-   - Taking the absolute value of the analytic signal allows for the extraction of the signal envelope
-   - This process reveals the reflection strength at each tissue interface
+   - Hilbert transform → absolute value of the analytic signal.
 
-4. **Log Compression**: Managing Wide Dynamic Range
-   - Implementation: [`csrc/core/raytracing_ultrasound_simulator.cpp` – Log compression in `RaytracingUltrasoundSimulator::simulate()`]
-   - Ultrasound signals span a dynamic range too wide for displays (often 60-100 dB)
-   - Logarithmic compression (20*log10) maps this range to displayable levels
-   - This enhances subtle tissue details while preventing strong reflectors from overwhelming the image and brings the image into a representation the can be more easily perceived by the human eye.
+6. **Post-envelope Gaussian noise** (optional): A small additive noise term applied **after** envelope detection. Used to model residual sensor noise that survives the envelope step in real systems.
 
-5. **Scan Conversion**: Creating the 2D Display Image
-   - Implementation: [`csrc/core/raytracing_ultrasound_simulator.cpp` – Scan conversion in `RaytracingUltrasoundSimulator::simulate()`]
-   - Transforms data from acquisition geometry (scan lines) to display geometry (pixels)
-   - Each probe type requires specific mapping:
-     - Curvilinear: Polar to rectangular conversion with increasing scanline separation at depth
-     - Linear: Uniform rectangular mapping with parallel scanlines
-     - Phased array: Sector to rectangular conversion with scanlines diverging from origin
+7. **Post-Hilbert radial low-pass** (optional): Configurable low-pass filter along the radial axis. Smooths out residual high-frequency ringing left in the envelope signal.
 
-This processing chain transforms the idealized reflection data into images with the characteristic appearance and artifacts of clinical ultrasound.
+8. **Ring-down template injection** (IVUS): An optional depth-windowed template that adds the characteristic catheter ring-down (transducer face / matching-layer reverberation) to every scanline. The template is derived from bench data (`extract_ringdown.py` → `derive_ringdown_amplitude.py`) and stored in the calibration YAML.
+
+9. **Log Compression**: Managing Wide Dynamic Range
+   - `20·log10(envelope) · log_multiplier`. The multiplier is a calibrated knob that scales the dynamic range to match the target system's display response.
+
+10. **Display window**: Bench-derived `reject_db` (zero out) and `saturation_db` (clamp to white) thresholds plus optional **palette** mapping (custom LUT). On real IVUS consoles this is what the operator's "gain", "reject", and "compression" front-panel knobs control.
+
+11. **Catheter dead-zone mask** (IVUS): Zeros the first few hundred microns of every scanline to mask the catheter sheath, mirroring what the console does.
+
+12. **Scan Conversion**: Creating the 2D Display Image
+    - Implementation: [`csrc/core/raytracing_ultrasound_simulator.cpp` – Scan conversion in `RaytracingUltrasoundSimulator::simulate()`]
+    - Probe-type-specific mapping:
+      - **IVUS**: Unwrapped (x = angle 0–360°, y = depth) or polar layout. Display bounds reported as `(0–360°, 0–t_far mm)`.
+      - **Curvilinear**: Polar → rectangular with increasing scanline separation at depth.
+      - **Linear**: Uniform rectangular mapping with parallel scanlines.
+      - **Phased array**: Sector → rectangular with scanlines diverging from origin.
+
+This processing chain transforms the idealized reflection data into images with the characteristic appearance and artifacts of clinical ultrasound. Every numeric knob in stages 1, 4, 6, 8, 9, 10 is exposed through `raysim.config.IvusSimConfig`, which loads the calibrated YAML (see `instrument-calibration/p035_visions/volcano_s5i.yaml`).
 
 ## 4. Tissue Modeling and Material System
 
@@ -269,9 +333,13 @@ Materials in the simulator are defined through the `Material` class [`csrc/core/
 
 #### Material Registry and Management
 
-The simulator includes a `Materials` class that serves as a registry for predefined tissue types. The implementation [`csrc/core/material.cpp` – see `initialize_common_tissues()`] initializes a collection of common tissue types (water, blood, fat, liver, muscle, bone) with their respective acoustic properties.
+The simulator includes a `Materials` class that serves as a registry for predefined tissue types. The implementation [`csrc/core/material.cpp` – see `initialize_common_tissues()`] initializes a collection of common tissue types and their respective acoustic properties:
 
-Each material is stored with a name identifier and automatically uploaded to GPU memory for efficient access during ray tracing. The `get_index()` method allows retrieval of material indices by name when setting up simulations.
+- **Abdominal / general**: `water`, `blood`, `fat`, `liver`, `muscle`, `bone`.
+- **Vascular (IVUS calibration)**: `lumen` (updated blood; Z = 1.68 MRayl, c = 1584 m/s, α = 0.2 dB·cm⁻¹·MHz⁻¹), `vessel_wall` (Z = 1.82 MRayl, c = 1571 m/s, α ≈ 1.0 dB·cm⁻¹·MHz⁻¹), `extravascular` (muscle-like; Z = 1.62 MRayl, c = 1547 m/s, α = 0.7).
+- **Phantom hardware**: `tungsten` (Z ≈ 101 MRayl, c = 5200 m/s) for the 30 µm tungsten wires used in the bench wire-spiral phantom. Replaces the historical "bone" hack so the wire-target Fresnel coefficient matches the physical setup.
+
+Each material is stored with a name identifier and automatically uploaded to GPU memory for efficient access during ray tracing. `Materials::get_index(name)` returns the index used when adding geometry to the `World`.
 
 #### Assigning Materials to Objects
 
@@ -350,7 +418,11 @@ The tissue modeling system's integration with the OptiX ray-tracing pipeline ena
 
 Mesh assets used as input to the simulation can be created by hand, or derived from segmentation masks from medical imaging modalities like MRI, CT or ultrasound.
 You can generate your own assets from CT or MRI using MONAI by following [this tutorial](https://github.com/Project-MONAI/tutorials/blob/main/modules/omniverse/omniverse_integration.ipynb), though this is not required to get started with the simulator.
-Have a look at our [Quick Start Guide](../ultrasound-raytracing/README.md) to run simulation with pre-generated assets.
+Have a look at the [Quick Start Guide](../ultrasound-raytracing/docs/quick_start.md) to run simulation with pre-generated assets.
+
+## 4.3 Configuration via the calibrated YAML
+
+Hard-coded numbers in `SimParams` are convenient for first experiments, but for IVUS we maintain a calibrated configuration in [`instrument-calibration/p035_visions/volcano_s5i.yaml`](../../instrument-calibration/p035_visions/volcano_s5i.yaml). The `raysim.config.IvusSimConfig` loader maps every knob in the YAML (`processing.gain_db`, `processing.tgc_control_points`, `processing.ring_down.*`, `noise.sigma`, `display.reject_db`, `display.saturation_db`, `display.palette`, `scattering_resolution_mm`, `probe.element_radius_mm`, `probe.focal_length_mm`, …) into the corresponding `SimParams`, `Probe`, and post-processing fields. Updating the YAML — driven by the `derive_*` and `extract_*` scripts in the calibration pipeline — is the canonical way to retune the simulator for a new probe without touching C++.
 
 ## 5. References
 

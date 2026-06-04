@@ -156,6 +156,6 @@ If you still see `OPTIX_ERROR_LIBRARY_NOT_FOUND`, run `find /usr -name "libnvopt
 ## References
 
 - Main [README](../README.md) – requirements, bare-metal install, troubleshooting
-- [OptiX runtime: OPTIX_ERROR_LIBRARY_NOT_FOUND](../README.md#optix-runtime-optix_error_library_not_found-7804) – if the library is still not found
+- [Quick Start](quick_start.md) – first simulation in 5 minutes once the VM is ready
 - [Docker build](docker_build.md) – alternative using Docker
 

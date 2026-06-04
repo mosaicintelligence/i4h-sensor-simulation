@@ -210,6 +210,7 @@ This pipeline is implemented in `RaytracingUltrasoundSimulator::simulate()` in `
 
 ## Further Reading
 
-- **Getting started (hands-on):** [Ultrasound Simulator Getting Started Guide](ultrasound_simulator_getting_started.md).
+- **Quick start (5 minutes):** [Quick Start Guide](../ultrasound-raytracing/docs/quick_start.md)
+- **Hands-on tutorial:** [Ultrasound Simulator Tutorial](ultrasound_simulator_tutorial.md)
 - **Technical reference (physics and implementation):** [Ultrasound Simulator Technical Guide](ultrasound_simulator_technical_guide.md).
 - **Code:** `ultrasound-raytracing/` — `include/raysim/`, `csrc/core/`, `csrc/cuda/`, and `examples/` for usage patterns.

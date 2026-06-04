@@ -369,14 +369,14 @@ def render_axial_distribution(per_wire_rows, fit_json: dict, out_path: Path):
                 if not r["border_clipped"] and r["peak_palette"] <= 230.0]
     med = fit_json["axial_fwhm_mm_median"] * 1000
     n_cycles = fit_json["pulse_duration_cycles"]
-    p16_um = 0.149 * 1000  # current Pass 16 sim spec
+    p16_um = 0.149 * 1000  # current sim spec
     p16_cycles = 1.93
     fig, ax = plt.subplots(1, 1, figsize=(7, 4.5))
     ax.hist(fwhms_um, bins=24, color="C0", alpha=0.7, edgecolor="white")
     ax.axvline(med, color="C3", lw=2.2,
                label=f"Wave 0 B2 median = {med:.0f} µm  ({n_cycles:.2f} cyc)")
     ax.axvline(p16_um, color="grey", lw=1.6, ls="--",
-               label=f"Pass 16 sim spec = {p16_um:.0f} µm  ({p16_cycles:.2f} cyc)")
+               label=f"sim spec = {p16_um:.0f} µm  ({p16_cycles:.2f} cyc)")
     ax.set_xlabel("Axial −6 dB FWHM (µm)")
     ax.set_ylabel("Number of wires")
     ax.set_title(f"Wave 0 B2 — axial FWHM distribution  "

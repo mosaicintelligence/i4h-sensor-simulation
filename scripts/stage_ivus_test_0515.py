@@ -44,7 +44,7 @@ PatientName -> experiment subfolder mapping
   T1E4d (milk-water-    "<temp>C"    e4d_milk_water_wire       (1 take)
          wire)
 
-Per the Pass 17-19 plan the three workstream-relevant aggregates are:
+The three workstream-relevant aggregates are:
 
   B2  (tungsten wire, sub-Mie-resonance)  -> b2_w_wire_p[1-4]
   E4  (evap-milk TGC variants, 4 phases)  -> e4{a,b,c,d}_*

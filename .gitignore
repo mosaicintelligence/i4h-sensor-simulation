@@ -76,6 +76,10 @@ ivus_test_0508/autorun.inf
 ivus_test_0508/README_VIEWER.txt
 ivus_test_0508/VOLCANO_VIEWER_LICENSE.rtf
 
+data_AGORALABS_MOSAIC_CTA_CASES_20260421_processed_PAT_23.zip
+# CT / vessel-generator patient directories unpacked from the AGORALABS dump.
+patient_*/
+
 # Top-level diagnostic plots produced by the gain-curve comparison scripts.
 # (Summary CSVs / pooled JSON stay tracked; only the rendered PNG comparisons
 # are regenerable diagnostics.)

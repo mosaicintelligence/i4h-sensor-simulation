@@ -113,29 +113,22 @@ Materials::Materials() {
                  *       solids -- we use the conservative lower bound so
                  *       TGC mismatch surfaces rather than being absorbed).
                  *   * Scattering pair (mu0 = 0.5, sigma = 0.1):
-                 *     - Pass 21a sim-in-loop calibration (2026-05-20) against
-                 *       Wave 0 E4a uniform-milk bench data
-                 *       (`ivus_test_0515/raw/e4a_milk_gain_p{1,2,3}/`):
-                 *       sigma = 0.1 lands Test I (depth uniformity) with
+                 *     - Calibrated against Wave 0 E4a uniform-milk bench data
+                 *       (`ivus_test_0515/raw/e4a_milk_gain_p{1,2,3}/`).
+                 *     - sigma = 0.1 lands Test I (depth uniformity) with
                  *       span_ratio = 0.98 (bench 5.5 vs sim 5.4 palette span)
                  *       PASS under the shape-primary AC; mu0 = 0.5 kept from
                  *       the literature-analogue seed (uniform scatterer
                  *       density).
-                 *     - sigma was 0.3 prior to this calibration (extravascular
-                 *       analogue value); cutting to 0.1 reduces the milk-bath
-                 *       envelope amplitude ~3x to match the bench's flatter
-                 *       depth profile.
-                 *   * Test M (speckle CoV / radial correlation) remains FAIL on
-                 *     the CoV axis even after this recal: bench CoV_log = 0.384
-                 *     is dominated by COHERENT reverberation features (the
-                 *     60-78% coherent variance characterised during the Pass 20
-                 *     noise-pipeline rebuild), not random speckle. The sim
-                 *     reproduces the bench's radial correlation length within
-                 *     ~1% at (mu0=0.5, sigma=1.0) but that combination breaks
-                 *     Test I span_ratio (4.58 -> FAIL), so the trade-off favours
-                 *     Test I PASS + Test M structural-limit FAIL. Closing
-                 *     Test M requires modelling catheter / container
-                 *     reverberations (Pass 21 todo: `reverberation_model`).
+                 *   * Test M (speckle CoV / radial correlation) FAILS on the
+                 *     CoV axis: bench CoV_log = 0.384 is dominated by COHERENT
+                 *     reverberation features (60-78% coherent variance), not
+                 *     random speckle. The sim reproduces the bench's radial
+                 *     correlation length within ~1% at (mu0=0.5, sigma=1.0)
+                 *     but that combination breaks Test I span_ratio (4.58 ->
+                 *     FAIL), so the trade-off favours Test I PASS + Test M
+                 *     structural-limit FAIL. Closing Test M requires modelling
+                 *     catheter / container reverberations (not implemented).
                  *   * The YAML `materials: - name: milk` block in
                  *     `instrument-calibration/p035_visions/volcano_s5i.yaml`
                  *     mirrors this entry (the YAML is decorative documentation;

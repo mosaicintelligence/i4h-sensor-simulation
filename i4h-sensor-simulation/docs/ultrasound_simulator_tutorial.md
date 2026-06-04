@@ -1,14 +1,16 @@
-# Ultrasound Simulator Getting Started Guide
+# Ultrasound Simulator Tutorial
 
-This comprehensive tutorial will guide you through the ultrasound raytracing simulator using a progressive, hands-on approach. Each example builds on the previous ones, introducing new concepts step by step.
+This comprehensive tutorial walks you through the ultrasound raytracing simulator using a progressive, hands-on approach. Each example builds on the previous ones, introducing new concepts step by step.
 
-> 💡 **For deeper technical details**, refer to the [Ultrasound Simulator Technical Guide](ultrasound_simulator_technical_guide.md)
+> 💡 **Just want a 5-minute first simulation?** See the [Quick Start Guide](../ultrasound-raytracing/docs/quick_start.md) for the shortest path to a working image.
+>
+> 📖 **For deeper technical details**, refer to the [Ultrasound Simulator Technical Guide](ultrasound_simulator_technical_guide.md)
 
 ## Prerequisites and Installation
 
-Before starting the tutorial, you need to properly build and install the ultrasound raytracing simulator.
+Before starting the tutorial you need to build and install the ultrasound raytracing simulator.
 
-> 📖 **Complete Installation Guide**: For detailed installation instructions including OptiX setup and mesh data, see the [main README](../ultrasound-raytracing/README.md)
+> 📖 **Installation paths**: See the simulator [README](../ultrasound-raytracing/README.md) for bare-metal install on an existing machine, or [VM setup](../ultrasound-raytracing/docs/vm_setup.md) to provision a fresh cloud GPU.
 
 ---
 

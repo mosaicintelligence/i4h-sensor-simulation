@@ -64,11 +64,11 @@ probe:
   # therefore likely biased by ~+/- 0.05 mm depending on which
   # SA-element-pitch lobe each wire sits in; the multi-wire median
   # fit averages this out.
-  pulse_duration_cycles: 15.0             # Pass 20c PSF recal (2026-05-20): Tier 1's per-wire `measure_wire` walkout (32 obs / wire over 4 catheter rotations) reads ~+40 um wider than `derive_axial_psf_pulse_duration.py`'s isolated-wire median, so the Pass 5f value of 17.0 (calibrated to derive_*'s 309 um vs bench 304 um) actually landed sim Tier-1 axial-FWHM median at ~348 um vs bench 304 um (+44 um). The cause is methodology drift -- the Tier-1 walkout includes background scatter + nearby-wire contamination that biases the half-max threshold outward. Re-calibrating against the Tier-1 measurement (the actual AC) gives n_cycles=15.0 -> sim axial-FWHM median 318 um vs bench 304 um (+14 um, within tol). With n_cycles=15.0 + sigma_theta_rad=0.050 (Pass 20c lateral recal) Tier 1 reports C=9/10 (was 6/10) and D=10/10 (was 6/10). Cross-seed verification (seeds 1234/9999/2222/7777) gives bit-identical per-wire FWHMs (the B2 wire phantom is essentially deterministic at these amplitudes). The Pass 5f derive-script value (17.0) is preserved here for reference only -- the Tier-1 measurement is the AC of record.
+  pulse_duration_cycles: 15.0             # Calibrated against the Tier-1 per-wire `measure_wire` walkout (32 obs / wire over 4 catheter rotations). The Tier-1 walkout reads ~+40 um wider than `derive_axial_psf_pulse_duration.py`'s isolated-wire median because background scatter + nearby-wire contamination biases the half-max threshold outward. Calibrating against the Tier-1 measurement (the actual AC) gives n_cycles=15.0 -> sim axial-FWHM median 318 um vs bench 304 um (+14 um, within tol). With n_cycles=15.0 + sigma_theta_rad=0.050, Tier 1 reports C=9/10 and D=10/10. Cross-seed verification (seeds 1234/9999/2222/7777) gives bit-identical per-wire FWHMs (the B2 wire phantom is essentially deterministic at these amplitudes).
   num_scanlines: 256                      # SA reconstructs ~256 A-lines from 64 elements (Manual p.135). Verify by counting unique angular samples in unwrap.
   element_radius_mm: 2.79                 # E2 — Gaussian-beam fit, Sweep #3 (n=11 clean wires straddling focus); cross-checks Sweep #1 (2.64) and Sweep #2 (2.81) to +/- 0.07 mm
   focal_length_mm: 9.55                   # E2 — depth of minimum lateral FWHM, Sweep #3 (sigma = 0.35 mm). Sweep #1/#2 extrapolations give 16.7-18.1 mm but have no wires in focal zone.
-  elevational_height_mm: 0.0              # 0 = single 2D plane. Service manual p.29 (Theory of Operation) states the transducer assembly is "approximately 1mm in diameter and 2.5mm in length" with 64 PZT elements arrayed circumferentially; the 2.5 mm dimension is the elevational aperture (along the catheter axis). Setting this >0 with num_elevational_samples>1 currently triggers a CUDA illegal memory access (Pass 28d) -- C++ buffer-indexing bug filed as Pass 28e follow-up. Once fixed, elevational_height_mm should be calibrated against E3 bench data (slice-thickness sweep) up to the manual-bounded 2.5 mm maximum; effective elevational slice thickness at imaging depth depends on the acoustic lens / focusing details not given in the manual.
+  elevational_height_mm: 0.0              # 0 = single 2D plane. Service manual p.29 (Theory of Operation) states the transducer assembly is "approximately 1mm in diameter and 2.5mm in length" with 64 PZT elements arrayed circumferentially; the 2.5 mm dimension is the elevational aperture (along the catheter axis). Setting this >0 with num_elevational_samples>1 currently triggers a CUDA illegal memory access -- C++ buffer-indexing bug filed as follow-up. Once fixed, elevational_height_mm should be calibrated against E3 bench data (slice-thickness sweep) up to the manual-bounded 2.5 mm maximum; effective elevational slice thickness at imaging depth depends on the acoustic lens / focusing details not given in the manual.
   num_elevational_samples: 1
   speed_of_sound_mm_per_us: 1.54          # s5 calibrates assuming 1540 m/s tissue (Manual p.110). DO NOT change to in-water value — device convention.
   f_num: 1.0                              # unused for IVUS (superseded by element_radius + focal_length)
@@ -78,7 +78,7 @@ probe:
     rotation_rad: [0.0, 0.0, 0.0]
   # --- Future ---
   impulse_response_path: null             # optional: measured A-line pulse waveform from E1 (we don't have raw RF in this dataset)
-  synthetic_aperture: false               # Future: 64-element SA beamforming. Service manual p.29 confirms the s5i drives all imaging catheters (PV 8.2F at 10 MHz; PV .018 / Avanar / Eagle Eye Gold at 20 MHz) as "Synthetic Aperture imaging element[s]" with a 64-element PZT array reconstructing 256 A-lines per frame. The sim's current model treats each scanline as an independent transmit/receive pair (no SA reconstruction), which is a magnitude-accurate proxy for the in-plane PSF but doesn't reproduce the SA sidelobe / artifact structure. Promoting to true SA would touch the C++ beamformer; Pass 28's coherent_scatter=True mode already captures the dominant phenomenology consequence (scatter realization is FROZEN across frames because the same 64 elements fire sequentially with no physical rotation -- not a per-frame phased-array re-randomization).
+  synthetic_aperture: false               # Future: 64-element SA beamforming. Service manual p.29 confirms the s5i drives all imaging catheters (PV 8.2F at 10 MHz; PV .018 / Avanar / Eagle Eye Gold at 20 MHz) as "Synthetic Aperture imaging element[s]" with a 64-element PZT array reconstructing 256 A-lines per frame. The sim's current model treats each scanline as an independent transmit/receive pair (no SA reconstruction), which is a magnitude-accurate proxy for the in-plane PSF but doesn't reproduce the SA sidelobe / artifact structure. Promoting to true SA would touch the C++ beamformer; the current coherent_scatter=True mode already captures the dominant phenomenology consequence (scatter realization is FROZEN across frames because the same 64 elements fire sequentially with no physical rotation -- not a per-frame phased-array re-randomization).
 
 sim:
   # Imaging diameter in this dataset is one of {35, 40, 60} mm (private tag
@@ -91,7 +91,7 @@ sim:
   min_intensity: 1.0e-3
   contact_epsilon_mm: 0.0
   conv_psf: true
-  # Pass 3b: disabled because the calibrated K2v2 + display-window pipeline
+  # disabled because the calibrated K2v2 + display-window pipeline
   # already produces the device's reject/saturation behaviour directly. The
   # legacy median_clip kernel uses absolute thresholds (d_min_db/d_max_db)
   # designed for the pre-Pass-1 [-60, 0] palette range; on the calibrated
@@ -99,7 +99,7 @@ sim:
   # median and crushes the dynamic range. Re-enable only after rewriting
   # median_clip to use offsets relative to the local median.
   median_clip_filter: false
-  # Pass 5f — IVUS angular ray super-sampling.
+  # IVUS angular ray super-sampling.
   #
   # The IVUS raygen kernel fires K = ivus_rays_per_scanline sub-rays per
   # scanline at deterministic sub-bin angular offsets and averages them
@@ -129,8 +129,8 @@ processing:
   # Uncertainty: +/- 0.5 dB at each control point.
   # Re-fit from a tissue-mimicking phantom for tissue-imaging deployments
   # (E4 in tissue).
-  # Pass 28i (2026-05-27): TGC schedule retuned from the water-derived near-flat
-  # ramp to a milk-attenuation-compensating ramp now that envelope_noise.apply_tgc_depth_scaling = true
+  # TGC schedule (retuned 2026-05-27) from the water-derived near-flat
+  # ramp to a milk-attenuation-compensating ramp because envelope_noise.apply_tgc_depth_scaling = true
   # makes the post-Hilbert noise floor inherit the TGC's depth-dependent gain.
   # The new schedule holds 0 dB at r in [0, 0.5 cm] (so the B2c shallow eval
   # band [3, 6.5 mm] is untouched) and then ramps linearly to +13 dB at r = 3 cm.
@@ -140,9 +140,7 @@ processing:
   # (Test I span_ratio = 1.05, sim_slope = +0.04 palette/mm vs bench +0.13,
   # bias = +1.2 palette) without inflating the B2c eval band magnitude
   # (b2c_delta = -9.1 palette, just inside the +/- 10 palette tolerance).
-  # History: water-derived [[0,0],[0.7,0],[1.5,0],[2.2,0.98],[2.9,2.05]] (Pass 25,
-  # near-flat, was used while the C++ TGC interpolation bug masked the
-  # multi-CP path -- see Pass 28h notes in tier1_evaluation.py).
+  # History: water-derived [[0,0],[0.7,0],[1.5,0],[2.2,0.98],[2.9,2.05]].
   tgc_control_points: [[0.0, 0.0], [0.5, 0.0], [3.0, 13.0]]
   # E7 (partial) results from P_035_PointScatter (cross-gain redundancy
   # in the existing data; full E7 still wants a calibrated reflector at
@@ -225,7 +223,7 @@ processing:
   # whether the compression curve is signal-level dependent (most
   # likely it is). Re-fit after E7 with a calibrated reflector.
   #
-  # Pass 3b / Pass 4 — gain_db is wired (raysim/config.py:ProcessingConfig
+  # gain_db is wired (raysim/config.py:ProcessingConfig
   # .gain_db, SimParams::gain_db). The value below is the *renderer-
   # specific* offset that puts the OptiX/CUDA backend's RF amplitudes onto
   # the bench's calibrated scale at slider 54. It is applied PRE-Hilbert
@@ -241,10 +239,8 @@ processing:
   # and the clamp lifts the post-clamp mean. The refined value puts the
   # rendered bg at the bench reference within tolerance.
   #
-  # Pass 4 ring-down move (post-Hilbert): Pass 3b put gain_db pre-Hilbert
-  # AND pre-ring-down so the ring-down envelope (already in bench scale)
-  # wasn't re-amplified. Pass 4 moved ring-down to AFTER Hilbert because
-  # cuFFTDx's length-N cyclic FFT was smearing inner-zone ring-down across
+  # Ring-down is added AFTER Hilbert because cuFFTDx's length-N cyclic
+  # FFT would otherwise smear inner-zone ring-down across
   # the full buffer (~+50 palette spurious lift at r ≈ 29 mm — see
   # raytracing_ultrasound_simulator.cpp §2.5 and tier1 test I). Removing
   # that spurious bg lift forced gain_db to grow by ~+12 dB to keep the
@@ -267,7 +263,7 @@ processing:
   #   gain_db_bg_amp_pure  = 20 * log10(2.58 / 3.56e-8) = +157.20 dB
   #     (over-shoots due to clamp lift)
   #   gain_db_calibrated   = bisection match of post-clamp mean palette
-  #                         to 46.2 = +145.02 dB (Pass 4)
+  #                         to 46.2 = +145.02 dB
   # IQR across the 7 unsaturated bench wires (informational, the wire-
   # target alternative): median +83.6 dB.
   # To switch sliders, add (slider - 54) dB per the bench gain LUT
@@ -284,7 +280,7 @@ processing:
   # aperture roughly halved), so the focal-zone amplification factor is
   # different and the true new gain_db could be ~+/- 6 dB from this
   # linearised estimate. Re-run derive_gain_db.py on the CUDA host.
-  # P_035 migration (post-Pass 17 audit): the P_035 wire-peak target
+  # P_035 migration (post-audit): the P_035 wire-peak target
   # was deprecated (single-take, only 7 unsaturated wires of 18 -- not
   # robustly collected).  Switched to the Wave 0 B2 tungsten/water
   # aggregate (`ivus_test_0515/derived_aggregate/psf_b2_tungsten_water/
@@ -300,8 +296,8 @@ processing:
   # = +36.4 dB vs B2 bench wire-vs-bg = +13.9 dB (gap = -22.5 dB --
   # sim has MORE wire-vs-bg contrast than the bench under the B2
   # target, the opposite of the P_035 P0 result).
-  gain_db: 58.09                          # Pass 5f recal (K=8 ray-bundling + n_cycles=17): derive_gain_db.py output (was 69.99 under K=1 + n_cycles=7; -11.9 dB). K=8 averaging reduces per-bin wire-peak magnitude by ~10 dB which the gain calibration now compensates for.
-  # Pass 3b — display window in palette units. The post-log palette is
+  gain_db: 58.09                          # Calibrated via derive_gain_db.py (K=8 ray-bundling + n_cycles=17). K=8 averaging reduces per-bin wire-peak magnitude by ~10 dB which the gain calibration compensates for.
+  # display window in palette units. The post-log palette is
   # already in absolute palette units (because log_compression uses the
   # calibrated log_multiplier / log_floor), so the display window only has
   # to enforce the device's hard reject floor and saturation ceiling.
@@ -309,10 +305,10 @@ processing:
   reject_palette: 11.0                    # E7 — device reject palette at slider 54 (gain_lut.json)
   saturation_palette: 239.0               # E7 — device saturation palette at slider 54 (gain_lut.json)
   compression_lut: null                   # Manual p.141: device uses 256-entry grayscale palette; with only 3 gain points we can't reconstruct it (full E7 needs the calibrated-reflector amplitude sweep)
-  # Pass 5d — lateral-PSF kernel-type switch (post-meeting follow-up to
+  # lateral-PSF kernel-type switch (post-meeting follow-up to
   # Q1 with the ultrasound-simulation expert, 2026-05-19).
   #
-  # The default Pass 5/5c kernel models the lateral PSF as a fixed-focus
+  # The default gaussian-beam kernel models the lateral PSF as a fixed-focus
   # Gaussian beam (sigma_mm(r) = w0 * sqrt(1 + ((r - z_f) / z_R)^2) with a
   # pre-focal clamp). Bench data on the s5i synthetic-aperture probe shows
   # a *constant* angular FWHM (~7.31 deg median across r in [4.2, 25.6] mm
@@ -332,9 +328,9 @@ processing:
   # derive_ringdown_amplitude.py because the integrated PSF response
   # changes -- the existing calibrated scalars are gaussian_beam-tied.
   lateral_psf_kernel:
-    type: constant_angular                # Pass 5d default (2026-05-19): SA-aware kernel (was gaussian_beam pre-recal)
-    sigma_theta_rad: 0.050                # Pass 20c PSF recal (2026-05-20): the derive_lateral_psf_sigma_theta.py value of 0.054164779787691845 (median ang FWHM / 2.3548 -> 7.31 deg) made the sim arc-FWHM ~14% wider than bench under the Tier-1 walkout (same methodology-drift effect as pulse_duration_cycles; see above). Recalibrated against Tier-1: sigma_theta_rad=0.050 (~6.75 deg) -> sim arc-FWHM median 2.123 mm at r~16 mm (bench ~2.0 mm, within 5%). With pulse_duration_cycles=15.0 this lands D=10/10 across all 4 seeds tested (was D=6/10 at 0.054165).
-  # Pass 20 — post-envelope additive Gaussian noise (post-Hilbert, pre-LPF).
+    type: constant_angular                # SA-aware kernel (selected 2026-05-19; the alternative is gaussian_beam).
+    sigma_theta_rad: 0.050                # Calibrated against the Tier-1 walkout. derive_lateral_psf_sigma_theta.py reports 0.054164779787691845 (median ang FWHM / 2.3548 -> 7.31 deg) but that value makes the sim arc-FWHM ~14% wider than bench under the Tier-1 walkout (same methodology-drift effect as pulse_duration_cycles; see above). sigma_theta_rad=0.050 (~6.75 deg) puts sim arc-FWHM median at 2.123 mm at r~16 mm (bench ~2.0 mm, within 5%) and lands D=10/10 across all 4 seeds tested.
+  # post-envelope additive Gaussian noise (post-Hilbert, pre-LPF).
   #
   # Adds N(mean, sigma^2) per envelope pixel right after the Hilbert
   # transform and BEFORE the post-Hilbert low-pass `psf_env_lp_`. The LPF
@@ -371,7 +367,7 @@ processing:
   #
   # The sim DOES NOT reproduce the bench's bright radial streaks
   # (catheter reverberations / container reflections) because those are
-  # real coherent signal, not noise. A future Pass 21 reverberation
+  # real coherent signal, not noise. A future reverberation
   # injection stage could add them; until then the calibrated noise
   # model matches the noise FLOOR statistics but the single-frame visual
   # texture will look less "busy" than the bench in pure-water regions.
@@ -383,8 +379,8 @@ processing:
   # (try softness: 2.0..3.0) only if a future bench analysis shows the
   # spike is unacceptable for downstream CV training.
   envelope_noise:
-    # Pass 22 (Rayleigh + DC physics): the envelope_noise stage is now used
-    # ONLY as a constant DC offset (envelope_noise.sigma = 0) that lifts the
+    # Rayleigh + DC physics: the envelope_noise stage is used ONLY as a
+    # constant DC offset (envelope_noise.sigma = 0) that lifts the
     # log-Rayleigh distribution off the reject_palette floor. This converts
     # the noise statistics from pure Rayleigh (envelope of Gaussian RF) to an
     # approximate Rice distribution -- the physically correct model for an
@@ -400,7 +396,7 @@ processing:
     # frames) in the 4-9.84 mm eval band.  Bench incoh_std = 9.79 palette,
     # skew = 0.18, excess kurtosis = 0.29 -- positive moments confirm the
     # underlying distribution is Rayleigh-like, NOT Gaussian, validating the
-    # return to Rayleigh-on-RF after the Pass 20 Gaussian detour.
+    # return to Rayleigh-on-RF after the Gaussian detour.
     #
     # The fit jointly bisects (mean envelope DC, noise.sigma_RF) so that:
     #   spatial-mean palette  = bench 37.21 (sets DC vs sigma trade-off)
@@ -412,25 +408,26 @@ processing:
     # The remaining gap in full-band spatial CV (sim 0.24 vs bench 0.41) is
     # bench's COHERENT spatial structure (reverb streaks, container walls)
     # which a noise model cannot reproduce -- tracked separately as the
-    # Pass 21 `reverberation_model` task. The Tier 1 gating metric for Test F
+    # `reverberation_model` task. The Tier 1 gating metric for Test F
     # is per-pixel ff_std (= incoh_std), which now matches bench exactly.
-    # Pass 24 (joint DC + softness LUT recalibration): kept DC=0.10, sigma_RF
-    # =0.001, softness=32.  Multi-anchor fit against slider 40 water + slider
-    # 68 milk gave reasonable Tier-1 numbers but masked a paradigm-level error
-    # (described next in Pass 25) -- the choice of bench anchors implicitly
+    # An earlier joint DC + softness LUT recalibration kept DC=0.10,
+    # sigma_RF=0.001, softness=32.  Multi-anchor fit against slider 40
+    # water + slider 68 milk gave reasonable Tier-1 numbers but masked
+    # a paradigm-level error
+    # (described next) -- the choice of bench anchors implicitly
     # absorbed catheter-origin coherent signal into the sim noise stage.
     #
-    # Pass 25 (paradigm shift -- bench water = REVERB, not noise):
+    # Bench water = REVERB, not noise:
     # ============================================================
-    # Pass 25c (`_pass25c_bench_full_lut.py`) audited the full bench dataset
+    # `_pass25c_bench_full_lut.py` audits the full bench dataset
     # (e4c milk-water gain sweep, sweep1/sweep2 wire-phantom gain sweeps,
-    # c_take2_water) and revealed that:
+    # c_take2_water) and shows:
     #
     #   * The bench's slider-to-dB curve in the LINEAR LUT regime
     #     (wire-phantom peak palette in 15..232 across slider 0..40, plus the
     #     wire-phantom water BACKGROUND mean in 55..161 across slider 52..68)
     #     is essentially ~1.0 dB/slider all the way to slider 68 (NOT
-    #     sublinear).  The Pass 23 sublinear curve (0.51 dB/slider at slider
+    #     sublinear).  The sublinear curve (0.51 dB/slider at slider
     #     65) was an artefact of fitting to LUT-compressed milk band data.
     #
     #   * The bench's wire-bg mean in water at slider 68 = 161 palette,
@@ -455,7 +452,7 @@ processing:
     # is essentially CORRECT.  The remaining gap is just a small noise-floor
     # lift.
     #
-    # Implication: Pass 22's choice to calibrate sim noise against bench
+    # Implication: the current choice to calibrate sim noise against bench
     # slider-50-water coherent mean (38 palette) silently absorbed the bench
     # reverb into the sim noise stage.  At higher gain (slider 68 water,
     # +14 dB above slider 54 in the correct linear slider->dB) the sim's
@@ -466,14 +463,14 @@ processing:
     # one-knob proxy for catheter-origin reverberation, and so Tests F /
     # gain-alignment "passed" for the wrong physical reason.
     #
-    # Pass 25 calibration (anchored on bench MILK at slider 68, where milk
+    # calibration (anchored on bench MILK at slider 68, where milk
     # attenuation guarantees the bench signal is true scatter+thermal-noise,
     # NOT reverb):
     #
-    #   * envelope_noise.mean (DC):    0.0       (was 0.10 in Pass 24, 1.118 in Pass 22)
+    #   * envelope_noise.mean (DC):    0.0       (was 0.10, 1.118)
     #   * envelope_noise.sigma:        0.0       (unchanged)
-    #   * processing.noise.sigma (RF): 0.0005    (was 0.001 in Pass 24, 0.00333 in Pass 22)
-    #   * reject_palette_softness:     32.0      (unchanged from Pass 24)
+    #   * processing.noise.sigma (RF): 0.0005    (was 0.001, 0.00333)
+    #   * reject_palette_softness:     32.0      (unchanged)
     #   * materials.milk (mu0, sigma, atten): UNCHANGED (default 0.5/0.1/0.5)
     #   * tier1_evaluation.slider_to_db: linear 1.0 dB/slider (bench-derived
     #     from wire-phantom linear-LUT regime; see SLIDER_TO_DB_RATE_ANCHORS).
@@ -501,7 +498,7 @@ processing:
     #     slider 50 water is at floor (~12 palette), bench water = 38
     #     palette.  The 26-palette gap is the SAME bench reverb signal
     #     we deliberately stopped absorbing into noise; closing it is
-    #     the explicit `reverberation_model` todo (Pass 21).
+    #     the explicit `reverberation_model` todo.
     #   * Gain alignment: similar fate (anechoic water gain anchor moves
     #     with the noise floor).
     #
@@ -510,12 +507,12 @@ processing:
     # calibration here is the floor BELOW that reverb component, so the
     # two add cleanly.  Until then, sim water < bench water (delta = bench
     # reverb) and sim ≈ bench in milk (where reverb is medium-attenuated).
-    mean: 0.0     # Pass 28i (2026-05-27) -- depth-flat DC dropped back to 0.0 in favour of TGC-amplified noise floor (envelope_noise.apply_tgc_depth_scaling = true below).  Pass 28h had bumped this to 1.0 to close Test I depth uniformity, but that broke B2c milk E2E magnitude.  The Pass 28i replacement: the bench's deep-r palette plateau is now lifted by a TGC ramp that amplifies BOTH signal and the post-Hilbert noise sigma, without inflating the shallow-r milk magnitude.  History: 0.0 in Pass 25/Pass 28f, 0.10 in Pass 24, 1.118 in Pass 22, 1.0 in Pass 28h.
-    # Pass 28h (2026-05-27) -- envelope_noise.mean RE-ENABLED to lift the
+    mean: 0.0     # 2026-05-27: depth-flat DC dropped back to 0.0 in favour of a TGC-amplified noise floor (envelope_noise.apply_tgc_depth_scaling = true, below). An earlier iteration bumped this to 1.0 to close Test I depth uniformity, but that broke B2c milk E2E magnitude. The current approach: the bench's deep-r palette plateau is lifted by a TGC ramp that amplifies BOTH signal and the post-Hilbert noise sigma, without inflating the shallow-r milk magnitude. Earlier values: 0.10, 1.118, 1.0.
+    # envelope_noise.mean was previously enabled to lift the
     # sim's post-envelope noise floor up to bench-matching levels in the
     # Test I uniform-milk depth window r in [5, 20] mm.  Background:
     #
-    # The Pass 25 calibration anchored at slider 68 milk band-mean palette
+    # The calibration anchored at slider 68 milk band-mean palette
     # (41.16 vs bench 41.00, near-perfect MAGNITUDE match) but the SHAPE
     # of the sim depth profile remained too steep -- sim_slope = -1.17
     # palette/mm vs bench +0.13 palette/mm across r in [5, 20] mm at
@@ -523,14 +520,14 @@ processing:
     # therefore stayed at PARTIAL with span_ratio = 3.57 (sim span 19.7
     # vs bench span 5.5).
     #
-    # Diagnosis path (Pass 28h refit_tgc / pick_tgc / dc_sweep scripts):
-    #   1. (`_pass28h_refit_tgc.py`) attempted a TGC re-fit against bench
+    # Diagnosis path:
+    #   1. `_pass28h_refit_tgc.py` attempted a TGC re-fit against bench
     #      E4a milk; first iteration produced multi-CP schedules that the
     #      simulator silently ignored.
-    #   2. (`_pass28h_sweep_depth_uniformity.py`) flat-TGC sanity check
+    #   2. `_pass28h_sweep_depth_uniformity.py` flat-TGC sanity check
     #      revealed the C++ simulator was ignoring user-supplied TGC
     #      control points past index 1 -- a long-standing bug in
-    #      create_piece_wise_tgc (Pass 28h cpp fix, separate commit).
+    #      create_piece_wise_tgc.
     #      The OLD YAML's water-derived TGC happened to render correctly
     #      because its first 3 CPs were all zero, so the buggy
     #      extrapolation gave the intended ~0 dB ramp.  Once the C++
@@ -591,15 +588,15 @@ processing:
     # this overshoot does NOT block PASS -- the test's pass condition is
     # `span_ok and (rms_ok or shape_primary)`.  However, the milk image
     # IS visibly brighter than bench at slider 68 (~3 dB above), which is
-    # a downstream cosmetic concern.  A future Pass 28i could explore
+    # a downstream cosmetic concern.  A future could explore
     # combining a smaller DC with a non-clipping (positive-support)
     # post-envelope noise distribution (half-normal or shifted-Rayleigh)
     # that gives the same shape lift without the magnitude inflation.
-    # Pass 28f (2026-05-27) -- noise sigma budget re-allocated from
+    # 2026-05-27: noise sigma budget re-allocated from
     # processing.noise.sigma (pre-PSF RF) -> processing.envelope_noise.sigma
     # (post-envelope) to close Test M's residual radial_corr gap. Background:
     #
-    # Under Pass 28's noise_seed-decoupled coherent_scatter rendering,
+    # Under the current noise_seed-decoupled coherent_scatter rendering,
     # Test F passed (env_resid_std median rel.err 6.7% across 3 usable
     # sliders) but Test M's radial_corr stayed at sim 0.173 mm vs bench
     # 0.130 mm (+33%, just outside the 25% gating tol).  The root cause
@@ -615,7 +612,7 @@ processing:
     # remaining spatial smoothing is the ~1-wavelength post-Hilbert LPF
     # (radial L_c ~ 0.13 mm).
     #
-    # Pass 28f sweep (see _pass28f_sweep_envelope_noise.py) bisected
+    # sweep (see _pass28f_sweep_envelope_noise.py) bisected
     # envelope_noise.sigma alone (with noise.sigma=0) against the bench
     # env_resid_std=0.409 at slider 68 milk D=15, then verified at
     # sliders {50, 56, 62, 68}.  Resulting metrics:
@@ -638,27 +635,27 @@ processing:
     # PASS criterion gates on radial_corr only (see `test_speckle_wave0`,
     # line 6230-6232: `primary_ok = rel_err_radial_corr_mm <= 0.25`); the
     # lateral_corr is reported as a flagged-informational diagnostic (see
-    # `lateral_corr_flagged` in `_measure_sim_speckle`).  A future Pass 28g
+    # `lateral_corr_flagged` in `_measure_sim_speckle`).  A future 
     # could add an AR-equivalent angular smoothing stage to the sim noise
     # to recover lateral_corr without disturbing Test F / radial_corr.
     #
-    # Physical interpretation.  The pre-PSF Rayleigh-on-RF model (Pass 22-25)
+    # Physical interpretation.  The pre-PSF Rayleigh-on-RF model
     # describes the front-end electronic noise BEFORE AR processing.  The
     # bench measurements that anchor Test F / Test M are AR-on captures,
     # so the calibration target is the POST-AR noise statistics -- which
     # are Gaussian-like in envelope domain (CV ~ 0.07 << log-Rayleigh's
-    # 0.5 prediction; confirmed in Pass 22 incoh_residual_final.json) and
+    # 0.5 prediction; confirmed incoh_residual_final.json) and
     # spatially sharper radially than the raw PSF predicts (this Pass).
     # Modeling AR-on noise directly as post-envelope Gaussian is the
     # physically-correct shorthand for "front-end noise that has gone
     # through the bench display chain" without re-implementing AR itself.
-    sigma: 0.3786    # Pass 28f -- post-envelope Gaussian noise std (envelope amplitude units), gain-scaled by 10^((gain_db - reference_gain_db)/20). Bisected so env_resid_std at slider 68 milk matches bench 0.41 within 0.2%; closes Test M radial_corr (+1.1% rel.err) at the cost of lateral_corr regression (informational only).
-    # Pass 20b: gain_db at which the calibration was performed. The simulator
+    sigma: 0.3786    # post-envelope Gaussian noise std (envelope amplitude units), gain-scaled by 10^((gain_db - reference_gain_db)/20). Bisected so env_resid_std at slider 68 milk matches bench 0.41 within 0.2%; closes Test M radial_corr (+1.1% rel.err) at the cost of lateral_corr regression (informational only).
+    # gain_db at which the calibration was performed. The simulator
     # scales effective mean / sigma by 10^((sim_gain_db - reference_gain_db) / 20)
     # so the noise floor tracks the slider. Calibration anchor is slider 50:
     # sim_gain_db_at_calibration = processing.gain_db - 4 dB = 58.09 - 4.0 = 54.09.
     reference_gain_db: 54.09
-    # Pass 28i (2026-05-27): apply_tgc_depth_scaling enables the C++ post-Hilbert
+    # (2026-05-27): apply_tgc_depth_scaling enables the C++ post-Hilbert
     # envelope-noise stage to multiply BOTH `mean` and `sigma` per sample by the
     # cached TGC linear-gain curve (normalised to 1.0 at r = 0).  Models the
     # physically-correct picture of bench analog electronic noise that has been
@@ -666,12 +663,12 @@ processing:
     # deep-r signal also lifts the deep-r noise floor.  With this flag enabled,
     # the deep-r palette plateau in milk / soft-tissue rises naturally with a
     # real TGC ramp rather than via the depth-flat DC lift introduced in
-    # Pass 28h (mean = 1.0).  See the Pass 28i narrative in
+    # (mean = 1.0).  See the narrative in
     # `tier1_evaluation.py::render_markdown` for the calibration impact across
     # Tests F / M / I / B2.  When false, behaviour is the legacy depth-flat
     # post-Hilbert noise.
     apply_tgc_depth_scaling: true
-  # Pass 24: reject_palette_softness > 0 swaps the hard reject-floor clamp for
+  # reject_palette_softness > 0 swaps the hard reject-floor clamp for
   # a softplus blend  palette = reject + softness * log1p(exp((pre - reject) /
   # softness))  so sub-floor pre-LUT amplitudes are lifted smoothly toward the
   # reject floor instead of being hard-clipped.  This reproduces the bench
@@ -701,39 +698,39 @@ processing:
     # both because the 54->64 slider step is wider than 10 dB and because the
     # E7 formula ignores the Jensen gap between log(E[env]) and E[log env].
     #
-    # Pass 6 (derive_noise_sigma.py) re-derives sigma directly from the bench
+    # (derive_noise_sigma.py) re-derives sigma directly from the bench
     # gain-54 anechoic ROI: bisects sigma so the simulator's anechoic
     # post-clamp mean palette (rendered in pure ``water``, no scatter, full
     # display window + log compression + median clip) matches 46.2. Result
     # also matches bench median (45.5 vs 44) and bench std (19.4 vs 20.3),
     # so the full Rayleigh distribution shape is preserved -- not just the
     # mean. See P_035_PointScatter/derived/noise/noise_sigma_derivation.json.
-    # Pass 6 v2 (noise pre-PSF): the additive-noise stage was moved BEFORE
+    # v2 (noise pre-PSF): the additive-noise stage was moved BEFORE
     # the PSF convolution so the noise is bandlimited by the receive chain
-    # (matching the bench's coarse mottled speckle, not Pass 6 v1's per-
+    # (matching the bench's coarse mottled speckle, not v1's per-
     # pixel static). The pre-PSF sigma is therefore in INPUT-RF units (pre
     # gain_db, pre TGC, pre PSF). Empirically the downstream amplification
-    # collapses sigma by ~3 orders of magnitude vs Pass 6 v1 -- the bench-
+    # collapses sigma by ~3 orders of magnitude vs v1 -- the bench-
     # matching value sits in the millis. derive_noise_sigma.py is pipeline-
     # aware (renders an anechoic water world through the full sim) so the
     # calibrated number stays correct under stage moves.
     #
-    # Pass 7 (depth-weighted pre-PSF noise): the L1-normalised depth-
+    # (depth-weighted pre-PSF noise): the L1-normalised depth-
     # dependent lateral PSF concentrates the focal-zone noise variance
     # because sigma_bins(z_focal) is the minimum across z (the angular 1/r
     # factor inflates sigma_bins pre-focal; the Gaussian-beam expansion
-    # inflates sigma_mm post-focal). Pass 6 v2 over-shot the bench by +22
+    # inflates sigma_mm post-focal). v2 over-shot the bench by +22
     # palette at r ~ 19 mm (Test I focal-zone hump, span ratio 2.10). The
     # CUDA noise kernel now multiplies sigma per radial sample by
     # weight(z) = sqrt(sigma_bins(z) / sigma_bins(z_focal)) so the post-PSF
     # noise std is uniform across depth (Test I PASS, span ratio 0.46 in
-    # Pass 7). The YAML sigma below is therefore the input-RF std AT THE
+    # ). The YAML sigma below is therefore the input-RF std AT THE
     # FOCAL DEPTH; the off-focal weighting raises sigma elsewhere. The
-    # sigma value drops slightly vs Pass 6 v2 (0.000895 -> 0.000712)
+    # sigma value drops slightly vs v2 (0.000895 -> 0.000712)
     # because the off-focal weight extra-amplifies the wings, so the
     # focal-anchored sigma must be lower to keep the global anechoic mean
     # on the bench target (46.2). See implementation writeup s11.14.
-    # P_035 migration (post-Pass 17 audit): the legacy E5 P_035 wedge-
+    # P_035 migration (post-audit): the legacy E5 P_035 wedge-
     # masked anechoic ROI was deprecated -- wire-PSF sidelobe leakage
     # inflated its std (20.27 palette) by ~6 x vs the true device noise
     # floor.  Switched to the protocol-correct E6 AR-on deep-tail anchor
@@ -755,16 +752,16 @@ processing:
     # processing flattens the noise distribution to a much narrower
     # shape that no single-scalar Gaussian RF noise can match.  Test F
     # (Noise floor sigma) will fail on the std criterion (sim std 19.6
-    # vs bench 2.65) until a Pass 8 noise-shape calibration is added
+    # vs bench 2.65) until a noise-shape calibration is added
     # (e.g., post-clamp Gaussian smoothing).  The MEAN criterion of
     # Test F should pass with this sigma.
-    # Pass 20: zeroed in favour of post-envelope Gaussian noise; this caused
+    # zeroed in favour of post-envelope Gaussian noise; this caused
     #   a fundamental shape regression (Rayleigh -> Gaussian) that flattened
     #   the bench-matched log-Rayleigh palette texture, even though the
     #   spatial-mean CV looked closer to bench (the bench's narrow CV is
     #   dominated by coherent reverb structure, not by the noise being
     #   Gaussian).
-    # Pass 22 (Rayleigh + DC offset): restored to a non-zero value. The
+    # (Rayleigh + DC offset): restored to a non-zero value. The
     #   bench's INCOHERENT residual (per-pixel deviation from per-pixel
     #   temporal mean) has positive skew (0.18) and Rayleigh-consistent
     #   excess kurtosis (0.29), confirming the underlying noise IS
@@ -775,14 +772,14 @@ processing:
     #   See _tmp_incoh_fit.py / incoh_residual_final.json for the calibration
     #   trace; full diagnostic figure in
     #   tier1_results/figures/incoh_residual_fit.png.
-    # Pass 24: reduced from 0.00333 to 0.001 jointly with envelope_noise.mean
+    # reduced from 0.00333 to 0.001 jointly with envelope_noise.mean
     # (1.118 -> 0.10) and reject_palette_softness (0 -> 32) so that the
     # multi-anchor bench fit (slider 40 water, slider 68 milk coh+incoh, milk
-    # depth profile) all land within ~3 palette.  The previous Pass 22 sigma
+    # depth profile) all land within ~3 palette.  The previous sigma
     # was over-anchored on a slider 50 water target that was actually reverb,
     # not noise.  See _pass24i_joint.py.
-    # Pass 25 (paradigm shift, see envelope_noise comment block above): the
-    # Pass 22/24 anchors silently absorbed bench reverb into sim noise.  The
+    # (paradigm shift, see envelope_noise comment block above): the
+    # /24 anchors silently absorbed bench reverb into sim noise.  The
     # new anchor is bench MILK at slider 68 (band-mean 41 palette), where
     # milk attenuation guarantees the bench signal is true scatter +
     # thermal-noise -- not reverb.  Anchored on E4c (1:1 diluted) and
@@ -790,8 +787,8 @@ processing:
     # within 0.2 palette at sigma=0.0005, DC=0 (envelope_noise.mean above).
     # See `_pass25h_multi_anchor.py` (bisection) and `_pass25i_e4a_cross.py`
     # (cross-val).
-    sigma: 0.0                            # Pass 28f -- DISABLED in favour of post-envelope Gaussian noise (processing.envelope_noise.sigma); was 0.0005 in Pass 25, 0.001 in Pass 24, 0.00333 in Pass 22. The pre-PSF RF stage inflated residual radial_corr above the bench because its envelope-domain auto-correlation inherits the axial PSF kernel width (~0.18 mm), while bench's AR-on residual is sharper (0.13 mm).  See processing.envelope_noise.sigma above for the full Pass 28f narrative + multi-slider verification numbers.  The depth-weighted pre-PSF noise infrastructure (Pass 7, kernel-aware w(z)) remains in the codebase and is reactivated by any positive sigma here; if a future bench AR-OFF capture lands and the calibration target shifts back toward Rayleigh-on-RF statistics, re-derive sigma against AR-OFF bench data and bisect alpha (the post-envelope variance share) via _pass28f_sweep_envelope_noise.py.
-  catheter:                               # Pass 6 v2 — catheter sheath dead-zone mask
+    sigma: 0.0                            # DISABLED in favour of post-envelope Gaussian noise (processing.envelope_noise.sigma); was 0.0005, 0.001, 0.00333. The pre-PSF RF stage inflated residual radial_corr above the bench because its envelope-domain auto-correlation inherits the axial PSF kernel width (~0.18 mm), while bench's AR-on residual is sharper (0.13 mm).  See processing.envelope_noise.sigma above for the full narrative + multi-slider verification numbers.  The depth-weighted pre-PSF noise infrastructure) remains in the codebase and is reactivated by any positive sigma here; if a future bench AR-OFF capture lands and the calibration target shifts back toward Rayleigh-on-RF statistics, re-derive sigma against AR-OFF bench data and bisect alpha (the post-envelope variance share) via _pass28f_sweep_envelope_noise.py.
+  catheter:                               # v2 — catheter sheath dead-zone mask
     # The PV .035 catheter outer diameter is 1.905 mm (manual p.4), so the
     # catheter wall blocks any acquired signal for r < ~0.95 mm at the
     # probe centre. The bench polar B-modes show solid black extending to
@@ -800,9 +797,9 @@ processing:
     # the catheter wall with the device's analog blanking during the
     # transmit pulse. We use the observed bench dead-zone radius rather
     # than the geometric catheter OD because that's what an operator sees.
-    dead_zone_mm: 1.0                     # Pass 28j (2026-05-27): reduced from 1.4 -> 1.0 mm.  The c_take2_water E6 corpus shows the bench's catheter dead-zone palette ramps up GRADUALLY between r ~ 1.0 and r ~ 1.6 mm rather than cliff-jumping at r = 1.4 mm; the ring-down TEMPLATE itself encodes the bench's actual transition (palette 11 in r < 1.3 mm, 31 at r = 1.32, 81 at r = 1.44).  The C++ template loader maps `palette <= template_speckle_floor` to zero contribution, so reducing dead_zone_mm here lets the template's natural ramp play out in r in [1.0, 1.4) mm where the bench shows the soft transition.  The kernel still enforces palette = reject_palette in r < 1.0 mm (well below where any meaningful ring-down energy starts).  Effect: Test E `RMS_inner_3mm` dominant band [1.0, 1.4) palette mismatch (sim 11 vs bench 30-40) closes from ~47 -> ~0 RMS_band at slider 50.
+    dead_zone_mm: 1.0                     # (2026-05-27): reduced from 1.4 -> 1.0 mm.  The c_take2_water E6 corpus shows the bench's catheter dead-zone palette ramps up GRADUALLY between r ~ 1.0 and r ~ 1.6 mm rather than cliff-jumping at r = 1.4 mm; the ring-down TEMPLATE itself encodes the bench's actual transition (palette 11 in r < 1.3 mm, 31 at r = 1.32, 81 at r = 1.44).  The C++ template loader maps `palette <= template_speckle_floor` to zero contribution, so reducing dead_zone_mm here lets the template's natural ramp play out in r in [1.0, 1.4) mm where the bench shows the soft transition.  The kernel still enforces palette = reject_palette in r < 1.0 mm (well below where any meaningful ring-down energy starts).  Effect: Test E `RMS_inner_3mm` dominant band [1.0, 1.4) palette mismatch (sim 11 vs bench 30-40) closes from ~47 -> ~0 RMS_band at slider 50.
   ring_down:                              # Manual p.190: caused by element crosstalk + crystal physics
-    enabled: true                         # Pass 2 — turn the calibrated ring-down injector on (false = silent lumen)
+    enabled: true                         # turn the calibrated ring-down injector on (false = silent lumen)
     # E6 results from P_035_PointScatter (median-over-theta radial profile,
     # n=19 frames split across gain {44,54,64} x diameter {35,40,60} mm):
     #   peak depth        = 1.80 mm (just inside catheter OD = 1.905 mm) — gain-independent
@@ -837,10 +834,10 @@ processing:
   # adds on top of the in-water scatter response. Equivalent dB above
   # noise: 187.1 * 20 / 137.4 = 27.2 dB above the speckle floor (vs
   # 33.3 dB under the old log_multiplier).
-    amplitude: 0.082497                   # Pass 28j (2026-05-27): re-bisected via derive_ringdown_amplitude.py against the new c_take2_water template + slider-50 anchor (target peak 222.12 palette; sim 222.7, err +0.57; sim peak depth 2.15 mm matches bench 2.16 mm).  Previous value 0.079446 was anchored against the P_035 template (peak r = 1.80 mm); the +0.33 dB lift recovers the slider-50 peak palette under the new c_take2_water template (which is normalised slightly differently from the P_035 template).  Pass 4b gain-scaling fix still in effect: C++ side multiplies by 10^(gain_db/20) per frame.  See `ringdown_amplitude_derivation.json` (regenerated 2026-05-27).
-    extent_mm: 3.6                        # Pass 28j (2026-05-27): extended from 3.0 -> 3.6 mm.  At extent_mm: 3.0 the simulator hard-cut the ring-down injection at exactly r = 3 mm, but the c_take2_water template (now canonical, see waveform_path below) still has ~60 palette of ring-down excess at r = 3.0 mm (palette 88 vs floor 28.5) decaying smoothly to floor by r ~ 3.5 mm.  The hard cut produced a visible cliff in the sim mean A-line and dominated `RMS_inner_3mm` (24 palette) + `extent_err_mm` (0.45 mm).  3.6 mm captures the full decay tail (template at r >= 3.6 mm sits at the noise floor) while still respecting the original "5% of peak excess" extent definition (5% of 193 peak excess = 9.7 palette; bench reaches that threshold at r ~ 3.4-3.5 mm).
+    amplitude: 0.082497                   # (2026-05-27): re-bisected via derive_ringdown_amplitude.py against the new c_take2_water template + slider-50 anchor (target peak 222.12 palette; sim 222.7, err +0.57; sim peak depth 2.15 mm matches bench 2.16 mm).  Previous value 0.079446 was anchored against the P_035 template (peak r = 1.80 mm); the +0.33 dB lift recovers the slider-50 peak palette under the new c_take2_water template (which is normalised slightly differently from the P_035 template).  gain-scaling fix still in effect: C++ side multiplies by 10^(gain_db/20) per frame.  See `ringdown_amplitude_derivation.json` (regenerated 2026-05-27).
+    extent_mm: 3.6                        # (2026-05-27): extended from 3.0 -> 3.6 mm.  At extent_mm: 3.0 the simulator hard-cut the ring-down injection at exactly r = 3 mm, but the c_take2_water template (now canonical, see waveform_path below) still has ~60 palette of ring-down excess at r = 3.0 mm (palette 88 vs floor 28.5) decaying smoothly to floor by r ~ 3.5 mm.  The hard cut produced a visible cliff in the sim mean A-line and dominated `RMS_inner_3mm` (24 palette) + `extent_err_mm` (0.45 mm).  3.6 mm captures the full decay tail (template at r >= 3.6 mm sits at the noise floor) while still respecting the original "5% of peak excess" extent definition (5% of 193 peak excess = 9.7 palette; bench reaches that threshold at r ~ 3.4-3.5 mm).
     decay: measured                       # exponential | hanning | measured — physics is exponential-in-RF; we have the measured template, prefer it
-    # Pass 28j (2026-05-27): swapped from the P_035 template (peak r = 1.80 mm)
+    # (2026-05-27): swapped from the P_035 template (peak r = 1.80 mm)
     # to the c_take2_water AR-off slider-50 D=60 capture (peak r = 2.16 mm) so
     # the canonical ring-down template MATCHES the Test E bench reference
     # corpus.  All 3 Test E pairs in `c_take2_water/derived/ringdown/
@@ -852,7 +849,7 @@ processing:
     # Test E bench data, at a SLIDER-50 D=60 mm operating point in pure water.
     waveform_path: ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_off_g50_d60.npy  # canonical RAW (AR-OFF) mean A-line at slider 50, D = 60 mm; in PALETTE units; n=83 samples at 0.12 mm/px so radial coverage is 0 to 9.84 mm (the simulator's ring-down injector only consumes the first ~3 mm so the truncation is irrelevant).  Path is resolved relative to the simulator's CWD (workspace root).
     template_pitch_mm: 0.12               # E6 — template was sampled at the device's display pitch (D=60 mm displayed across 500 px => 0.12 mm/px). Loader resamples to the simulator's RF rate (~0.0193 mm/sample at 40 MHz).
-    template_speckle_floor_palette: 28.5  # Pass 28j: c_take2_water slider-50 D=60 noise floor in the [r=3.5, 6.0] mm tail band (was 45.0 for the P_035 g54 template).  Subtract before palette->amp so the "no ringdown" parts of the template map to amp 0 instead of constant background.
+    template_speckle_floor_palette: 28.5  # c_take2_water slider-50 D=60 noise floor in the [r=3.5, 6.0] mm tail band (was 45.0 for the P_035 g54 template).  Subtract before palette->amp so the "no ringdown" parts of the template map to amp 0 instead of constant background.
     # AR-ON (clinical default) residual template -- DERIVED 2026-05-12 from
     # ivus_test_0508/raw/c_take2_water (CASE0000 paired AR-on/AR-off captures
     # at 3 (gain, diameter) combos: (40, 60), (50, 30), (50, 60)). Canonical
@@ -885,7 +882,7 @@ processing:
     subtract_reference: false             # AR-OFF default; flip to true once ar_residual_template_path is wired
 
 # Material catalog. The simulator currently ships with these names hard-coded in
-# material.cpp (Materials::Materials()); values are listed here for reference and
+# material.cpp (Materials::Materials); values are listed here for reference and
 # for future per-config overrides. None of these are calibrated by the wire-
 # phantom dataset — they need E5 (cyst phantom) + E8 (tissue fit).
 materials:
@@ -904,7 +901,7 @@ materials:
     mu0: 0.5
     mu1: 0.6
     sigma: 0.35
-    specularity: 1.0  # Pass 28 (2026-05-27): bug fix.  Was 1.0e-5; in the
+    specularity: 1.0  # (2026-05-27): bug fix.  Was 1.0e-5; in the
                      # cos^n directivity formula (Mattausch 2016) n -> 0 gives
                      # cos^0 = 1 for every angle, i.e. CONSTANT MAX intensity
                      # at every wall hit -- the opposite of "less specular".
@@ -932,7 +929,7 @@ materials:
   # mu0 / sigma scattering parameters:
   #   * mu0 = 0.5: literature analogue (extravascular Bernoulli-Gaussian
   #     density; uniform scatterer field, no published BSC mapping).
-  #   * sigma = 0.1: Pass 21a sim-in-loop calibration (2026-05-20) against
+  #   * sigma = 0.1: sim-in-loop calibration (2026-05-20) against
   #     Wave 0 E4a uniform-milk bench data
   #     (`ivus_test_0515/raw/e4a_milk_gain_p{1,2,3}/`).  At (mu0=0.5,
   #     sigma=0.1) Test I (depth uniformity) PASSES with
@@ -941,11 +938,11 @@ materials:
   #     materials.  sigma was 0.3 before this pass; the 3x cut brings the
   #     milk-bath envelope amplitude down so the simulated depth profile
   #     flattens onto bench instead of running ~3x too steep negative.
-  # Known structural limit (deferred to Pass 21 reverberation model):
+  # Known structural limit (deferred to reverberation model):
   #   Test M (speckle CoV / radial correlation) FAILS on the CoV axis even
   #   after this recal -- bench CoV_log = 0.384 is dominated by COHERENT
   #   reverberations (the 60-78% coherent variance characterised in the
-  #   Pass 20 noise pipeline rebuild), not random speckle.  The sim can
+  #   noise pipeline rebuild), not random speckle.  The sim can
   #   only reach bench radial correlation length (~0.46 mm) at sigma=1.0,
   #   which breaks Test I (span_ratio 4.58 -> FAIL).  The chosen trade-off
   #   keeps Test I PASS and accepts Test M as a structural-noise-model

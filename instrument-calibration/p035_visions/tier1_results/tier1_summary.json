@@ -1278,7 +1278,7 @@
             "n_bench_wires": 133
           },
           "sim_spread_db": 20.621302127838142,
-          "rationale": "INFORMATIONAL diagnostic: per-wire gain_db_required_to_match_bench from `derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json`.  The spread across r captures the magnitude-side fingerprint of the fixed-focus PSF + Fresnel over-bright issues (Q1 + Q3).  Does NOT gate Tests C / D -- they remain shape-only on FWHM.",
+          "rationale": "INFORMATIONAL diagnostic: per-wire gain_db_required_to_match_bench from `derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json`. The spread across r captures the magnitude-side fingerprint of the fixed-focus PSF + Fresnel over-bright issues (Q1 + Q3). Does NOT gate Tests C / D -- they remain shape-only on FWHM.",
           "source": "ivus_test_0515/derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json"
         },
         "catheter_rotations_deg": [
@@ -1651,7 +1651,7 @@
             "n_bench_wires": 133
           },
           "sim_spread_db": 20.621302127838142,
-          "rationale": "INFORMATIONAL diagnostic: per-wire gain_db_required_to_match_bench from `derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json`.  The spread across r captures the magnitude-side fingerprint of the fixed-focus PSF + Fresnel over-bright issues (Q1 + Q3).  Does NOT gate Tests C / D -- they remain shape-only on FWHM.",
+          "rationale": "INFORMATIONAL diagnostic: per-wire gain_db_required_to_match_bench from `derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json`. The spread across r captures the magnitude-side fingerprint of the fixed-focus PSF + Fresnel over-bright issues (Q1 + Q3). Does NOT gate Tests C / D -- they remain shape-only on FWHM.",
           "source": "ivus_test_0515/derived_aggregate/psf_b2_tungsten_water/gain_db_derivation.json"
         },
         "catheter_rotations_deg": [
@@ -1674,7 +1674,7 @@
         ],
         "sim_focal_r_mm": 5.999867998547968,
         "bench_focal_r_mm": 2.812809664416586,
-        "focal_trend_informational": "constant_angular kernel has no focal minimum within the phantom; bench Gaussian-beam fit's z_f is a legacy diagnostic from the fixed-focus Gaussian-beam kernel.  Not gated.",
+        "focal_trend_informational": "constant_angular kernel has no focal minimum within the phantom; bench Gaussian-beam fit's z_f is a legacy diagnostic from the fixed-focus Gaussian-beam kernel. Not gated.",
         "bench_lateral_fwhm_at_focus_mm": 0.9436523452690447,
         "n_pass": 10,
         "n_measurable": 10,
@@ -1796,14 +1796,14 @@
           }
         },
         "figure": "figures/ringdown_mean_aline.png",
-        "bench_source": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_summary_v2.json + AR-off .npy A-lines (E6 anechoic)"
+        "bench_source": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_summary_v2.json + AR-off.npy A-lines (E6 anechoic)"
       },
       "bank": "parameter"
     },
     {
       "name": "F. Noise floor (E4c milk multi-slider primary, E6 water diagnostic)",
       "status": "pass",
-      "summary": "PRIMARY (milk anchor, gates): E4c D=15 r=[3,6.5] mm -- median rel.err = 1.7% across 3 usable anchors (<= 30% req); per-anchor: g50(bench=0.063 sim=0.062 rel=1% vf=4%), g56(bench=0.113 sim=0.117 rel=4% vf=8%), g62(bench=0.215 sim=0.219 rel=2% vf=17%), g68(bench=0.409 sim=0.415 rel=1% vf=74%). E4a cross-check median rel.err = 7.2% (3 anchors). Status: pass.  LEGACY E6 DIAGNOSTIC (informational, not gating): 2 water pairs (g50D30, g50D60); ff_std_palette rel.err = 98.5%, mean abs.err = 26.6 palette, corr rel.err = 282.3% -- LEGACY_ALL_PASS = False.  YAML: envelope_noise.{mean,sigma} = 0 / 0.379, reference_gain_db = 54.09, noise.sigma (legacy RF) = 0.",
+      "summary": "PRIMARY (milk anchor, gates): E4c D=15 r=[3,6.5] mm -- median rel.err = 1.7% across 3 usable anchors (<= 30% req); per-anchor: g50(bench=0.063 sim=0.062 rel=1% vf=4%), g56(bench=0.113 sim=0.117 rel=4% vf=8%), g62(bench=0.215 sim=0.219 rel=2% vf=17%), g68(bench=0.409 sim=0.415 rel=1% vf=74%). E4a cross-check median rel.err = 7.2% (3 anchors). Status: pass. LEGACY E6 DIAGNOSTIC (informational, not gating): 2 water pairs (g50D30, g50D60); ff_std_palette rel.err = 98.5%, mean abs.err = 26.6 palette, corr rel.err = 282.3% -- LEGACY_ALL_PASS = False. YAML: envelope_noise.{mean,sigma} = 0 / 0.379, reference_gain_db = 54.09, noise.sigma (legacy RF) = 0.",
       "detail": {
         "milk_anchor_primary": {
           "params": {
@@ -2141,7 +2141,7 @@
           "primary_basis": "E4c milk-water"
         },
         "legacy_e6_diagnostic": {
-          "note": "INFORMATIONAL only.  Test F is gated by milk_anchor_primary (multi-slider milk envelope-domain residual).  The legacy E6 ff_std_palette / corr / 2-D-corr metrics are kept here to show the operating-point bias: bench water palette ~38 sits above the soft-reject knee thanks to un-modelled coherent reverb, while sim's noise-only water palette ~12 is below.",
+          "note": "INFORMATIONAL only. Test F is gated by milk_anchor_primary (multi-slider milk envelope-domain residual). The legacy E6 ff_std_palette / corr / 2-D-corr metrics are kept here to show the operating-point bias: bench water palette ~38 sits above the soft-reject knee thanks to un-modelled coherent reverb, while sim's noise-only water palette ~12 is below.",
           "n_pairs_evaluated": 2,
           "per_pair": [
             {
@@ -2541,9 +2541,9 @@
     {
       "name": "F-diag. E6 anechoic-water envelope diagnostic (informational)",
       "status": "diagnostic",
-      "summary": "E6 anechoic-water envelope-domain diagnostic across 2 (gain, D) pairs.  Operating-point biased by un-modelled coherent reverb (bench water palette sits above the soft-reject knee in the bench but not in the sim noise-only render); informational only, does NOT gate Test F.",
+      "summary": "E6 anechoic-water envelope-domain diagnostic across 2 (gain, D) pairs. Operating-point biased by un-modelled coherent reverb (bench water palette sits above the soft-reject knee in the bench but not in the sim noise-only render); informational only, does NOT gate Test F.",
       "detail": {
-        "note": "INFORMATIONAL only.  Test F is gated by milk_anchor_primary (multi-slider milk envelope-domain residual).  The legacy E6 ff_std_palette / corr / 2-D-corr metrics are kept here to show the operating-point bias: bench water palette ~38 sits above the soft-reject knee thanks to un-modelled coherent reverb, while sim's noise-only water palette ~12 is below.",
+        "note": "INFORMATIONAL only. Test F is gated by milk_anchor_primary (multi-slider milk envelope-domain residual). The legacy E6 ff_std_palette / corr / 2-D-corr metrics are kept here to show the operating-point bias: bench water palette ~38 sits above the soft-reject knee thanks to un-modelled coherent reverb, while sim's noise-only water palette ~12 is below.",
         "n_pairs_evaluated": 2,
         "per_pair": [
           {
@@ -2978,7 +2978,7 @@
     {
       "name": "H. TGC schedule",
       "status": "pass",
-      "summary": "True simulator round-trip: differential render of T_B (5-CP 0->+6 dB ramp) minus T_A (flat 0 dB) recovers the YAML Delta_TGC with RMS=0.183 dB (<= 0.5 dB tol), max-abs=0.566 dB (<= 1.0 dB tol) over r in [5.0, 25.0] mm.  Ramp slope: sim +0.3680 dB/mm vs YAML +0.4000 dB/mm.",
+      "summary": "True simulator round-trip: differential render of T_B (5-CP 0->+6 dB ramp) minus T_A (flat 0 dB) recovers the YAML Delta_TGC with RMS=0.183 dB (<= 0.5 dB tol), max-abs=0.566 dB (<= 1.0 dB tol) over r in [5.0, 25.0] mm. Ramp slope: sim +0.3680 dB/mm vs YAML +0.4000 dB/mm.",
       "detail": {
         "method": "simulator_round_trip_differential",
         "tgc_A_cps": [
@@ -3047,7 +3047,7 @@
     {
       "name": "B2. Gain alignment (B2a function / B2b sim-internal / B2c milk E2E)",
       "status": "n/a",
-      "summary": "B2a function-check vs bench wire peaks: n/a (median |dB err| = nan dB, worst nan dB, tol nan dB).  B2b sim-internal 6dB delta in milk (palette_pre domain): pass (measured 40.6 vs expected 41.2 palette_pre = +0.09 dB err, tol 3.0 palette).  B2c E2E milk at slider 68 D=15: pass (sim 58.6 vs bench 56.0 palette = +0.38 dB, tol 10.0 palette).  Overall: n/a (at least one sub-test n/a (bench data missing); see per-sub-test 'reason').",
+      "summary": "B2a function-check vs bench wire peaks: n/a (median |dB err| = nan dB, worst nan dB, tol nan dB). B2b sim-internal 6dB delta in milk (palette_pre domain): pass (measured 40.6 vs expected 41.2 palette_pre = +0.09 dB err, tol 3.0 palette). B2c E2E milk at slider 68 D=15: pass (sim 58.6 vs bench 56.0 palette = +0.38 dB, tol 10.0 palette). Overall: n/a (at least one sub-test n/a (bench data missing); see per-sub-test 'reason').",
       "detail": {
         "ac_tier": "magnitude (sensor property -- gain pipeline calibration)",
         "decomposition": "B2a (function check) + B2b (sim-internal) + B2c (E2E milk)",
@@ -3081,7 +3081,7 @@
           ],
           "world": "build_uniform_milk_world",
           "n_frames": 8,
-          "note": "Sim-internal check (operates in palette_pre): validates that gain_db is applied as a true RF-gain knob through the simulator's log compression chain.  In palette_pre the shift is exactly linear in delta_dB, independent of the soft-reject mapping and robust to upper-tail saturation in milk speckle (which would bias the post-LUT palette mean)."
+          "note": "Sim-internal check (operates in palette_pre): validates that gain_db is applied as a true RF-gain knob through the simulator's log compression chain. In palette_pre the shift is exactly linear in delta_dB, independent of the soft-reject mapping and robust to upper-tail saturation in milk speckle (which would bias the post-LUT palette mean)."
         },
         "B2c_e2e_milk_slider68": {
           "status": "pass",
@@ -3108,7 +3108,7 @@
           "sim_envelope_residual_std": 0.8486812937109622,
           "world": "build_uniform_milk_world",
           "bench_source": "ivus_test_0515/raw/e4c_milk_water_gain_p{1,2,3} :: multi-frame DICOM at slider 68, D=15 mm, r in [3, 6.5] mm.",
-          "note": "End-to-end composition check.  Uses MILK (not wires) so no tungsten material model is required.  Operating point (slider 68 D=15) was chosen because the bench palette is well above the soft-reject knee here (mean ~56)."
+          "note": "End-to-end composition check. Uses MILK (not wires) so no tungsten material model is required. Operating point (slider 68 D=15) was chosen because the bench palette is well above the soft-reject knee here (mean ~56)."
         },
         "overall_status_basis": "at least one sub-test n/a (bench data missing); see per-sub-test 'reason'",
         "yaml_knobs": {
@@ -3125,7 +3125,7 @@
     {
       "name": "B2c-diag. Gain E2E milk anchor (informational)",
       "status": "diagnostic",
-      "summary": "B2c E2E milk anchor at slider 68 D = 15 mm: sim palette mean = 58.6 vs bench 56.0 (\u0394 = +0.38 dB, tol 10.0 palette; sub-status: pass).  Compounds every sim layer (gain pipeline, log compression, material, noise); does NOT gate B2 PASS/FAIL on its own (B2b -- sim-internal gain delta -- is the parameter-level gate).",
+      "summary": "B2c E2E milk anchor at slider 68 D = 15 mm: sim palette mean = 58.6 vs bench 56.0 (\u0394 = +0.38 dB, tol 10.0 palette; sub-status: pass). Compounds every sim layer (gain pipeline, log compression, material, noise); does NOT gate B2 PASS/FAIL on its own (B2b -- sim-internal gain delta -- is the parameter-level gate).",
       "detail": {
         "status": "pass",
         "ok": true,
@@ -3151,7 +3151,7 @@
         "sim_envelope_residual_std": 0.8486812937109622,
         "world": "build_uniform_milk_world",
         "bench_source": "ivus_test_0515/raw/e4c_milk_water_gain_p{1,2,3} :: multi-frame DICOM at slider 68, D=15 mm, r in [3, 6.5] mm.",
-        "note": "End-to-end composition check.  Uses MILK (not wires) so no tungsten material model is required.  Operating point (slider 68 D=15) was chosen because the bench palette is well above the soft-reject knee here (mean ~56)."
+        "note": "End-to-end composition check. Uses MILK (not wires) so no tungsten material model is required. Operating point (slider 68 D=15) was chosen because the bench palette is well above the soft-reject knee here (mean ~56)."
       },
       "bank": "phenomenology"
     },
@@ -3223,7 +3223,7 @@
     {
       "name": "M. Speckle (residual-domain milk anchor + mu0-invariance)",
       "status": "pass",
-      "summary": "Residual radial_corr: sim 0.132 mm vs bench E4c 0.130 mm (\u0394=+0.002 mm, 1%; \u2713 25% tol). Bench E4a cross-check radial_corr 0.134 mm (3% E4a-E4c spread).  mu0-invariance: max_rel_shift 2.0% (\u226420% tol; \u2713).  per_scale: x1.0->0.132mm, x2.0->0.129mm.",
+      "summary": "Residual radial_corr: sim 0.132 mm vs bench E4c 0.130 mm (\u0394=+0.002 mm, 1%; \u2713 25% tol). Bench E4a cross-check radial_corr 0.134 mm (3% E4a-E4c spread). mu0-invariance: max_rel_shift 2.0% (\u226420% tol; \u2713). per_scale: x1.0->0.132mm, x2.0->0.129mm.",
       "detail": {
         "primary_residual_anchor": {
           "bench_e4c": {
@@ -3347,7 +3347,7 @@
             "radial_corr_delta_mm": -0.2919074851543214,
             "radial_corr_rel": 0.6379567908740881
           },
-          "note": "Informational only: palette-domain metrics are biased by un-modelled bench coherent reverb.  Primary gating is the residual-domain radial_corr above."
+          "note": "Informational only: palette-domain metrics are biased by un-modelled bench coherent reverb. Primary gating is the residual-domain radial_corr above."
         },
         "log_multiplier_assumed": 137.4,
         "rayleigh_target_cov_linear": 0.5227,
@@ -3362,7 +3362,7 @@
     {
       "name": "M-diag. Legacy palette CoV_log + radial_corr (informational)",
       "status": "diagnostic",
-      "summary": "Legacy palette-domain speckle diagnostic vs E4a Wave 0 anchor.  CoV_log: sim 0.524 vs bench 0.384 (36% rel.err).  Palette radial_corr: sim 0.166 mm vs bench 0.458 mm (64% rel.err).  Both metrics biased by un-modelled coherent reverb (see test_speckle_wave0 docstring); does NOT gate Test M.",
+      "summary": "Legacy palette-domain speckle diagnostic vs E4a Wave 0 anchor. CoV_log: sim 0.524 vs bench 0.384 (36% rel.err). Palette radial_corr: sim 0.166 mm vs bench 0.458 mm (64% rel.err). Both metrics biased by un-modelled coherent reverb (see test_speckle_wave0 docstring); does NOT gate Test M.",
       "detail": {
         "anchor_label": "E4a (uniform milk, slider 68 D60, n=3 takes)",
         "bench": {
@@ -3385,7 +3385,7 @@
           "radial_corr_delta_mm": -0.2919074851543214,
           "radial_corr_rel": 0.6379567908740881
         },
-        "note": "Informational only: palette-domain metrics are biased by un-modelled bench coherent reverb.  Primary gating is the residual-domain radial_corr above."
+        "note": "Informational only: palette-domain metrics are biased by un-modelled bench coherent reverb. Primary gating is the residual-domain radial_corr above."
       },
       "bank": "phenomenology"
     }

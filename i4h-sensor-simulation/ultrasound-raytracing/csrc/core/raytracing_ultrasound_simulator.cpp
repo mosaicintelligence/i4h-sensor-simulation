@@ -210,36 +210,20 @@ struct ControlPoint {
  * (`derive_gain_db.py` etc. derive `gain_db` against this normalised
  * curve).
  *
- * Pass 28h (1/2) -- fixes a long-standing bug where the previous loop
- * (`while (depth < it->depth) ++it`) was inverted and silently
- * collapsed any multi-CP schedule to a 2-point linear interpolation
- * between the first two control points.  That bug was masked because
- * (a) Tier 1 Test H is a pure Python<->Python self-consistency check
- * that never exercises this kernel and (b) the YAML's water-derived
- * schedule has zeros at its first three CPs, so the bogus
- * extrapolation happened to give the intended ~0 dB ramp in the
- * imaging band.  The fix uses std::upper_bound to find the bracketing
- * CPs in O(log N) per sample.
+ * The control points are walked with std::upper_bound for O(log N)
+ * lookup per sample.
  *
- * Pass 28h (2/2) -- fixes the depth-vs-sample-index mapping.  The
- * previous code computed `depth_cm = (c * (i/fs) / 2) * 100` which
- * implicitly assumed the RF buffer pitch is `c/(2*fs) ~ 0.0154 mm` at
- * 1540 m/s, 50 MHz.  The simulator's actual scanline buffer pitch is
- * `t_far/buffer_size` (cf. line ~601, optix_trace.cu raygen offset
- * computation), which on the canonical config (`t_far_mm = 30`,
- * `buffer_size = 4096`) is 0.0073 mm/sample -- a 2.1x mismatch that
- * applied any non-trivial TGC schedule at roughly half the YAML's
- * physical depth.  This bug was caught by the Pass 28h Tier 1 Test H
- * round-trip (commit message); fix maps sample index -> physical depth
- * via the actual buffer pitch.  Callers pass `t_far_mm` directly; the
- * old `c` and `fs` defaults are kept as ignored arguments to preserve
- * the call-site signature.
+ * The sample-index to physical-depth mapping uses the scanline buffer
+ * pitch `t_far_mm / depth_samples` (matching the raygen offset
+ * computation in `optix_trace.cu`). Callers pass `t_far_mm` directly;
+ * the legacy `c` and `fs` arguments are retained as ignored parameters
+ * to preserve the call-site signature.
  *
  * @param depth_samples Number of samples along depth
  * @param control_points Vector of (depth_cm, gain_db) pairs, sorted ascending
  * @param t_far_mm Physical depth at the last sample (mm) -- buffer pitch is t_far_mm/depth_samples
- * @param c (Ignored; retained for ABI compatibility with pre-Pass-28h callers.)
- * @param fs (Ignored; retained for ABI compatibility with pre-Pass-28h callers.)
+ * @param c (Ignored; retained for ABI compatibility.)
+ * @param fs (Ignored; retained for ABI compatibility.)
  * @return TGC curve interpolated from control points
  */
 static std::unique_ptr<CudaMemory> create_piece_wise_tgc(
@@ -398,7 +382,7 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
       psf_lat_2d_kernel_type_ = lateral_psf_kernel_type;
       psf_lat_2d_sigma_theta_rad_ = lateral_psf_sigma_theta_rad;
       constexpr uint32_t depth_bins = 64;
-      // Pass 5: kernel_radius scales with the angular array so the near-field
+      // kernel_radius scales with the angular array so the near-field
       // beam (sigma ~ 100+ angular bins at r ≈ 1 mm with the PV .035 geometry)
       // can fit inside the kernel window without truncation, and the cyclic
       // angular convolution (see `convolve_columns_depth_dependent_kernel`)
@@ -421,7 +405,7 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
       for (uint32_t b = 0; b < depth_bins; ++b) {
         const float depth_mm = (static_cast<float>(b) + 0.5f) / static_cast<float>(depth_bins) * t_far;
         const float z = depth_mm - focal_mm;  // distance from focus (mm)
-        // Pass 5c: clamp the pre-focal beam expansion to its focal value.
+        // Clamp the pre-focal beam expansion to its focal value.
         //
         // The textbook Gaussian beam w(z) = w0 * sqrt(1 + (z/z_R)^2) is symmetric
         // about the focus, so it predicts a *wide* mm-scale beam at depths
@@ -451,14 +435,14 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
         // polar view across all radii) and removes the residual bright-
         // center contribution from near-field wires being smeared across
         // many angular bins. The cyclic + wide-kernel + L1 normalization
-        // from Pass 5 still applies; the only change is the sigma_mm
-        // schedule per depth_bin.
-        // Pass 5d: branch on lateral PSF kernel type.
-        //   0 = legacy fixed-focus Gaussian beam (pre-Pass-5d default; see
-        //       comment above for the textbook + clamp derivation).
-        //   1 = constant-angular Gaussian (Pass 5d). Every depth bin uses
-        //       the same angular sigma -- the SA-aware kernel motivated by
-        //       the bench's constant ~7.3 deg angular FWHM across r.
+        // still applies; the only change is the sigma_mm schedule per
+        // depth_bin.
+        // Branch on lateral PSF kernel type:
+        //   0 = fixed-focus Gaussian beam (see comment above for the
+        //       textbook + clamp derivation).
+        //   1 = constant-angular Gaussian. Every depth bin uses the same
+        //       angular sigma -- the SA-aware kernel motivated by the
+        //       bench's constant ~7.3 deg angular FWHM across r.
         float sigma_bins;
         if (lateral_psf_kernel_type == 1) {
           // Constant-angular Gaussian: sigma_bins independent of depth.
@@ -478,7 +462,7 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
           row[i] = v;
           sum += v;
         }
-        // Pass 5: kept L1 normalization (sum = 1).
+        // L1 normalization (sum = 1).
         //
         // Empirical comparison vs L2 normalization (sqrt(sum_sq) = 1):
         //   * L2 norm preserves envelope amplitude for *uncorrelated* random-
@@ -513,7 +497,7 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
       psf_lat_2d_kernel_radius_ = kernel_radius;
     }
 
-    // Pass 7 — per-depth additive-noise weight cache.
+    // Per-depth additive-noise weight cache.
     //
     // We multiply the additive-RF-noise sigma by a depth-dependent weight so
     // that after the L1-normalised depth-dependent lateral PSF concentrates
@@ -554,7 +538,7 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
 
       std::vector<float> w(buffer_size, 1.f);
       if (lateral_psf_kernel_type == 1) {
-        // Pass 5d: constant-angular Gaussian -> sigma_bins is uniform in r,
+        // Constant-angular Gaussian -> sigma_bins is uniform in r,
         // so the L1-normalised cyclic convolution produces uniform post-PSF
         // noise variance, and the depth weight collapses to 1. The
         // calibrated `noise.sigma` therefore feeds the additive RF noise
@@ -612,7 +596,7 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
     }
   }
 
-  // Post-Hilbert envelope-detection low-pass kernel (Pass 5e).  Built once
+  // Post-Hilbert envelope-detection low-pass kernel. Built once
   // per (probe frequency) change; FWHM = 1 wavelength is the textbook
   // envelope-detector smoothing for a Hilbert-magnitude envelope (suppresses
   // the 2x carrier-frequency ripple while preserving the slow envelope).
@@ -719,7 +703,7 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     // Scale scatter integral so vascular/cystic phantoms have visible background; wire phantom
     // remains valid (reflections dominate). 0 = strict integral (dark); ~40 gives usable range.
     params.scatter_integral_scale = sim_params.scatter_integral_scale;
-    // Pass 5b: per-scanline scatter decorrelation (see SimParams).
+    // Per-scanline scatter decorrelation (see SimParams).
     params.scatter_angular_decorrelate = sim_params.scatter_angular_decorrelate ? 1u : 0u;
     params.frame_seed = sim_params.frame_seed;
     params.ivus_rays_per_scanline =
@@ -754,17 +738,16 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
 
   // Process "RF data" into B - mode image
 
-  // PSF/noise-weight cache update -- moved out of the conv_psf gate (Pass 7)
-  // so the per-depth additive-noise weight built alongside the lateral PSF is
+  // PSF/noise-weight cache update -- runs outside the conv_psf gate so the
+  // per-depth additive-noise weight built alongside the lateral PSF is
   // available to stage 0.9 below. update_psfs() is idempotent: it only
-  // rebuilds when probe params (or, since Pass 5d, the lateral-PSF kernel
-  // type / sigma_theta) change, so unconditional invocation has zero cost on
-  // the steady-state hot path.
+  // rebuilds when probe params (or the lateral-PSF kernel type /
+  // sigma_theta) change, so unconditional invocation has zero cost on the
+  // steady-state hot path.
   update_psfs(probe, sim_params.stream, sim_params.buffer_size, sim_params.t_far,
               sim_params.lateral_psf_kernel_type, sim_params.lateral_psf_sigma_theta_rad);
 
-  // 0.9 Additive Gaussian RF noise (Pass 6, moved pre-PSF in Pass 6 v2,
-  //     depth-weighted in Pass 7)
+  // 0.9 Pre-PSF additive Gaussian RF noise (depth-weighted)
   //
   // Adds N(0, (noise_sigma * w(z))^2) per RF sample to the raw post-
   // raytracing buffer, BEFORE the PSF convolutions. The depth weight w(z)
@@ -788,9 +771,9 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   // on `sigma <= 0` so existing callers pay no overhead.
   if (sim_params.noise_sigma > 0.f) {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Additive RF noise", sim_params.stream);
-    // Pass 28 -- noise_seed decoupled from frame_seed.  When noise_seed is
-    // 0 (legacy default) we fall back to frame_seed to preserve the old
-    // behaviour where the noise tracks the scatter realization.  When set
+    // noise_seed is decoupled from frame_seed.  When noise_seed is 0 we
+    // fall back to frame_seed so the noise tracks the scatter realization.
+    // When set
     // non-zero by the caller, the noise realization is decoupled from
     // scatterer seeding entirely.
     const uint32_t base_seed =
@@ -887,7 +870,7 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     write_image(d_scanlines.get(), plane_size, "debug_images/2_tgc.png");
   }
 
-  // 1.55 Reference gain (Pass 3b)
+  // 1.55 Reference gain
   //
   // Apply the calibrated reference-gain scalar to the post-TGC RF buffer:
   //   rf <- rf * 10^(gain_db / 20)
@@ -914,9 +897,9 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     }
   }
 
-  // (Additive Gaussian RF noise was moved to stage 0.9 above, pre-PSF, in
-  // Pass 6 v2 to give the noise its physical bandwidth via the same PSF
-  // convolution that bandlimits the scatter signal.)
+  // (Additive Gaussian RF noise is applied at stage 0.9 above, pre-PSF, so
+  // the same PSF convolution that bandlimits the scatter signal also
+  // bandlimits the noise.)
 
   // 2. Envelope detection
   {
@@ -924,7 +907,7 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
 
     cuda_algorithms_->hilbert_row(d_scanlines.get(), plane_size, sim_params.stream);
 
-    // 2a. Post-envelope additive Gaussian noise (Pass 20).
+    // 2a. Post-envelope additive Gaussian noise.
     //
     // Adds N(envelope_noise_mean, envelope_noise_sigma^2) per envelope pixel
     // BEFORE the post-Hilbert LPF (stage 2b below), so the LPF convolves the
@@ -939,9 +922,9 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     // as water (where the upstream envelope is ~0), so anechoic regions render
     // with a calibrated mean palette that matches the bench (~38-42).
     if (sim_params.envelope_noise_sigma > 0.f || sim_params.envelope_noise_mean != 0.f) {
-      // Pass 20b -- gain-scale the calibrated envelope_noise so the noise
-      // floor tracks the simulated slider (see SimParams docstring above).
-      // The reference is the gain_db at which envelope_noise_mean/sigma were
+      // Gain-scale the calibrated envelope_noise so the noise floor tracks
+      // the simulated slider (see SimParams docstring above). The reference
+      // is the gain_db at which envelope_noise_mean/sigma were
       // measured; when sim_params.envelope_noise_reference_gain_db == 0.f
       // AND gain_db == 0.f the scale is 1 (legacy no-op path).
       float noise_gain_scale = 1.f;
@@ -953,14 +936,13 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
       }
       const float scaled_mean  = sim_params.envelope_noise_mean  * noise_gain_scale;
       const float scaled_sigma = sim_params.envelope_noise_sigma * noise_gain_scale;
-      // Pass 28 -- noise_seed decoupled from frame_seed (see Pass 28 comment
-      // on the pre-PSF noise stage above).  noise_seed = 0 falls back to
-      // frame_seed for legacy behaviour.
+      // noise_seed is decoupled from frame_seed (see the pre-PSF noise
+      // stage comment above). noise_seed = 0 falls back to frame_seed.
       const uint32_t base_seed =
           (sim_params.noise_seed != 0u) ? sim_params.noise_seed : sim_params.frame_seed;
-      // Pass 28i -- when the TGC depth-scaling flag is set, multiply the
-      // post-Hilbert envelope noise by the cached `tgc_curve_` (the same
-      // per-sample linear gain that scaled the signal at the TGC stage,
+      // When the TGC depth-scaling flag is set, multiply the post-Hilbert
+      // envelope noise by the cached `tgc_curve_` (the same per-sample
+      // linear gain that scaled the signal at the TGC stage,
       // normalised to 1.0 at r = 0).  This makes the post-Hilbert noise
       // floor physically correct (analog electronic noise that has been
       // TGC-amplified in the receive chain) and lets the YAML drive the
@@ -986,7 +968,7 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     }
 
     // 2b. Post-Hilbert low-pass to suppress the 2x-carrier ripple in
-    // |analytic_signal| and expose the slow envelope (Pass 5e).
+    // |analytic_signal| and expose the slow envelope.
     //
     // Without this stage the sim's effective envelope FWHM is a single
     // sample (~30 um) regardless of the kernel's actual envelope width,
@@ -1029,22 +1011,22 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     write_image(d_scanlines.get(), plane_size, "debug_images/3_envelope_detection.png");
   }
 
-  // 2.5 Ring-down injection (Pass 4)
+  // 2.5 Ring-down injection
   //
   // Adds the calibrated catheter ring-down residual on top of the envelope
   // buffer (i.e. POST-Hilbert). Off by default (`ring_down.enabled == false`
   // => no signal added, i.e. silent lumen). The waveform is truncated past
   // `extent_mm` so it contributes to the inner zone only.
   //
-  // Why post-Hilbert (changed from Pass 2's pre-Hilbert location): the
-  // calibrated bench template is delivered in envelope-amp units (the YAML
-  // loader applies the palette->envelope-amp conversion via
+  // Why post-Hilbert: the calibrated bench template is delivered in
+  // envelope-amp units (the YAML loader applies the palette->envelope-amp
+  // conversion via
   // amp = 10^(palette/log_mult) - 1 with the speckle floor subtracted), so
   // adding it directly to the envelope buffer is the literal mathematical
   // operation we want — "the catheter contributes this envelope on top of
-  // the scattering envelope". Adding it pre-Hilbert (Pass 2's location) was
-  // a category error: cuFFTDx's Hilbert is a length-N cyclic FFT, which
-  // smears any inner-zone transient across the *entire* buffer via spectral
+  // the scattering envelope". Adding it pre-Hilbert would be a category
+  // error: cuFFTDx's Hilbert is a length-N cyclic FFT, which would smear
+  // any inner-zone transient across the *entire* buffer via spectral
   // side lobes. For the PV .035 ring-down (peak envelope ~45 over 410
   // samples ≈ 3 mm) the cyclic-Hilbert wraparound contributes ~+50 palette
   // at r ≈ 29 mm even though `extent_mm = 3` should bound the influence to
@@ -1073,7 +1055,8 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     // So the spatial pitch in the scanlines is `t_far / buffer_size` mm/sample
     // — NOT `c / SAMPLING_FREQ / 2`. Using the wrong convention misaligns the
     // injected ring-down with where it ends up after scan conversion, which
-    // matters because Pass 2 must reproduce the calibrated 1.8 mm peak depth.
+    // matters because the ring-down stage must reproduce the calibrated
+    // 1.8 mm peak depth.
     const float samples_per_mm = (sim_params.t_far > 0.f)
                                      ? static_cast<float>(sim_params.buffer_size) / sim_params.t_far
                                      : 0.f;
@@ -1150,9 +1133,9 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     }
 
     if (extent_samples > 0 && ring_down_waveform_) {
-      // Pass 4b — scale the ring-down envelope by the same gain factor that
-      // was applied to the scatter signal pre-Hilbert (stage 1.55).  The
-      // bench's catheter ring-down rides on the receive chain, so it scales
+      // Scale the ring-down envelope by the same gain factor that was
+      // applied to the scatter signal pre-Hilbert (stage 1.55). The bench's
+      // catheter ring-down rides on the receive chain, so it scales
       // linearly with the receiver gain (i.e. with `gain_db`).  Before this
       // fix the ring-down was injected at a fixed envelope amplitude
       // independent of `gain_db`, so at sliders below the calibration
@@ -1188,7 +1171,7 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     write_image(d_scanlines.get(), plane_size, "debug_images/4_log_compression.png");
   }
 
-  // 3.5 Display window (Pass 3b / 20)
+  // 3.5 Display window
   //
   // Direct palette clamp to [reject_palette, saturation_palette]. With both
   // at 0.f (default) this stage is a no-op so default callers see the
@@ -1196,9 +1179,9 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   // (reject_palette=11, saturation_palette=239 from gain_lut.json) reproduce
   // the device's reject floor and saturation ceiling directly.
   //
-  // Pass 20: when `reject_palette_softness > 0` the reject floor uses a
-  // softplus blend instead of a hard `max(palette, reject)` clamp. This
-  // removes the spurious histogram spike at the floor that the hard clamp
+  // When `reject_palette_softness > 0` the reject floor uses a softplus
+  // blend instead of a hard `max(palette, reject)` clamp. This removes the
+  // spurious histogram spike at the floor that the hard clamp
   // creates under post-envelope Gaussian noise with tails below the floor.
   if (sim_params.saturation_palette > sim_params.reject_palette) {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Display window", sim_params.stream);
@@ -1247,7 +1230,7 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     }
   }
 
-  // 4.5 Catheter sheath dead-zone mask (Pass 6 v2; Pass 28j extended)
+  // 4.5 Catheter sheath dead-zone mask
   //
   // Overwrite the inner radial samples of the final palette buffer to
   // reproduce the bench's catheter zone.  The bench's catheter wall blocks
@@ -1259,9 +1242,9 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   // palette is independent of the display-window blending used elsewhere
   // in the pipeline.
   //
-  // Pass 28j: the c_take2_water E6 corpus shows the bench's catheter zone
-  // sitting at palette ~ 11 (= reject_palette / soft-reject floor),
-  // gain-independent, NOT at literal palette 0 as the legacy P_035 anchor
+  // The c_take2_water E6 corpus shows the bench's catheter zone sitting at
+  // palette ~ 11 (= reject_palette / soft-reject floor), gain-independent,
+  // NOT at literal palette 0 as the original P_035 anchor
   // assumed.  The caller now passes `reject_palette` as the dead-zone fill
   // value (was hard-coded 0.f) so the simulator matches the bench's
   // observed inner-zone palette and Test E `RMS_inner_3mm` drops from the
