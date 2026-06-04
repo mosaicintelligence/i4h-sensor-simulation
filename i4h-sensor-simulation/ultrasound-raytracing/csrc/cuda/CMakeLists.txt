@@ -28,10 +28,17 @@ set_property(TARGET ray_sim_optix
     PROPERTY CUDA_PTX_COMPILATION ON
     )
 
-# Set C++17 standard for ray_sim_optix
+# PTX output supports only a SINGLE virtual architecture, so override the
+# project-wide CMAKE_CUDA_ARCHITECTURES (which may be a list when multi-arch
+# binaries are requested, e.g. inside the production Docker image). PTX is
+# forward-compatible: the OptiX runtime JIT-compiles it for the running GPU
+# at first use, so pinning to a low virtual arch keeps the artifact portable.
+# sm_70 is the lowest arch supported by cuFFTDx (the rest of the build), so
+# we use compute_70 here for consistency.
 set_target_properties(ray_sim_optix PROPERTIES
     CUDA_STANDARD 17
     CUDA_STANDARD_REQUIRED ON
+    CUDA_ARCHITECTURES "70-virtual"
     )
 
 target_link_libraries(ray_sim_optix
