@@ -74,7 +74,7 @@ Materials::Materials() {
   // statistics, not interface brightness.
   //
   materials_ = {{"water", Material(1.48f, 0.0022f, 1480.f, 0.f)},
-                {"blood", Material(1.68f, 0.2f, 1584.f, 0.1f, 0.1f, 0.1f)},  // PMC3570716 T1, PMC5126009 T1
+                {"blood", Material(1.68f, 0.7f, 1584.f, 0.22f, 0.16f, 0.24f)},  // high-frequency IVUS-tuned default
                 {"fat", Material(1.38f, 0.63f, 1450.f, 1.f, 0.f, 1.f)},  // specularity defaulted to 1.0 (was 0.0 -- bug, see note above)
                 {"liver", Material(1.65f, 0.7f, 1550.f, 0.7f, 0.f, 0.3f)},  // specularity defaulted to 1.0 (was 1e-5 -- bug, see note above)
                 {"muscle", Material(1.70f, 1.09f, 1580.f, 0.5f, 0.8f, 0.4f)},
@@ -92,7 +92,10 @@ Materials::Materials() {
                 {"tungsten", Material(101.f, 15.f, 5200.f, 0.05f, 0.05f, 0.05f)},
                 /*
                  * IVUS / vascular materials (literature; attenuation in dB/(cm·MHz)):
-                 * - lumen: blood at 1 MHz — c 1584 m/s, Z 1.68 MRayl, α 0.2 (PMC3570716 Table 1; PMC5126009 Table 1).
+                 * - lumen/blood: c 1584 m/s, Z 1.68 MRayl, α 0.7 with elevated
+                 *   scatter terms (mu0=0.22, mu1=0.16, sigma=0.24). This default
+                 *   follows high-frequency IVUS tuning and better visual realism in
+                 *   pullback renders than legacy low-frequency blood attenuation.
                  * - vessel_wall: blood vessel c 1571 m/s, Z 1.82 MRayl (PMC5126009); α ~1 from 50 MHz coronary data (e.g. 4.99 dB/mm @ 50 MHz).
                  *   Specularity set to default 1.0 (Lambertian-like) -- previously 1e-5 which
                  *   gave a constant maximum specular intensity at every wall hit (saturated
@@ -100,7 +103,7 @@ Materials::Materials() {
                  * - extravascular: muscle-like c 1547 m/s, Z 1.62 MRayl (PMC5126009); α 0.7.
                  * Refs: Goss et al. JASA compilations; PMC3570716 (Ultrasound Med Biol 2013); PMC5126009 (J Ultrasound 2016); Lockwood et al. UMB 17(7) 1991 (35–65 MHz vascular).
                  */
-                {"lumen", Material(1.68f, 0.2f, 1584.f, 0.1f, 0.1f, 0.1f)},
+                {"lumen", Material(1.68f, 0.7f, 1584.f, 0.22f, 0.16f, 0.24f)},
                 {"vessel_wall", Material(1.82f, 1.0f, 1571.f, 0.5f, 0.6f, 0.35f)},
                 {"extravascular", Material(1.62f, 0.7f, 1547.f, 0.5f, 0.4f, 0.3f)},
                 /*

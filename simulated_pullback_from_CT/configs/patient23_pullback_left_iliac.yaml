@@ -1,0 +1,65 @@
+paths:
+  patient_root: /home/jocelynbarker/i4h-sensor-simulation/patient_23
+  lumen_stl: /home/jocelynbarker/i4h-sensor-simulation/patient_23/mesh/aorta.stl
+  centerline_txt: /home/jocelynbarker/i4h-sensor-simulation/patient_23/centerlines/Aorta_+_Left_Iliac.txt
+  snakes_csv: /home/jocelynbarker/i4h-sensor-simulation/patient_23/snakes/Aorta_+_Left_Iliac-snakes.csv
+  raysim_yaml: /home/jocelynbarker/i4h-sensor-simulation/instrument-calibration/p035_visions/volcano_s5i.yaml
+  output_root: /home/jocelynbarker/i4h-sensor-simulation/simulated_pullback_from_CT/outputs/patient_23_left_iliac
+
+wall_model:
+  thickness_scale_of_radius: 0.08
+  min_thickness_mm: 1.0
+  max_thickness_mm: 3.0
+  smooth_iterations: 2
+
+trajectory:
+  step_mm: 0.4
+  max_frames: 900
+
+simulation:
+  world_background_material: lumen
+  lumen_mesh_material: vessel_wall
+  outer_mesh_material: extravascular
+  material_overrides:
+    # High-frequency IVUS-inspired trial values (match Aorta_Extended run so
+    # both pullbacks share identical acoustic behavior for storytelling).
+    lumen:
+      attenuation: 0.70
+      speed_of_sound: 1584.0
+      impedance: 1.68
+      mu0: 0.22
+      mu1: 0.16
+      sigma: 0.24
+    blood:
+      attenuation: 0.70
+      speed_of_sound: 1584.0
+      impedance: 1.68
+      mu0: 0.22
+      mu1: 0.16
+      sigma: 0.24
+    vessel_wall:
+      attenuation: 1.00
+      speed_of_sound: 1571.0
+      impedance: 1.82
+  show_progress: true
+
+export:
+  fps: 30
+  dicom_filename: simulated_ivus_pullback.dcm
+  mp4_filename: simulated_ivus_pullback_polar.mp4
+  camera_eye_mp4_filename: simulated_ivus_pullback_camera_eye.mp4
+  gods_eye_mp4_filename: simulated_ivus_pullback_gods_eye.mp4
+  npy_filename: polar_stack.npy
+  pose_csv_filename: pullback_poses.csv
+  pose_json_filename: pullback_poses.json
+  geometry_manifest_filename: geometry_manifest.json
+  run_report_filename: run_report.md
+
+dicom:
+  patient_name: PAT23^SIMULATED
+  patient_id: PAT23_SIM
+  study_description: Simulated IVUS Pullback From CTA
+  series_description: PAT23 Aorta+Left Iliac IVUS Pullback (HighFreq Literature Trial)
+  manufacturer: I4H
+  model_name: CTA_TO_IVUS_SIM
+  gain_slider_ref: 54
