@@ -2,11 +2,11 @@
 """Derive ``processing.noise.sigma`` from the protocol-correct E6 anechoic
 AR-on deep-tail STD.
 
-Calibration history:
+Calibration approach:
 
-  * Pass 6 (legacy): the bench reference was the P_035 wedge-masked
-    anechoic ROI at slider 54 -- mean palette 46.2, std palette 20.27
-    (E5, n=19 frames). The script bisected ``noise.sigma`` so the
+  An earlier iteration used the P_035 wedge-masked anechoic ROI at
+  slider 54 as the bench reference -- mean palette 46.2, std palette
+  20.27 (E5, n=19 frames). The script bisected ``noise.sigma`` so the
     simulator's anechoic post-clamp MEAN palette matched 46.2.  But the
     P_035 ROI was the inter-wire wedge mask on a 5-wire wire phantom and
     wire-PSF sidelobes leak into the mask, inflating the apparent
@@ -32,7 +32,7 @@ Calibration history:
     bench's AR-on processing flattens the noise distribution to CV
     ~ 0.07, a shape that single-scalar Gaussian RF noise cannot
     reproduce.  Test F (Noise floor sigma) is expected to fail on the
-    std criterion until a Pass 8 noise-shape calibration is added (e.g.,
+    std criterion until a noise-shape calibration is added (e.g.,
     post-clamp Gaussian smoothing or a fundamentally different noise
     distribution).
 
@@ -230,7 +230,7 @@ def _bisect_sigma_on_mean(*, cfg, materials, target_mean: float,
     the noise distribution in a way that single-scalar Gaussian RF noise
     cannot match.  The diagnostic STD value will therefore not match the
     bench's STD -- Test F (Noise floor sigma) is expected to fail until
-    a Pass 8 noise-shape calibration is added (e.g., post-clamp Gaussian
+    a noise-shape calibration is added (e.g., post-clamp Gaussian
     smoothing, or a fundamentally different noise shape).
     """
     history: list[dict] = []
@@ -347,7 +347,7 @@ def main() -> None:
     print(f"  Coefficient-of-variation gap: sim CV={cv_sim:.2f} vs "
           f"bench CV={cv_bench:.2f}  -> sim distribution is ~"
           f"{cv_sim/max(cv_bench,1e-6):.1f}x wider in palette space "
-          "(noise-shape model limitation, Pass 8 deferred).")
+          "(noise-shape model limitation).")
 
     out: dict[str, Any] = {
         "method_summary": (
@@ -372,7 +372,7 @@ def main() -> None:
             "CV ~ 0.5; bench AR-on processing flattens the noise distribution "
             "to CV ~ 0.07, a shape that single-scalar Gaussian RF noise "
             "cannot reproduce.  Test F (Noise floor sigma) is expected to "
-            "fail until a Pass 8 noise-shape calibration is added (e.g., "
+            "fail until a noise-shape calibration is added (e.g., "
             "post-clamp Gaussian smoothing, or a fundamentally different "
             "noise distribution)."
         ),

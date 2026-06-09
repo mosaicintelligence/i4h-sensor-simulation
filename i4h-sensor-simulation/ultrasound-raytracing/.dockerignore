@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Keep the docker build context lean. The production image
+# (`docker/Dockerfile`) only needs:
+#   - CMakeLists.txt, pyproject.toml, README.md
+#   - cmake/, csrc/, include/, raysim/
+#   - docker/scene_runner.py
+#   - mesh/  (bundled IVUS meshes for the built-in example)
+
+# Build artefacts
+build*/
+*.so
+*.o
+*.obj
+.venv/
+__pycache__/
+*.pyc
+
+# VCS
+.git/
+.gitignore
+
+# Editor / test caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+
+# Examples and host-side tools are not needed inside the runtime image.
+examples/
+utils/
+
+# Large bench / calibration assets that should never end up in the image.
+# (These paths are absolute under the *repo* root rather than the
+# ultrasound-raytracing/ build context, so they're already outside the context
+# — they're listed here for documentation in case the context is widened.)
+../assets/
+../ivus_test_0508/
+../ivus_test_0515/
+../P_035_PointScatter/
+../instrument-calibration/
+../to_be_deleted/

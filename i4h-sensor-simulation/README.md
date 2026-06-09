@@ -22,18 +22,22 @@ Key features:
 
 ```
 i4h-sensor-simulation/
-├── docs/                      # Documentation and guides
-├── tools/                     # Development and maintenance tools
+├── docs/                      # Cross-component documentation
+│   ├── ultrasound_simulator_foundations.md    # Physics primer
+│   ├── ultrasound_simulator_technical_guide.md# Pipeline + physics deep dive
+│   ├── ultrasound_simulator_tutorial.md       # Hands-on tutorial (7+ examples)
+│   └── simulation_acceptance_criteria.md      # Porcine-lab acceptance gates
 └── ultrasound-raytracing/     # Ultrasound raytracing simulator
     ├── .devcontainer/         # Development container configuration
-    ├── .vscode/               # VS Code configuration
     ├── cmake/                 # CMake build configuration
+    ├── configs/               # Reference simulator configurations
     ├── csrc/                  # C++/CUDA source code
+    ├── docs/                  # Simulator-local docs (quick_start, vm_setup, docker_build, ivus writeup)
     ├── examples/              # Usage examples and demos
     ├── include/               # C++ header files
+    ├── mesh/                  # Bundled phantom meshes (cylinder, etc.)
     ├── raysim/                # Python package and bindings
-    ├── third_party/           # External dependencies
-    └── utils/                 # Utility scripts
+    └── utils/                 # Utility scripts (phantom maker, etc.)
 ```
 
 ## Requirements
@@ -54,8 +58,12 @@ See individual component READMEs for specific requirements.
    cd i4h-sensor-simulation
    ```
 
-2. Follow the setup instructions for the specific simulator you want to use:
-   - [Ultrasound Raytracing Simulator](./ultrasound-raytracing/README.md)
+2. Pick a starting point:
+   - **Just want a rendered frame?** → [Quick Start](./ultrasound-raytracing/docs/quick_start.md)
+   - **Setting up a fresh cloud GPU?** → [VM Setup (GCP)](./ultrasound-raytracing/docs/vm_setup.md)
+   - **Installing on a machine you already own?** → [Simulator README](./ultrasound-raytracing/README.md)
+   - **Want to learn the simulator step by step?** → [Tutorial](./docs/ultrasound_simulator_tutorial.md)
+   - **Curious about the physics?** → [Technical Guide](./docs/ultrasound_simulator_technical_guide.md)
 
 
 ## License

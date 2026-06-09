@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Pass 5d — derive ``processing.lateral_psf_kernel.sigma_theta_rad`` from bench.
+"""Derive ``processing.lateral_psf_kernel.sigma_theta_rad`` from bench.
 
-The Pass 5d constant-angular Gaussian lateral PSF kernel uses one global
+The constant-angular Gaussian lateral PSF kernel uses one global
 parameter, ``sigma_theta_rad`` (the angular standard deviation of the
 lateral PSF, in radians), applied uniformly across depth.  The bench
 anchor is the **median angular FWHM** of unsaturated tungsten wires from

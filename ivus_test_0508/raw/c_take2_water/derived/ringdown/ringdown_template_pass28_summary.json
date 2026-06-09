@@ -1,0 +1,60 @@
+{
+  "reference_gain_slider": 50.0,
+  "template_pitch_mm": 0.12,
+  "n_samples": 83,
+  "r_max_mm": 9.84,
+  "log_chain_at_extraction": {
+    "log_multiplier": 137.4,
+    "log_floor": 1.0,
+    "reject_palette": 11.0,
+    "reject_softness": 32.0
+  },
+  "peak": {
+    "env_reverb": 39.650547761859606,
+    "r_mm": 2.04,
+    "five_pct_extent_mm_past_peak": 1.1999999999999997
+  },
+  "tail": {
+    "max_amp_past_4mm": 0.043568880889679196,
+    "max_r_past_4mm_mm": 7.68,
+    "fraction_of_primary": 0.001098821664491321,
+    "fraction_of_total_reverb_mass_past_3mm": 0.01728122041911595
+  },
+  "per_pair_normalization": [
+    {
+      "label": "g40 D60",
+      "gain_slider": 40.0,
+      "diameter_mm": 60.0,
+      "delta_dB_to_ref": 9.0,
+      "scale_to_ref": 2.8183829312644537
+    },
+    {
+      "label": "g50 D30",
+      "gain_slider": 50.0,
+      "diameter_mm": 30.0,
+      "delta_dB_to_ref": 0.0,
+      "scale_to_ref": 1.0
+    },
+    {
+      "label": "g50 D60",
+      "gain_slider": 50.0,
+      "diameter_mm": 60.0,
+      "delta_dB_to_ref": 0.0,
+      "scale_to_ref": 1.0
+    }
+  ],
+  "artefacts": {
+    "palette_equivalent_template": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_template_pass28_envelope_g50_d60.npy",
+    "palette_off_template": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_template_pass28_palette_off_g50_d60.npy",
+    "palette_diff_template": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_template_pass28_palette_diff_g50_d60.npy",
+    "diagnostic_figure": "instrument-calibration/p035_visions/tier1_results/figures/pass28b_template_compare.png"
+  },
+  "proposed_yaml_edits_when_ready_to_wire": {
+    "processing.ring_down.waveform_path": "ivus_test_0508/raw/c_take2_water/derived/ringdown/ringdown_template_pass28_palette_off_g50_d60.npy",
+    "processing.ring_down.template_pitch_mm": 0.12,
+    "processing.ring_down.template_speckle_floor_palette": 37.70958850860596,
+    "processing.ring_down.extent_mm": 1.1999999999999997,
+    "processing.ring_down.amplitude": "RECALIBRATE via derive_ringdown_amplitude.py after swapping the waveform; new template has different peak palette and different r_max so the bisection target shifts.",
+    "comment": "Pass 28 envelope-domain reverb template. Anchored at slider 50, averaged across all three paired E6 captures. 10 mm radial extent captures the multi-lobe tail (8-15% of total reverb mass) that the 3 mm v2 template misses."
+  }
+}

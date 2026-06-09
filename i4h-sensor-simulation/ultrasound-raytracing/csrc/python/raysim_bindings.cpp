@@ -409,7 +409,7 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_property_readonly("element_radius_mm", &raysim::IVUSProbe::get_element_radius_mm)
       .def_property_readonly("focal_length_mm", &raysim::IVUSProbe::get_focal_length_mm);
 
-  // Pass 2 — bind RingDownParams so callers can drive the ring-down injection
+  // Bind RingDownParams so callers can drive the ring-down injection
   // stage from Python (and from the YAML loader in raysim/config.py).
   py::class_<raysim::RingDownParams>(m, "RingDownParams", R"pbdoc(
         Calibrated catheter ring-down injection parameters.
@@ -562,22 +562,22 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite(
           "scatter_angular_decorrelate",
           &raysim::RaytracingUltrasoundSimulator::SimParams::scatter_angular_decorrelate,
-          "Pass 5b: per-scanline pseudo-random scatter texture offset to break "
-          "near-field angular correlation (default True). Set False to compare "
-          "against the legacy correlated-scatter behaviour.")
+          "Per-scanline pseudo-random scatter texture offset to break "
+          "near-field angular correlation (default True). Set False to "
+          "use the correlated-scatter behaviour.")
       .def_readwrite(
           "frame_seed",
           &raysim::RaytracingUltrasoundSimulator::SimParams::frame_seed,
-          "Pass 5b: per-frame seed for the scatter decorrelation hash. "
+          "Per-frame seed for the scatter decorrelation hash. "
           "Keep at 0 for frame-to-frame stable speckle. Increment to draw "
-          "independent scatter realizations across frames. Pass 28 decoupled "
-          "this from the noise seed -- see `noise_seed`.")
+          "independent scatter realizations across frames. Decoupled from "
+          "the additive-noise seed -- see `noise_seed`.")
       .def_readwrite(
           "noise_seed",
           &raysim::RaytracingUltrasoundSimulator::SimParams::noise_seed,
-          "Pass 28: per-frame seed for the THREE additive-Gaussian noise "
-          "kernels (pre-PSF RF, depth-weighted RF, post-envelope), decoupled "
-          "from `frame_seed`. When 0 (legacy default) the noise kernels fall "
+          "Per-frame seed for the THREE additive-Gaussian noise kernels "
+          "(pre-PSF RF, depth-weighted RF, post-envelope), decoupled from "
+          "`frame_seed`. When 0 (default) the noise kernels fall "
           "back to `frame_seed` for backward compatibility. Set to a "
           "per-frame value (while keeping `frame_seed` constant) to match "
           "bench-like behaviour: highly correlated scatter realization "
@@ -585,20 +585,17 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite(
           "noise_sigma",
           &raysim::RaytracingUltrasoundSimulator::SimParams::noise_sigma,
-          "Pass 6: additive Gaussian RF noise standard deviation (RF "
-          "amplitude units, referred to the input of the receive chain). "
-          "When > 0, N(0, noise_sigma**2) is added per RF sample to the "
-          "raw post-raytracing buffer BEFORE the lateral and axial PSF "
-          "convolutions. Pass 6 v1 added the noise post-gain (per-pixel "
-          "white noise), but the resulting bg looked like fine static "
-          "instead of the bench's mottled speckle; Pass 6 v2 moved the "
-          "stage pre-PSF so the noise is bandlimited to the resolution "
-          "cell. Default 0 is a no-op. Calibrate via "
+          "Additive Gaussian RF noise standard deviation (RF amplitude "
+          "units, referred to the input of the receive chain). When > 0, "
+          "N(0, noise_sigma**2) is added per RF sample to the raw post-"
+          "raytracing buffer BEFORE the lateral and axial PSF convolutions, "
+          "so the noise is bandlimited to the resolution cell. Default 0 "
+          "is a no-op. Calibrate via "
           "instrument-calibration/p035_visions/derive_noise_sigma.py.")
       .def_readwrite(
           "catheter_dead_zone_mm",
           &raysim::RaytracingUltrasoundSimulator::SimParams::catheter_dead_zone_mm,
-          "Pass 6 v2: catheter sheath dead-zone radius (mm). Zeros the "
+          "Catheter sheath dead-zone radius (mm). Zeros the "
           "final palette buffer for r < catheter_dead_zone_mm so the "
           "inner catheter region renders as solid black (palette 0), "
           "matching the bench. Default 0 disables the mask; a typical "
@@ -606,7 +603,7 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite(
           "envelope_noise_mean",
           &raysim::RaytracingUltrasoundSimulator::SimParams::envelope_noise_mean,
-          "Pass 20: post-envelope additive-noise baseline mean (envelope "
+          "Post-envelope additive-noise baseline mean (envelope "
           "amplitude units, post-gain). Adds a constant offset to the "
           "envelope buffer along with the per-pixel Gaussian draw at the "
           "post-Hilbert / pre-LPF stage. Combined with `envelope_noise_sigma` "
@@ -616,7 +613,7 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite(
           "envelope_noise_sigma",
           &raysim::RaytracingUltrasoundSimulator::SimParams::envelope_noise_sigma,
-          "Pass 20: post-envelope additive-noise standard deviation "
+          "Post-envelope additive-noise standard deviation "
           "(envelope amplitude units, post-gain). When > 0, "
           "N(envelope_noise_mean, envelope_noise_sigma^2) is added per "
           "envelope pixel BEFORE the post-Hilbert LPF, so the LPF "
@@ -627,7 +624,7 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite(
           "envelope_noise_reference_gain_db",
           &raysim::RaytracingUltrasoundSimulator::SimParams::envelope_noise_reference_gain_db,
-          "Pass 20b: gain_db value at which envelope_noise_mean / "
+          "gain_db value at which envelope_noise_mean / "
           "envelope_noise_sigma were CALIBRATED. The simulator scales the "
           "effective noise mean / sigma by 10^((sim_params.gain_db - "
           "envelope_noise_reference_gain_db) / 20) so the post-envelope "
@@ -637,7 +634,7 @@ rays emanate radially over 360° for a cross-sectional vessel image.
           "envelope_noise_apply_tgc_depth_scaling",
           &raysim::RaytracingUltrasoundSimulator::SimParams::
               envelope_noise_apply_tgc_depth_scaling,
-          "Pass 28i: when true, the post-Hilbert envelope-noise stage "
+          "When true, the post-Hilbert envelope-noise stage "
           "multiplies BOTH `envelope_noise_mean` and `envelope_noise_sigma` "
           "per sample by the cached TGC linear-gain curve (normalised to "
           "1.0 at r = 0).  Models the physically-correct picture of bench "
@@ -649,7 +646,7 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite(
           "reject_palette_softness",
           &raysim::RaytracingUltrasoundSimulator::SimParams::reject_palette_softness,
-          "Pass 20: softplus scale (palette units) applied to the reject "
+          "Softplus scale (palette units) applied to the reject "
           "floor in the post-log display window. When > 0 the floor uses "
           "  palette = reject + softness * log1p(exp((palette - reject)/softness))"
           " instead of a hard `max(palette, reject)` clamp, removing the "
@@ -659,44 +656,44 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite(
           "ring_down",
           &raysim::RaytracingUltrasoundSimulator::SimParams::ring_down,
-          "Pass 2: calibrated ring-down injection (RingDownParams). Enabled=False "
+          "Calibrated ring-down injection (RingDownParams). Enabled=False "
           "by default (truly silent lumen).")
       .def_readwrite(
           "reject_palette",
           &raysim::RaytracingUltrasoundSimulator::SimParams::reject_palette,
-          "Pass 3b: post-log display-window reject floor (palette units). "
+          "Post-log display-window reject floor (palette units). "
           "Inputs below this value are clamped up to it. Disabled when "
           "saturation_palette <= reject_palette (both default to 0.f).")
       .def_readwrite(
           "saturation_palette",
           &raysim::RaytracingUltrasoundSimulator::SimParams::saturation_palette,
-          "Pass 3b: post-log display-window saturation ceiling (palette units). "
+          "Post-log display-window saturation ceiling (palette units). "
           "Inputs above this value are clamped down to it.")
       .def_readwrite(
           "gain_db",
           &raysim::RaytracingUltrasoundSimulator::SimParams::gain_db,
-          "Pass 3: reference gain (dB) applied to envelope amp between Hilbert and "
-          "log compression: amp <- amp * 10^(gain_db / 20). 0.0 = no-op (default).")
+          "Reference gain (dB) applied to RF amp between TGC and ring-down: "
+          "rf <- rf * 10^(gain_db / 20). 0.0 = no-op (default).")
       .def_readwrite(
           "lateral_psf_kernel_type",
           &raysim::RaytracingUltrasoundSimulator::SimParams::lateral_psf_kernel_type,
-          "Pass 5d: lateral-PSF kernel type. 0 = legacy fixed-focus Gaussian "
-          "beam (default; pre-Pass-5d behaviour). 1 = constant-angular Gaussian "
-          "(SA-aware): every depth bin uses the same angular spread "
+          "Lateral-PSF kernel type. 0 = fixed-focus Gaussian beam (default). "
+          "1 = constant-angular Gaussian (SA-aware): every depth bin uses "
+          "the same angular spread "
           "`lateral_psf_sigma_theta_rad`, matching the bench's constant angular "
           "FWHM (~7.3 deg) on the s5i synthetic-aperture probe. Calibrate via "
           "instrument-calibration/p035_visions/derive_lateral_psf_sigma_theta.py.")
       .def_readwrite(
           "lateral_psf_sigma_theta_rad",
           &raysim::RaytracingUltrasoundSimulator::SimParams::lateral_psf_sigma_theta_rad,
-          "Pass 5d: constant angular sigma (radians) used when "
+          "Constant angular sigma (radians) used when "
           "`lateral_psf_kernel_type == 1`. Default is the calibrated PV .035 "
           "value (~0.0542 rad => FWHM ~7.31 deg) derived from 147 unsaturated "
           "Wave 0 B2 bench wires.")
       .def_readwrite(
           "ivus_rays_per_scanline",
           &raysim::RaytracingUltrasoundSimulator::SimParams::ivus_rays_per_scanline,
-          "Pass 5f: IVUS angular ray super-sampling. Fires K sub-rays per "
+          "IVUS angular ray super-sampling. Fires K sub-rays per "
           "scanline at deterministic sub-bin angular offsets and accumulates "
           "into the same scanline buffer with weight 1/K. K=1 (default) is "
           "the legacy single-ray-per-scanline behaviour. K=8 is recommended "

@@ -335,7 +335,7 @@ def acoustic_boundary_offset_mm(cfg) -> float:
     mesh surface.  We approximate that shift as half the Tier-1 calibrated
     axial PSF FWHM, scaled with pulse length and frequency:
 
-        FWHM ~ 0.318 mm at 10 MHz / 15 cycles (Pass 20c, Test C anchor).
+        FWHM ~ 0.318 mm at 10 MHz / 15 cycles (Test C anchor).
     """
     f_mhz = max(float(cfg.probe.frequency_mhz), 1e-6)
     n_cycles = float(cfg.probe.pulse_duration_cycles)

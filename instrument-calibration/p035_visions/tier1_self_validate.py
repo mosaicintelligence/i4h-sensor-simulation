@@ -1,4 +1,4 @@
-"""Pass 26 -- Tier 1 metric self-validation harness.
+"""Tier 1 metric self-validation harness.
 
 The goal is to subject every Tier 1 metric to a forward-modeling sanity
 check before we let it gate a sim parameter:
@@ -16,7 +16,7 @@ check before we let it gate a sim parameter:
 If a metric passes all three, we trust it as a gate.  If it fails (1) it
 is broken; if it fails (2) the recovery is too noisy to gate; if it fails
 (3) it conflates the parameter with an un-modeled component and must not
-gate (this is precisely what `ff_std_palette` did under Pass 22).
+gate.
 
 Phase 1 covers ``processing.noise.sigma`` only, via the envelope-domain
 residual metric ``_envelope_residual_std``.  Subsequent phases add
@@ -74,8 +74,8 @@ def _render_anechoic_milk_polar(cfg, sim_params, materials,
     """Render ``n_frames`` of milk (or water) and return a polar palette
     stack of shape ``(n_frames, n_theta, n_r)``.
 
-    The slider->dB bump uses the Pass 25 linear ``slider_to_db`` so the
-    operating point is consistent with the Tier 1 milk anchors.
+    The slider->dB bump uses the calibrated linear ``slider_to_db`` so
+    the operating point is consistent with the Tier 1 milk anchors.
     """
     if world_kind == "milk":
         world = t1.build_uniform_milk_world(materials)
@@ -96,7 +96,7 @@ def _render_anechoic_milk_polar(cfg, sim_params, materials,
 
 def _band_mask(cfg, r_lo_mm: float = 5.0, r_hi_mm: float = 20.0):
     """Return a band mask over the (theta, r) grid for the chosen depth
-    range.  Matches the Pass 25 milk anchors' r-band."""
+    range.  Matches the milk anchors' r-band."""
     _, r_mm, _, _ = t1.polar_axes(cfg)
     return (r_mm >= r_lo_mm) & (r_mm <= r_hi_mm), r_mm
 

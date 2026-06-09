@@ -6,8 +6,14 @@ data, and writes the canonical YAML configuration that the simulator in
 `../i4h-sensor-simulation/ultrasound-raytracing/` consumes at runtime.
 
 The general (instrument-agnostic) calibration **protocol** lives with the
-simulator at `../i4h-sensor-simulation/docs/ivus_calibration_protocol.md`.
-The code here implements that protocol against a particular dataset.
+simulator at `../i4h-sensor-simulation/docs/ivus_calibration_protocol.md`
+(the encyclopedic nine-experiment reference) and
+`../i4h-sensor-simulation/docs/probe_onboarding_protocol.md` (the
+lessons-learned three-experiment onboarding workflow distilled from the
+PV .035 calibration). **For new probes, start with the onboarding
+protocol** — it is the necessary and sufficient subset of the canonical
+one. The code here implements those protocols against a particular
+dataset.
 
 ## Layout
 

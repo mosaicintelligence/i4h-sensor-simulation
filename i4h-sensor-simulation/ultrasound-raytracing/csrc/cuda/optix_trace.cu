@@ -41,7 +41,7 @@ static __forceinline__ __device__ Payload get_payload() {
   return payload;
 }
 
-// Pass 5b: per-scanline scatter decorrelation hash.
+// Per-scanline scatter decorrelation hash.
 //
 // PCG-style integer hash (Jarzynski & Olano 2020, "Hash Functions for GPU Rendering";
 // Melissa O'Neill 2014, "PCG: A Family of Simple Fast Space-Efficient Statistically
@@ -68,7 +68,7 @@ static __device__ float get_scattering_value(float3 pos, const Material* materia
   const float resolution_mm = params.scattering_resolution_mm;
   pos /= resolution_mm;
 
-  // Pass 5b: angular decorrelation of the scatter texture lookup.
+  // Angular decorrelation of the scatter texture lookup.
   //
   // The scatter texture is 256³ voxels addressed in WRAP mode (see
   // World::generate_scattering_texture). Adding a large pseudo-random offset
@@ -427,7 +427,7 @@ extern "C" __global__ void __raygen__rg() {
 
   const RayGenData* ray_gen_data = reinterpret_cast<RayGenData*>(optixGetSbtDataPointer());
 
-  // Pass 5f -- IVUS angular ray super-sampling.
+  // IVUS angular ray super-sampling.
   //
   // For IVUS only, fire K = `params.ivus_rays_per_scanline` sub-rays per
   // scanline at deterministic sub-bin angular offsets ((k+0.5)/K - 0.5 in
@@ -628,7 +628,7 @@ static __device__ void closest_hit() {
                                                                  ray_dir,
                                                                  next_material->specularity_) *
                                     ray_coherence_attenuation;
-  // Physics-correct scaling (Pass 28, 2026-05-27):
+  // Physics-correct Fresnel-scaled specular contribution.
   //
   // The empirical Mattausch-2016 directivity term `cos^n` represents the
   // angular DISTRIBUTION of reflected energy at a non-mirror interface, not

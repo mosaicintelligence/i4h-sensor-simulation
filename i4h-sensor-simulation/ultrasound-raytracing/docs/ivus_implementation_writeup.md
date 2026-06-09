@@ -1,1236 +1,403 @@
-# IVUS Probe Implementation in ultrasound-raytracing
+# IVUS Implementation Notes
 
-This document describes the work done to add **Intravascular Ultrasound (IVUS)** probe support to the ultrasound-raytracing package. It is based on a diff of the package against the `main` branch and focuses on changes to the **core ultrasound implementation** (C++/CUDA, materials, probes, pipeline). Example scripts and evaluation workflows are not covered in detail.
+This document describes the IVUS-specific implementation in the `ultrasound-raytracing` package: the probe class, the IVUS-specific physics, the RF / B-mode processing pipeline, and the Python configuration layer. It complements the probe-agnostic [Technical Guide](../../docs/ultrasound_simulator_technical_guide.md) and the [Quick Start](quick_start.md).
 
-Implementation references link to the code at commit `3a00920723c7821b83b3fb6b400b006dbbc84e96` on [i4h-sensor-simulation](https://github.com/mosaicintelligence/i4h-sensor-simulation). When a function is **modified** (not added new), a short **Diff (vs main)** summarizes the changes.
-
----
-
-## 1. High-level overview
-
-### 1.1 Original ultrasound-raytracing package (main branch)
-
-The package is a **GPU-accelerated ultrasound simulation** that uses **NVIDIA OptiX** for raytracing and CUDA for signal processing and image formation.
-
-- **Probes**: Three probe types are supported—**curvilinear**, **linear array**, and **phased array**. Each has a distinct ray layout (element positions and directions) and scan geometry (sector or rectangular).
-- **Acoustic model**: Rays are cast from the probe; they interact with the scene via **reflection** and **refraction** at interfaces (meshes, spheres). **Volumetric scattering** is accumulated along each ray in depth bins. Materials define impedance, attenuation, and scattering.
-- **Materials**: A fixed set of tissue materials: water, blood, fat, liver, muscle, bone (impedance, attenuation in dB/(cm·MHz), speed of sound, scattering).
-- **Pipeline**: After raytracing, scanlines are processed by **axial** and **lateral PSF convolution** (Gaussian kernels, depth-invariant lateral), **TGC**, **Hilbert envelope**, **log compression**, and **scan conversion** to a 2D B-mode image. Scan conversion is probe-specific (curvilinear sector, linear, phased sector).
-- **Display**: The simulator reports coordinate bounds (min/max x, z) for the B-mode image so the client can label axes (e.g. depth, lateral).
-
-The design is **probe-agnostic** in the sense that ray generation and scan conversion are driven by a `ProbeType` enum and virtual methods on `BaseProbe` (element position, direction, sector angle, etc.).
-
-### 1.2 Modifications for IVUS
-
-IVUS is **intravascular** imaging: a small rotating transducer at the center of a vessel acquires a **360° radial cross-section**. Depth is radial (lumen → wall → perivascular); the “lateral” dimension is **angle**. The implementation adds:
-
-1. **New probe type and class**: `ProbeType::PROBE_TYPE_IVUS` and an **`IVUSProbe`** class—single point source at the catheter center, rays emitted radially over 360° in the imaging plane, with optional **element radius** and **focal length** for beam modeling.
-2. **Ray generation**: In OptiX, a dedicated **IVUS ray generator** produces one ray per angular sample from a common origin, with direction sweeping 0→2π in the probe’s xz-plane.
-3. **Materials**: **Blood** is updated to literature values; three **IVUS/vascular** materials are added: **lumen**, **vessel_wall**, and **extravascular** (with cited attenuation and impedance).
-4. **PSF and TGC**:  
-   - **Axial**: IVUS uses a **causal, Hanning-windowed axial PSF** so the strong wall echo does not smear backward into the lumen.  
-   - **Lateral**: For IVUS, **depth-dependent lateral PSF** is introduced (Gaussian beam model: beam waist at focus, Rayleigh length, σ(depth)); when element radius and focal length are set, a 2D kernel (depth × angle) is built and applied via a new **depth-dependent column convolution**. For point-source probes, element spacing is 0; a safe fallback lateral width is used.  
-   - **TGC** is made **probe-type-specific** (IVUS: short depth range, moderate gain per cm) and cached per probe type.
-5. **Scan conversion and display**: A new **IVUS scan conversion** path produces an **unwrapped** display: horizontal = angle (0–360°), vertical = depth (mm). The simulator’s coordinate bounds for IVUS are set to (0–360°, 0–t_far mm).
-6. **Pipeline and scattering**: Pipeline parameters are extended with **scattering resolution** (finer for IVUS), **scatter integral scale**, and a **disable_scatter** flag. Scattering logic is corrected so **depth-bin indexing** uses the true ray depth and avoids streaks.
-7. **Physics**: **Oblique incidence** reflection (acoustic impedance formula with cos θ_i, cos θ_t from Snell’s law) and **refraction** with a small **t_min** for the refracted ray to avoid self-intersection at the vessel wall.
-8. **Utilities and Python**: **Cylinder mesh generation** (single and thick-walled) for vessel phantoms; **Python bindings** for `IVUSProbe` and updated material/SimParams docs; **raysim** package exports `IVUSProbe`.
-
-The following sections walk through these changes by component (probes, materials, raytracing, PSF/TGC, scan conversion, pipeline/scattering, Python/utils), without detailing example or evaluation scripts.
+All file paths are relative to `ultrasound-raytracing/`. The canonical calibrated configuration for the Volcano PV .035 / s5i probe lives in [`instrument-calibration/p035_visions/volcano_s5i.yaml`](../../../instrument-calibration/p035_visions/volcano_s5i.yaml); this document describes the simulator runtime that consumes it.
 
 ---
 
-## 2. Probe type and IVUS probe class
+## 1. Architecture overview
 
-**Implementation (probe types):** [probe_types.hpp#L28](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe_types.hpp#L28), [probe.hpp#L258-L268](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe.hpp#L258-L268), [ivus_probe.hpp#L1-L107](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/ivus_probe.hpp#L1-L107).
+IVUS imaging uses a small transducer at the centre of a vessel to acquire a 360° radial cross-section. Depth is radial (lumen → wall → perivascular tissue); the "lateral" dimension is angular. The simulator models this end-to-end on the GPU; the 4-stage pipeline diagram in the technical guide is the canonical reference and applies here as well.
 
-### 2.1 ProbeType enum
+What is IVUS-specific in this package:
 
-- **Implementation:** [probe_types.hpp#L28](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe_types.hpp#L28).
-- New value: `PROBE_TYPE_IVUS = 3` (in addition to curvilinear, linear array, phased array).
+1. A dedicated probe class (`IVUSProbe`) and `ProbeType::PROBE_TYPE_IVUS` enum value.
+2. OptiX ray generation that produces one ray per angular sample from a single origin (catheter centre), sweeping 0 → 2π in the probe's xz-plane.
+3. Vascular materials (`lumen`, `vessel_wall`, `extravascular`) plus a `tungsten` material for the bench wire-spiral phantom.
+4. A causal, Hanning-windowed axial PSF and a depth-dependent lateral PSF based on a Gaussian-beam model.
+5. Probe-type-specific TGC (mm-scale depth range and gain) cached separately from abdominal/curvilinear TGC.
+6. An unwrapped scan conversion (x = angle 0–360°, y = depth 0–`t_far` mm).
+7. Finer scattering texture resolution and pipeline-parameter overrides via `SimParams`.
+8. A processing chain that adds the bench-calibrated RF-domain stages (RF noise floor with depth weighting, reference gain, ring-down injection, palette clamp, catheter dead-zone) needed to match clinical IVUS device output.
+9. A Python configuration layer (`raysim.config.IvusSimConfig`) that maps a YAML schema directly onto `SimParams` and the probe.
 
-**Justification:** The pipeline (ray gen, PSF choice, TGC, scan conversion, display bounds) is driven by **probe type**. Adding a distinct **PROBE_TYPE_IVUS** allows the simulator to branch on IVUS-specific physics (causal axial PSF, depth-dependent lateral PSF, IVUS TGC, unwrapped scan conversion) without affecting existing probes.
+The remainder of this document walks through each of these components.
 
-### 2.2 BaseProbe extensions
+---
 
-- **Implementation:** [probe.hpp#L258-L268](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe.hpp#L258-L268).
-- New virtual accessors (default 0 for non-IVUS probes):
-  - `get_element_radius_mm()` — element radius in mm (for focused single-element probes).
-  - `get_focal_length_mm()` — focal length in mm.
+## 2. Probe type and `IVUSProbe` class
 
-These are used by the simulator to build the depth-dependent lateral PSF when both are positive (IVUS with focused element model).
+**Files:** [`include/raysim/core/probe_types.hpp`](../include/raysim/core/probe_types.hpp), [`include/raysim/core/probe.hpp`](../include/raysim/core/probe.hpp), [`include/raysim/core/ivus_probe.hpp`](../include/raysim/core/ivus_probe.hpp).
 
-**Justification:** IVUS uses a single small transducer (often ~0.6 mm radius, ~4 mm focal length) at the catheter center. Exposing **element_radius_mm** and **focal_length_mm** on the base probe allows the simulator to apply a **depth-dependent lateral beam model** (Gaussian beam: waist at focus, Rayleigh length) so the effective lateral resolution varies with depth as in real IVUS, instead of treating the probe as a pure point source with no aperture.
+### 2.1 `ProbeType` enum
 
-### 2.3 IVUSProbe class
+`ProbeType::PROBE_TYPE_IVUS = 3` joins curvilinear, linear-array, and phased-array. The simulator branches on probe type to select IVUS-specific physics (causal axial PSF, depth-dependent lateral PSF, IVUS TGC, unwrapped scan conversion).
 
-- **Implementation:** [ivus_probe.hpp#L1-L107](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/ivus_probe.hpp#L1-L107) — **new file**.
-- **IVUSProbe** extends `BaseProbe` with:
-  - **Single origin**: `get_local_element_position()` always returns the origin (0,0,0) in local coordinates (catheter center).
-  - **Radial directions**: `get_local_element_direction()` returns a unit vector in the xz-plane; angle = 2π × element_idx / num_elements, with +z as reference (consistent with OptiX IVUS ray gen).
-  - **Sector angle**: 360°.
-  - **Radius / width**: 0 (point source).
-  - **Probe type**: `PROBE_TYPE_IVUS`.
-  - **Parameters**: `num_angular_rays` (stored as `num_elements_x_`), frequency (e.g. 40 MHz), elevational_height (often 0), `element_radius_mm` (e.g. 0.6), `focal_length_mm` (e.g. 4). Constructor passes `width = 0` to the base.
+### 2.2 `BaseProbe` accessors
 
-No separate `.cpp`; the class is header-only.
+`BaseProbe` exposes two virtual accessors used by the depth-dependent lateral PSF:
 
-**Justification:** **Single origin** and **360° radial directions** match the physical geometry of an IVUS catheter: the transducer sits at the center of the vessel and is rotated (or synthetically sampled) over 2π to form a cross-sectional image. **Width = 0** and **radius = 0** model a point-like source for ray casting; the finite aperture is represented later via the depth-dependent lateral PSF (element_radius_mm, focal_length_mm). **Sector angle 360°** ensures the scan-conversion and display bounds treat the image as a full circumferential sweep.
+- `get_element_radius_mm()` — element radius in mm (focused single-element probes).
+- `get_focal_length_mm()` — focal length in mm.
+
+Both default to `0` so non-IVUS probes are unaffected. When both are positive the simulator builds a 2D depth-dependent lateral PSF (Gaussian-beam model; see §5.2).
+
+### 2.3 `IVUSProbe`
+
+`IVUSProbe` is header-only and extends `BaseProbe`:
+
+| Field | Value |
+|---|---|
+| `get_local_element_position()` | `(0, 0, 0)` (catheter centre) |
+| `get_local_element_direction(idx)` | unit vector in the xz-plane at angle `2π · idx / num_elements`, `+z` at angle 0 |
+| Sector angle | 360° |
+| Width / radius | 0 (point source) |
+| Probe type | `PROBE_TYPE_IVUS` |
+
+Construction parameters: `num_angular_rays` (stored as `num_elements_x_`), `frequency` (MHz; typical IVUS values 20–40 MHz), `elevational_height` (often 0), `element_radius_mm` (typical 0.6), `focal_length_mm` (typical 4), and the standard `Pose`. The finite physical aperture is represented downstream through the depth-dependent lateral PSF rather than via the ray geometry.
 
 ---
 
 ## 3. Materials
 
-**Implementation:** [material.cpp#L40-L56](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/material.cpp#L40-L56).
+**File:** [`csrc/core/material.cpp`](../csrc/core/material.cpp). `Materials` is the registry; `Materials::get_index(name)` returns the index used when adding geometry to a `World`.
 
-- **Blood**: Updated to Z = 1.68 MRayl, α = 0.2 dB/(cm·MHz), c = 1584 m/s (literature: PMC3570716, PMC5126009).
-- **New IVUS/vascular materials** (with comments citing literature and attenuation in dB/(cm·MHz)):
-  - **lumen**: Same as updated blood (1.68, 0.2, 1584).
-  - **vessel_wall**: c = 1571 m/s, Z = 1.82 MRayl, α ≈ 1.0 (vascular/coronary 50 MHz regime).
-  - **extravascular**: Muscle-like c = 1547 m/s, Z = 1.62 MRayl, α = 0.7.
+### 3.1 Tissue materials
 
-References in comments: Goss et al. compilations, PMC3570716 (Ultrasound Med Biol 2013), PMC5126009 (J Ultrasound 2016), Lockwood et al. UMB 17(7) 1991.
+| Material | Z (MRayl) | α (dB·cm⁻¹·MHz⁻¹) | c (m/s) | Notes |
+|---|---:|---:|---:|---|
+| `water` | 1.48 | 0.002 | 1480 | reference background |
+| `blood` / `lumen` | 1.68 | 0.2 | 1584 | literature values; `lumen` is the IVUS alias |
+| `vessel_wall` | 1.82 | ≈ 1.0 | 1571 | intima/media at vascular 50 MHz |
+| `extravascular` | 1.62 | 0.7 | 1547 | muscle-like perivascular tissue |
+| `fat`, `liver`, `muscle`, `bone` | — | — | — | abdominal materials |
 
-**Diff (vs main):** `Materials::Materials()` — blood entry and three new material entries added to `materials_` initializer; no signature change.
+The vascular materials are sized so that (a) the Fresnel coefficients at the lumen↔wall and wall↔extravascular interfaces match published vascular ultrasound data and (b) Beer–Lambert attenuation produces the correct depth dependence at 40 MHz IVUS frequencies.
 
-**Justification:** **Blood** was updated to **literature values** (Z = 1.68 MRayl, c = 1584 m/s, α = 0.2 dB/(cm·MHz) from PMC3570716, PMC5126009) so that reflection and attenuation at blood–tissue interfaces match published data; the original values were less aligned with vascular ultrasound references. **Lumen**, **vessel_wall**, and **extravascular** were added because IVUS scenes explicitly model (1) the blood-filled lumen, (2) the vessel wall (intima/media with impedance and attenuation from coronary/vascular 50 MHz data), and (3) perivascular tissue. Using correct Z and α is necessary for **physically correct reflection coefficients** at interfaces (lumen–wall, wall–extravascular) and for **depth-dependent attenuation** along each ray (Beer–Lambert).
+Citations in the source comments: Goss et al. compilations, PMC3570716 (Ultrasound Med Biol 2013), PMC5126009 (J Ultrasound 2016), Lockwood et al. UMB 17(7) 1991.
 
----
+### 3.2 Phantom hardware
 
-## 4. OptiX raytracing (IVUS rays and physics)
-
-**Implementation:** [optix_trace.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu) (see subsections for line ranges).
-
-### 4.1 Ray generation for IVUS
-
-- **Implementation:** [optix_trace.cu#L342-L356](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L342-L356) (`generate_ivus_probe_ray_local`), [optix_trace.cu#L358-L390](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L358-L390) (raygen switch).
-- New device function **`generate_ivus_probe_ray_local`**:
-  - Maps launch dimension `d_x` to angle in [0, 2π].
-  - **Origin**: (0, 0, 0) in local coordinates.
-  - **Direction**: radial in xz-plane, `(sin(angle), 0, cos(angle))`, normalized; +z at angle 0 to match `IVUSProbe::get_local_element_direction`.
-
-- In the **raygen** `__raygen__rg`, the switch on `probe_type` is extended with `PROBE_TYPE_IVUS` calling this function. Payload `ray.t_ancestors` is set to 0 (line 406). Elevation is applied afterward as for other probes.
-
-**Justification:** IVUS rays must **emanate from a single point** (catheter center) and **sweep 360° in the imaging plane** (xz with +z as reference). This matches the physical acquisition: one transducer at the center, with A-lines acquired at evenly spaced angles. Mapping the launch dimension to angle in [0, 2π] and using a common origin is the minimal change to the raygen to support this geometry; elevation is kept for consistency with the shared pipeline but is typically zero for 2D IVUS.
-
-### 4.2 Payload and scattering
-
-- **Implementation:** [optix_trace.cu#L406](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L406) (payload), [optix_trace.cu#L44-L55](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L44-L55) (`get_scattering_value`), [optix_trace.cu#L89-L119](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L89-L119) (`sample_intensities`), [optix_trace.cu#L438-L450](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L438-L450) (miss), [optix_trace.cu#L468-L476](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L468-L476) (closest_hit).
-- **Payload**: `ray.t_ancestors` is explicitly set to 0 in the raygen (needed for correct depth-bin indexing in scatter and hit).
-- **Scattering**:
-  - **`get_scattering_value`** (modified): No longer takes a fixed `resolution_mm` parameter; it uses **`params.scattering_resolution_mm`** so the pipeline can set a finer scale for IVUS (e.g. 10 mm vs 50 mm).
-  - **`sample_intensities`** (modified): Now takes **scanline pointer and ray_index**; early-out if `params.disable_scatter`; depth-bin indexing via `get_intensity_offset(t_ancestors + t_val)` with bounds check; integral scaling via `scatter_integral_scale`; contributions written to `scanline[bin]` with `segment_weight`.
-
-**Justification:**  
-- **`ray.t_ancestors` initialized to 0:** Depth along the ray must include the full path from the probe (origin). If `t_ancestors` were left uninitialized, scatter and hit contributions would use wrong depths for binning, producing **streaks** or misplacement. Explicitly setting it to 0 in the raygen ensures every ray starts with correct cumulative path length.  
-- **`get_scattering_value` using `params.scattering_resolution_mm`:** The scattering texture is sampled in world space divided by a resolution (voxel size). IVUS operates at **much smaller spatial scale** (mm, 1–10 mm depth) than abdominal imaging (cm). Using a **finer resolution** (e.g. 10 mm vs 50 mm) for IVUS gives **speckle at the appropriate scale** (smaller correlation length) so tissue texture looks plausible.  
-- **Depth-bin indexing in `sample_intensities`:** The original code used `intensities += get_intensity_offset(t_ancestors + t_min)` and then wrote to `intensities[step]` with a **step index**, not a **depth-derived bin**. That decouples the write index from true propagation depth and causes **axial streaks**. Writing to `scanline[bin]` with `bin = get_intensity_offset(t_ancestors + t_val)` ensures scatter is placed at the **correct depth bin** for the round-trip time.  
-- **`scatter_integral_scale`:** The line integral of scatter has no natural scale that matches display (0–1 or dB). Empirically, **strict integration** gives very dark tissue in vascular/cystic phantoms while wire phantoms (reflection-dominated) are fine. A scale factor (~40) brings the scatter contribution into a **displayable range** so both reflection-dominated (wire) and scatter-dominated (tissue) phantoms are usable without changing the underlying physics of the integral.  
-  **Tuning:** Set in `raytracing_ultrasound_simulator.cpp` when filling `params.scatter_integral_scale`. **Increase** (e.g. 60–80) if tissue background remains too dark in vascular/cystic phantoms; **decrease** (e.g. 20–30) if tissue is too bright or reflections (e.g. wire targets) are drowned out. Use **0** for strict physics (no scaling); compare wire phantom (reflections should dominate) and cystic/tissue phantom (scatter visible) to balance. Probe-type-specific values could be used (e.g. one scale for IVUS, another for abdominal) if needed.
-
-**Diff (vs main) — `get_scattering_value`:**
-```diff
-- static __device__ float get_scattering_value(float3 pos, const Material* material,
--                                              float resolution_mm = 50.f) {
--   // Convert point to texture coordinates
-+ static __device__ float get_scattering_value(float3 pos, const Material* material) {
-+   const float resolution_mm = params.scattering_resolution_mm;
-    pos /= resolution_mm;
-```
-
-**Diff (vs main) — `sample_intensities`:**
-```diff
-  static __device__ void sample_intensities(float3 origin, float3 dir, float t_ancestors, float t_min,
-                                            float t_max, float intensity, const Material* material,
--                                           float* intensities) {
--   // Early out for materials with zero scattering density or coefficient
-+                                           float* scanline, uint32_t ray_index) {
-+   if (params.disable_scatter) { return; }
-    if ((material->mu0_ <= 0.f) || (material->sigma_ == 0.f)) { return; }
--
--   const uint32_t steps = ((t_max - t_min) / params.t_far) * params.buffer_size + 0.5f;
--   const float t_step = (t_max - t_min) / steps;
--   const float3 start = origin + t_min * dir;
--   intensities += get_intensity_offset(t_ancestors + t_min);
--   for (uint32_t step = 0; step < steps; ++step) {
--     const float distance = (step * t_step);
--     const float3 pos = start + distance * dir;
--     intensities[step] += get_scattering_value(pos, material) * intensity *
--                          get_intensity_at_distance(distance, material->attenuation_);
--   }
-+   const float range = t_max - t_min;
-+   ...
-+   const float integral_weight = (params.scatter_integral_scale > 0.f) ? (range * params.scatter_integral_scale) : range;
-+   const uint32_t steps = (range / params.t_far) * params.buffer_size + 0.5f;
-+   ... (per-step: t_val, depth, bin = get_intensity_offset(depth), scanline[bin] += segment_weight * scatter);
-  }
-```
-
-### 4.3 Reflection and refraction (oblique incidence)
-
-- **Implementation:** [optix_trace.cu#L186-L194](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L186-L194) (`calculate_reflection_coefficient`), [optix_trace.cu#L455-L620](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L455-L620) (`closest_hit`), [optix_trace.cu#L588-L619](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu#L588-L619) (refracted ray t_min).
-- **Reflection coefficient** (modified): Replaced normal-incidence formula by **oblique incidence**: `R_p = (Z2/cos(θ_t) - Z1/cos(θ_i)) / (Z2/cos(θ_t) + Z1/cos(θ_i))`, with `R_I = R_p²`. Angles come from Snell’s law: `sin(θ_t) = (v1/v2)*sin(θ_i)`, then `cos(θ_t)`. Grazing and total internal reflection (cos ≤ 0) yield R = 1.
-- **Hit contribution**: Both the **acoustic reflection** and the **specular term** (Mattausch-style) are **added** into the same depth bin (`hit_bin`), instead of overwriting.
-- **Refracted ray**: Origin is **back_start** (just inside the second medium); **t_min** for the refracted ray is set to a small constant (e.g. 1e-3 mm) to avoid self-intersection at the same interface.
-
-**Justification:**  
-- **Oblique-incidence reflection coefficient:** At an interface, **pressure and normal particle velocity** are continuous. For oblique incidence the effective impedances are **Z/cos(θ)** (normal component). The pressure reflection coefficient is then R_p = (Z2/cos(θ_t) − Z1/cos(θ_i)) / (Z2/cos(θ_t) + Z1/cos(θ_i)), with intensity R_I = R_p². The original formula used only **normal incidence** (single cos(θ)), which is incorrect when the ray is not perpendicular to the surface (e.g. IVUS rays hitting the vessel wall at various angles). Using **Snell’s law** to get θ_t from θ_i and the two cosines yields the **correct acoustic reflection** from first principles.  
-- **Adding reflection and specular to the same bin:** The interface echo has two contributions: (1) the **acoustic reflection** (R × intensity) and (2) an **empirical specular term** (Mattausch-style, directivity-like). Both should contribute to the **same depth** (the interface). The original code **overwrote** the bin with only the specular term; now both are **added** so the total echo at the interface is physically consistent (reflected energy) plus the empirical term. The specular term is weighted by **2.f** in `closest_hit` (e.g. `scanline[hit_bin] += 2.f * specular_reflection`).  
-  **Tuning:** The factor **2.f** is empirical. To tune: in `optix_trace.cu` search for `2.f * specular_reflection`; **increase** for stronger interface highlights (more “specular” appearance), **decrease** (or 1.f) for a more diffuse interface. Compare to real IVUS or reference sims if available.  
-- **Refracted ray: back_start and t_min_refract:** Physically the refracted ray propagates **in the second medium**, so its origin must be **just inside** that medium (back_start). Using **front_start** when the refracted direction pointed away from the normal was a heuristic that could place the origin in the wrong medium. Always using **back_start** ensures we are in the transmitted medium. **t_min_refract = 1e-3 mm** avoids the refracted ray **immediately re-hitting the same surface** (e.g. inner vessel wall or mesh self-intersection), which is a **numerical robustness** fix rather than a change in physics.
-
-**Diff (vs main) — `calculate_reflection_coefficient`:**
-```diff
-- static __device__ float calculate_reflection_coefficient(float incident_angle,
-+ static __device__ float calculate_reflection_coefficient(float cos_theta_i, float cos_theta_t,
-                                                           const Material* material1,
-                                                           const Material* material2) {
-    float Z1 = material1->impedance_;
-    float Z2 = material2->impedance_;
--   float cos_theta = fabsf(__cosf(incident_angle));
--   float R = ((Z2 * cos_theta - Z1) / (Z2 * cos_theta + Z1));
--   return R * R;
-+   if (cos_theta_i <= 1e-6f || cos_theta_t <= 1e-6f) { return 1.f; }
-+   float R_p = (Z2 / cos_theta_t - Z1 / cos_theta_i) / (Z2 / cos_theta_t + Z1 / cos_theta_i);
-+   return R_p * R_p;
-  }
-```
-
-**Diff (vs main) — `closest_hit` (reflection + refracted ray):**
-```diff
-- const float incident_angle = acosf(fabsf(dot(ray_dir, normal)));
-- const float R = calculate_reflection_coefficient(incident_angle, current_material, next_material);
-+ const float cos_i = fabsf(dot(ray_dir, normal));
-+ const float sin_i = sqrtf(1.f - cos_i * cos_i);
-+ const float v1 = current_material->speed_of_sound_;  const float v2 = next_material->speed_of_sound_;
-+ const float sin_t = (v1 / v2) * sin_i;
-+ const float cos_t = (sin_t < 1.f) ? sqrtf(1.f - sin_t * sin_t) : 0.f;
-+ const float R = calculate_reflection_coefficient(cos_i, cos_t, current_material, next_material);
-  ...
-- scanline[get_intensity_offset(ray.t_ancestors + t)] = 2.f * specular_reflection;
-+ const uint32_t hit_bin = get_intensity_offset(ray.t_ancestors + t);
-+ scanline[hit_bin] += reflected_intensity;
-+ scanline[hit_bin] += 2.f * specular_reflection;
-  ...
-- const float3 start = (dot(refracted_dir, wld_norm) > 0.f) ? front_start : back_start;
-+ const float t_min_refract = 1e-3f;
-+ const float3 start = back_start;
-  optixTrace(params.handle, start, refracted_dir,
--            0.f,   // tmin
-+            t_min_refract,   // tmin: avoid self-intersection
-             params.t_far - refracted_ray.t_ancestors, ...);
-```
-
-### 4.4 Pipeline parameters (OptiX)
-
-- **Implementation:** [optix_trace.hpp#L29-L45](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/optix_trace.hpp#L29-L45) (struct `Params`).
-- **Params** struct extended with:
-  - `scattering_resolution_mm` — voxel scale for scattering texture (IVUS uses smaller value).
-  - `disable_scatter` — if non-zero, scatter accumulation is skipped.
-  - `scatter_integral_scale` — scale factor for the scatter integral (0 = strict; ~40 used for visible tissue background).
-
-**Justification:** These pipeline parameters allow the **same raytracing kernel** to be used for both abdominal and IVUS without recompilation. **scattering_resolution_mm** is set per run (10 for IVUS, 50 for abdominal) so speckle scale matches the imaging geometry. **disable_scatter** is a switch for debugging or comparison. **scatter_integral_scale** is the empirical scale discussed in §4.2 so scatter contributes in a displayable range.  
-**Tuning:** **scattering_resolution_mm:** Set in `raytracing_ultrasound_simulator.cpp` (e.g. 10 for IVUS, 50 for abdominal). **Smaller** values give **finer speckle** (smaller correlation length); **larger** values give **coarser speckle**. Tune to match target speckle size (e.g. from literature or reference images) or to desired texture. **scatter_integral_scale:** See §4.2; same tuning as above (set in same place).
-
-**Pass 1 update (configuration-driven):** As of the calibration-driven refactor (§11), the three `Params` fields above are populated from `SimParams::scattering_resolution_mm`, `SimParams::disable_scatter`, and `SimParams::scatter_integral_scale` rather than being hard-coded in `simulate()`. `scattering_resolution_mm == 0.f` in `SimParams` is treated as a sentinel meaning *"auto from probe type"* and falls back to the historical 10 mm (IVUS) / 50 mm (abdominal) defaults; any positive value overrides them. The header itself was previously missing these three fields even though `optix_trace.cu` and the simulator already referenced them — see §11.1 for the (latent) header fix.
+`tungsten`: Z ≈ 101 MRayl, c = 5200 m/s, α = 15 dB·cm⁻¹·MHz⁻¹, `mu0_ = sigma_ = specularity_ = 0.05`. Used for the 30 µm tungsten wires in the bench wire-spiral phantom. The Fresnel coefficient against water/milk is ≈ 0.96, which is what the calibration pipeline anchors against. The very high attenuation is harmless because the bulk propagation path through a 30 µm wire is negligible; it only affects grazing rays that travel along the wire surface.
 
 ---
 
-## 5. Simulator: PSF and TGC
+## 4. OptiX raytracing
 
-**Implementation:** [raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp), [raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (see subsections).
+**Files:** [`csrc/cuda/optix_trace.cu`](../csrc/cuda/optix_trace.cu), [`include/raysim/cuda/optix_trace.hpp`](../include/raysim/cuda/optix_trace.hpp).
 
-### 5.1 Axial PSF
+### 4.1 IVUS ray generation
 
-- **Implementation:** [raytracing_ultrasound_simulator.cpp#L89-L136](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L89-L136) (`create_ivus_axial_psf_causal`), [raytracing_ultrasound_simulator.cpp#L337-L351](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L337-L351) (axial PSF branch in `update_psfs`). Header: [raytracing_ultrasound_simulator.hpp#L135](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp#L135) (`psf_ax_probe_type_`).
-- **IVUS**: New helper **`create_ivus_axial_psf_causal`** builds a causal, Hanning-windowed one-sided kernel (extent from pulse duration and wavelength). Used when `probe->get_probe_type() == PROBE_TYPE_IVUS`.
-- **Other probes**: Unchanged Gaussian axial PSF via `create_gaussian_psf`.
-- **Caching**: Axial PSF is invalidated when **probe type** or frequency changes (`psf_ax_probe_type_` in header).
+`generate_ivus_probe_ray_local` maps the launch dimension `d_x` to an angle in `[0, 2π]`, sets the ray origin to `(0, 0, 0)` in local coordinates, and emits a unit direction `(sin(angle), 0, cos(angle))` in the xz-plane (matching `IVUSProbe::get_local_element_direction`). The raygen entry point switches on `probe_type` and dispatches to this function for `PROBE_TYPE_IVUS`. Elevation handling is shared with the other probe types and is typically zero for 2D IVUS.
 
-**Justification:** A **symmetric** (two-sided) axial kernel smears energy both **shallower and deeper** than the true interface. For IVUS, the **vessel wall** is a strong reflector; convolution with a symmetric kernel would **smear the wall echo backward into the lumen**, making the lumen appear bright and destroying the anechoic blood appearance. A **causal** kernel (energy only at and “deeper” in index space, i.e. no right half) ensures that the wall echo **only smears deeper**, preserving a **dark lumen** and a single peak at the true wall depth. The **Hanning window** shapes the pulse to reduce sidelobes while keeping the causal constraint. This is a **physics-based** choice: causality in time (echo arrives after transmission) maps to one-sided convolution in depth.
+`ray.t_ancestors` is explicitly initialised to 0 in the raygen so every ray starts with a correct cumulative path length, which the scatter and hit stages use to compute depth bins.
 
-### 5.2 Lateral PSF
+### 4.2 Scattering
 
-- **Implementation:** [raytracing_ultrasound_simulator.cpp#L282-L368](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L282-L368) (depth-dependent 2D kernel build and fallback lateral in `update_psfs`); header [raytracing_ultrasound_simulator.hpp#L143-L150](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp#L143-L150) (`psf_lat_2d_` and related members).
-- **Depth-dependent lateral (IVUS)**: When probe type is IVUS and `element_radius_mm` and `focal_length_mm` are both > 0, the simulator builds a **2D lateral kernel** (depth_bins × kernel_len) using Gaussian beam model (w0, z_R, w(z)). Stored in **`psf_lat_2d_`**; dimensions and parameters cached.
-- **Convolution**: If `psf_lat_2d_` is present, **`convolve_columns_depth_dependent`** is called; otherwise **`convolve_columns`** with 1D lateral kernel.
-- **Fallback for point-source**: When `element_spacing == 0` (IVUS), lateral resolution and inverse spacing set to safe defaults to avoid division by zero.
+`get_scattering_value(pos, material)` samples the world's `float2` 3D scattering texture in WRAP addressing mode at `pos / params.scattering_resolution_mm`. The resolution is set per run from `SimParams::scattering_resolution_mm` (10 mm for IVUS, 50 mm for abdominal — auto-selected by probe type when the field is left at its sentinel 0). The first channel is a uniform-distribution density gate against `material.mu0_`; the second is a Gaussian-distributed amplitude scaled by `material.sigma_`.
 
-**Justification:** For a **focused circular aperture**, the **Gaussian beam model** (Siegman, Goodman) gives: beam waist at focus w0 = λF/(2a), Rayleigh length z_R = πw0²/λ, and beam radius w(z) = w0√(1 + (z/z_R)²) with z = depth − focal_length. Using a **depth-invariant** lateral kernel (as for linear arrays) would be wrong for IVUS, where the beam **narrows near the focus** and **widens** elsewhere. The **depth-dependent lateral PSF** applies the correct σ(depth) in angle-bin space so lateral blur matches the physical beam. **Fallback** when element_spacing is 0: the original code used 1/element_spacing for the lateral kernel; IVUS has no element array, so element_spacing is 0. Using a **finite lateral width** derived from typical depth and aperture (λ·depth/aperture) and inv_spacing = 1 avoids division by zero and gives a reasonable kernel when the full 2D depth-dependent kernel is not built (e.g. focal_length_mm or element_radius_mm not set).
+**Per-scanline angular decorrelation.** At small radii the angular sampling rate is sub-voxel (arc length ≈ 0.025 mm per scanline at r = 1 mm with 256 scanlines), so adjacent scanlines would otherwise sample correlated points in the scattering texture. The simulator adds a per-scanline pseudo-random offset to the texture coordinate before lookup:
 
-### 5.3 update_psfs signature and TGC
-
-- **Implementation:** [raytracing_ultrasound_simulator.cpp#L260-L376](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L260-L376) (`update_psfs`), [raytracing_ultrasound_simulator.cpp#L500-L520](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L500-L520) (TGC). Header: [raytracing_ultrasound_simulator.hpp#L154-L155](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp#L154-L155) (`update_psfs` declaration, `tgc_probe_type_`).
-
-**Diff (vs main) — `update_psfs`:**
-```diff
-- void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStream_t stream) {
-+ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStream_t stream,
-+                                                 uint32_t buffer_size, float t_far) {
-    if (probe_frequency_ != probe->get_frequency()) {
-      ...
-+     psf_lat_2d_.reset();
-    }
-+   const ProbeType pt = probe->get_probe_type();
-+   if (psf_ax_probe_type_ != pt) { psf_ax_probe_type_ = pt; psf_ax_.reset(); }
-    ...
-+   // Build psf_lat_2d_ for IVUS when element_radius_mm and focal_length_mm > 0 (Gaussian beam model)
-+   // Axial: IVUS branch uses create_ivus_axial_psf_causal; else create_gaussian_psf
-+   // Lateral: IVUS fallback lat_width and inv_spacing when element_spacing == 0
-  }
+```cpp
+if (params.scatter_angular_decorrelate) {
+  const uint32_t base = ray_index * 3u + params.frame_seed * 2654435761u;
+  pos.x += pcg_to_unit_float(pcg_hash(base + 0u)) * 4096.f;
+  pos.y += pcg_to_unit_float(pcg_hash(base + 1u)) * 4096.f;
+  pos.z += pcg_to_unit_float(pcg_hash(base + 2u)) * 4096.f;
+}
 ```
 
-**Diff (vs main) — TGC:**
-```diff
--   if (!tgc_curve_ || (tgc_curve_->get_size() / sizeof(float) != sim_params.buffer_size)) {
--     std::vector<ControlPoint> control_points{{0.f, 0.f}, {40.f, 28.f}};
-+   const bool tgc_size_ok = ...;
-+   const bool tgc_probe_match = tgc_probe_type_.has_value() && (*tgc_probe_type_ == probe->get_probe_type());
-+   if (!tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
-+     std::vector<ControlPoint> control_points;
-+     if (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) {
-+       control_points = {{0.f, 0.f}, {1.f, tgc_dB_per_cm}};
-+     } else {
-+       control_points = {{0.f, 0.f}, {40.f, 28.f}};
-+     }
-      tgc_curve_ = create_piece_wise_tgc(...);
-+     tgc_probe_type_ = probe->get_probe_type();
-    }
+The hash is a standard PCG mix (Jarzynski & Olano 2020; O'Neill 2014). All depth samples *along* a single scanline share the same offset, so the axial scatter integral remains coherent (preserving wire/sphere PSFs); only the angular dimension is decorrelated. The `4096×` scaling places adjacent scanlines into well-separated regions of the wrapped texture. `frame_seed` is mixed in so successive frames draw independent speckle realisations — required for temporal averaging in the calibration evaluations.
+
+**Scatter accumulation** (`sample_intensities`):
+
+```text
+bin   = get_intensity_offset(t_ancestors + t_val)
+scanline[bin] += segment_weight * scatter_val
 ```
 
-**Justification:** **update_psfs(buffer_size, t_far):** The IVUS **depth-dependent lateral** kernel depends on the depth range (t_far) and the number of depth samples (buffer_size) to build the 2D kernel (depth_bins × kernel_len). Passing these in allows the simulator to build the correct kernel without assuming global state. **TGC probe-type-specific:** **Time-gain compensation** compensates for **attenuation with depth** (and sometimes diffraction). Abdominal imaging uses depths of order **tens of cm** and a TGC curve (e.g. 0–40 cm, ~28 dB at 40 cm). IVUS imaging depth is **millimeters** (e.g. 0–10 mm), and tissue attenuation at 40 MHz is ~α·f per cm. Using the **same** TGC curve for IVUS would over-compensate (huge gain at 1 cm) and distort depth dependence. A **separate** TGC for IVUS (e.g. 0–1 cm, ~2 dB/cm) matches the physical depth range and attenuation scale. **Caching by probe type** ensures switching between IVUS and another probe type rebuilds the TGC curve appropriately.  
-**Tuning (IVUS TGC):** In `raytracing_ultrasound_simulator.cpp`, the IVUS TGC uses control points `{{0.f, 0.f}, {1.f, tgc_dB_per_cm}}` with **tgc_dB_per_cm = 2.f**. Approximate gain per cm from tissue attenuation is **α × f_MHz** (α in dB/(cm·MHz)). For vessel_wall α ≈ 1, 40 MHz → ~40 dB/m = **4 dB/cm**; 2 dB/cm is deliberately moderate so wire phantoms (lumen) and cystic phantoms (tissue) both show plausible depth dependence. **Increase** tgc_dB_per_cm if deeper tissue is too dark; **decrease** if near-field is over-gained or depth gradient looks wrong. Extend the control-point depth (e.g. 1.5 or 2 cm) if imaging beyond 1 cm. Adjust so that (1) wire echoes do not get over-amplified with depth and (2) tissue at 5–10 mm is visible without clipping.
+Indexing by true depth (`t_ancestors + t_val`) rather than by a step counter is essential — step-indexed writes produce axial streaks because the write index decouples from the round-trip depth. `params.scatter_integral_scale` (default 40) multiplies the line integral so reflection-dominated phantoms (wire) and scatter-dominated phantoms (tissue) both render in a displayable range. `params.disable_scatter` is an early-out for diagnostic renders.
 
-**Pass 1 update (user-supplied TGC schedule):** The TGC block now also accepts a caller-supplied schedule via `SimParams::tgc_control_points` (a list of `(depth_cm, gain_db)` pairs). Behavior:
+### 4.3 Reflection and refraction
 
-- **Empty list (default)** → preserves the legacy probe-type cached path (IVUS: `{0,0}, {1,2}`; abdominal: `{0,0}, {40,28}`) verbatim, so existing scripts that only set the previously exposed fields are byte-identical.
-- **Non-empty list** → the curve is rebuilt every frame (no caching) so frame-to-frame schedule changes are honored, and the probe-type cache is invalidated so a later frame that goes back to the empty path re-builds the default schedule. This is the path the YAML calibration takes for the PV .035 (5 control points spanning the 0–3 cm IVUS range, see `instrument-calibration/p035_visions/volcano_s5i.yaml`).
+**Oblique-incidence Fresnel coefficient:**
 
-The internal `ControlPoint` struct in the .cpp is unchanged; a new public `raysim::TgcControlPoint { depth_cm, gain_db }` lives in the simulator header so callers (Python bindings, host code) can build a schedule without touching simulator-private types. See §11.2 for the bindings.
+\[R = \left(\frac{Z_2/\cos\theta_t - Z_1/\cos\theta_i}{Z_2/\cos\theta_t + Z_1/\cos\theta_i}\right)^2\]
+
+with Snell's law `sin θ_t = (v_1/v_2) sin θ_i` providing `cos θ_t`. Grazing rays and total internal reflection (`cos ≤ 1e-6`) return `R = 1`. The pressure form (rather than normal-incidence Z·cos θ) is required for IVUS rays hitting the vessel wall at varying angles.
+
+**Hit contribution at an interface.** Both the physical reflection and the Mattausch-2016 empirical directivity term are accumulated into the same depth bin:
+
+```cpp
+const uint32_t hit_bin = get_intensity_offset(ray.t_ancestors + t);
+scanline[hit_bin] += reflected_intensity;             // R · I
+scanline[hit_bin] += 2.f * specular_reflection * R;   // empirical directivity, Fresnel-scaled
+```
+
+The `cos^n` term represents the angular **distribution** of energy at a non-mirror interface, not an independent intensity channel. Multiplying it by `R` ties the empirical contribution to the physical Fresnel envelope so the total reflected intensity at any interface is bounded by R. This is essential for soft-tissue interfaces (`R ≈ 0.002` at lumen↔vessel_wall) where an un-scaled empirical term would dominate the physical echo by orders of magnitude and saturate every tissue boundary. The remaining `2.f` factor is an empirical brightness scale; lower it (toward 1.0) for a more diffuse interface look or raise it for stronger highlights.
+
+**Refracted ray.** The refracted-ray origin is `back_start` (just inside the second medium) and `t_min = 1e-3 mm` is used to avoid self-intersection with the same interface. Always using `back_start` (rather than picking `front_start` or `back_start` from refraction direction) guarantees the refracted ray propagates in the correct medium.
+
+### 4.4 OptiX `Params` struct
+
+The kernel `Params` struct ([`include/raysim/cuda/optix_trace.hpp`](../include/raysim/cuda/optix_trace.hpp)) carries:
+
+- `scattering_resolution_mm` — voxel size for the scattering texture lookup.
+- `disable_scatter` — non-zero disables scatter accumulation.
+- `scatter_integral_scale` — multiplier on the scatter line integral (`0` = strict integration; `40` = displayable tissue background).
+- `scatter_angular_decorrelate` — toggles the per-scanline jitter described in §4.2.
+- `frame_seed` — used for both the scatter decorrelation hash and the additive-noise PCG seed.
+- `source_frequency`, `contact_epsilon`, and the OptiX traversable handle.
+
+All numeric fields are populated from `SimParams` (with probe-type-based fallbacks for the sentinel `0.0` values).
 
 ---
 
-## 6. CUDA algorithms: depth-dependent convolution and IVUS scan conversion
+## 5. RF / B-mode processing pipeline
 
-**Implementation:** [cuda_algorithms.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu), [cuda_algorithms.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp).
+**Files:** [`csrc/core/raytracing_ultrasound_simulator.cpp`](../csrc/core/raytracing_ultrasound_simulator.cpp), [`include/raysim/core/raytracing_ultrasound_simulator.hpp`](../include/raysim/core/raytracing_ultrasound_simulator.hpp), [`csrc/cuda/cuda_algorithms.cu`](../csrc/cuda/cuda_algorithms.cu).
 
-### 6.1 Depth-dependent column convolution
+`RaytracingUltrasoundSimulator::simulate()` runs the stages below in the listed order. Each stage is a no-op when its toggle / parameter is at its default; default `SimParams()` reproduces a probe-agnostic baseline pipeline byte-for-byte.
 
-- **Implementation:** [cuda_algorithms.cu#L86-L118](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu#L86-L118) (kernel), [cuda_algorithms.cu#L564-L577](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu#L564-L577) (host). Header: [cuda_algorithms.hpp#L68-L72](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp#L68-L72), [cuda_algorithms.hpp#L219](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp#L219).
-- New kernel **`convolve_columns_depth_dependent_kernel`**: For each (depth, angle, plane) sample, depth index maps to a **depth_bin**; 1D kernel from **kernel_2d** (row-major). Convolution along columns (angle dimension).
-- **`convolve_columns_depth_dependent`** host method launches this kernel; used by the simulator when `psf_lat_2d_` is set.
+### 5.1 Pre-PSF additive RF noise (depth-weighted)
 
-**Justification:** The **lateral** dimension in IVUS is **angle** (columns are angular samples). The beam width **varies with depth**, so a single 1D lateral kernel is incorrect. The depth-dependent kernel implements the **Gaussian beam** lateral PSF: at each depth bin we apply the kernel that corresponds to w(z) at that depth, so the convolution is **physically consistent** with the beam model.
+Stage: between scattering accumulation and PSF convolution.
 
-### 6.2 IVUS scan conversion
+When `noise_sigma > 0` a CUDA kernel (`add_gaussian_noise_depth_weighted` / `add_gaussian_noise`) adds Gaussian noise to the raw RF buffer. The noise is drawn from `N(0, sigma²)` via Box–Muller seeded with a PCG hash of `(row, col, frame_seed)`. Pre-PSF placement means the same axial + lateral PSF convolutions that shape the scatter signal also shape the noise, which matches the bench's bandlimited receiver noise (mottled speckle) rather than per-pixel static.
 
-- **Implementation:** [cuda_algorithms.cu#L477-L494](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu#L477-L494) (kernel), [cuda_algorithms.cu#L805-L831](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu#L805-L831) (host). Header: [cuda_algorithms.hpp#L205-L207](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp#L205-L207), [cuda_algorithms.hpp#L224](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp#L224).
-- New kernel **`scan_convert_ivus_kernel`**: Input texture (depth_norm, angle_norm); output 2D buffer (angle pixels × depth pixels). Unwrapped IVUS display: angle horizontal, depth vertical (probe at top).
-- **`scan_convert_ivus`**: Manages CudaArray/CudaTexture for scanlines, uploads, launches kernel, returns B-mode buffer. Caching invalidated when input size changes.
+The noise is **depth-weighted** so the post-PSF noise standard deviation is uniform across depth. Without weighting, the L1-normalised depth-dependent lateral PSF would otherwise amplify focal-zone noise variance, producing a focal-zone hump in the anechoic-region depth profile. The weight is
 
-**Justification:** IVUS is conventionally displayed in **unwrapped** form: **horizontal = angle** (0–360°) and **vertical = depth** (probe at top). This matches clinical and research viewers and preserves the one-to-one mapping from (angle, depth) to (x, y) pixel. The kernel is a direct resample from polar (depth_norm, angle_norm) to this Cartesian layout; no sector geometry or masking is needed.
+\[w(z) = \sqrt{\frac{\sigma_\text{bins}(z)}{\sigma_\text{bins}(z_\text{focal})}}\]
 
----
+where `σ_bins(z)` is the angular sigma of the lateral PSF at depth `z`. With this weight, σ is specified in **input-RF units at the focal depth** (pre-gain, pre-TGC, pre-PSF); the calibration script `derive_noise_sigma.py` bisects against the bench gain-54 anechoic palette mean/std to land on the calibrated value (≈ 7.1 × 10⁻⁴ for PV .035).
 
-## 7. Simulator: pipeline wiring and display bounds
+### 5.2 PSF convolution
 
-**Implementation:** [raytracing_ultrasound_simulator.cpp#L418-L433](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L418-L433) (pipeline params), [raytracing_ultrasound_simulator.cpp#L464-L477](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L464-L477) (PSF step), [raytracing_ultrasound_simulator.cpp#L591-L611](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L591-L611) (scan conversion switch), [raytracing_ultrasound_simulator.cpp#L625-L638](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp#L625-L638) (display bounds). Header: [raytracing_ultrasound_simulator.hpp#L83-L104](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp#L83-L104) (`get_min_x` / `get_max_x` / `get_min_z` / `get_max_z`).
+**Axial.** For IVUS, `create_ivus_axial_psf_causal` builds a causal, Hanning-windowed one-sided kernel with extent derived from pulse duration and wavelength. The causal kernel ensures a strong wall echo only smears deeper (later in time) and never backwards into the lumen, preserving the anechoic lumen appearance. For other probe types `create_gaussian_psf` produces a symmetric Gaussian kernel. The axial PSF is cached and invalidated when probe type or frequency changes.
 
-- **Pipeline params**: **scattering_resolution_mm** = 10 for IVUS else 50; **disable_scatter** = 0; **scatter_integral_scale** = 40.
-- **PSF step**: Calls **`update_psfs(probe, stream, buffer_size, t_far)`**; then either **convolve_columns_depth_dependent** (if `psf_lat_2d_`) or **convolve_columns**.
-- **Scan conversion**: Switch on probe type; **`PROBE_TYPE_IVUS`** calls **`scan_convert_ivus`** (plane size and b_mode_size only).
-- **Display bounds**: For **PROBE_TYPE_IVUS**, **get_min_x/get_max_x/get_min_z/get_max_z** return (0, 360, 0, t_far). Implementation: `simulate()` sets `min_x_`, `max_x_`, `min_z_`, `max_z_` in the switch (lines 631–638).
+**Lateral.** When `element_radius_mm > 0` and `focal_length_mm > 0`, the simulator builds a 2D depth-dependent lateral kernel (depth_bins × kernel_len) using a Gaussian-beam model:
 
-**Justification:** **Pipeline params:** Setting **scattering_resolution_mm** to 10 for IVUS (vs 50 for abdominal) matches the finer spatial scale of IVUS so the scattering texture is sampled at an appropriate voxel size (§4.2). **scatter_integral_scale = 40** is the empirical scale for displayable scatter. **PSF step:** Calling **update_psfs** with buffer_size and t_far is required to build the IVUS depth-dependent lateral kernel; choosing **convolve_columns_depth_dependent** when the 2D kernel exists applies the correct beam model. **Display bounds (0, 360, 0, t_far):** The unwrapped IVUS image has **angle in degrees** on the horizontal axis (0–360°) and **depth in mm** on the vertical axis (0 to t_far). Exposing these bounds lets the client (e.g. Python or C++) label axes correctly and set aspect ratio so the image is not stretched incorrectly.  
-**Tuning:** Empirical pipeline values are set in `raytracing_ultrasound_simulator.cpp` (params block before `pipeline_params_.upload`). **scattering_resolution_mm:** 10 for IVUS, 50 for abdominal; tune as in §4.4 (finer → finer speckle). **scatter_integral_scale:** 40 by default; tune as in §4.2 (higher → brighter tissue, lower → darker tissue; 0 = strict).
+- Beam waist at focus: `w_0 = λ · F / (2 a)` (with `λ` the centre wavelength, `F` the focal length, `a` the element radius).
+- Rayleigh length: `z_R = π w_0² / λ`.
+- Beam radius at depth `z`: `w(z) = w_0 · √(1 + (z / z_R)²)`.
 
----
+Two corrections are applied to the textbook model so it matches synthetic-aperture IVUS behaviour:
 
-## 8. Python bindings and package exports
+1. **Pre-focal clamp.** The textbook Gaussian-beam radius is symmetric about the focus, predicting a wide beam at depths `r ≪ focal_length` (≈ 2.8 mm beam radius at r = 1 mm with the PV .035 geometry). Bench imagery shows the opposite — angular FWHM is roughly constant with depth at depths shallower than the focus because a rotating-element IVUS coherently sums over a narrow beam bounded by element directivity. The simulator clamps the pre-focal contribution to zero:
 
-**Implementation:** [raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/python/raysim_bindings.cpp) (IVUSProbe class and SimParams/Materials docs); [raysim/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/__init__.py), [raysim/cuda/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/cuda/__init__.py) (exports).
+   ```cpp
+   const float z_post = (z > 0.f) ? z : 0.f;
+   const float sigma_mm = w0_mm * std::sqrt(1.f + (z_post * z_post) / (z_R_mm * z_R_mm));
+   ```
 
-- **IVUSProbe** bound as pybind11 class (constructors, readonly **element_radius_mm**, **focal_length_mm**). Defaults: num_angular_rays=256, frequency=40, element_radius_mm=0.6, focal_length_mm=4, etc.
-- **Materials**: Docstring for `get_index` updated to list **lumen**, **vessel_wall**, **extravascular**.
-- **SimParams**: Docstrings for **t_far**, **buffer_size**, **b_mode_size** clarified (mm, samples per ray, IVUS unwrapped angle×depth).
-- **IVUSProbe** added to exports and `__all__` in `raysim/__init__.py` and `raysim/cuda/__init__.py`.
+   so `σ_mm == w_0` for any depth `r ≤ focal_length` and the textbook expansion only applies post-focal where it is meaningful.
 
-**Justification:** These are **API and usability** changes, not physics. Exposing **IVUSProbe** and the new materials (**lumen**, **vessel_wall**, **extravascular**) in Python allows users to build IVUS scenes and run simulations without touching C++. Documenting **t_far** (mm), **buffer_size** (samples per ray), and **b_mode_size** (angle × depth for IVUS) in SimParams reduces misuse (e.g. wrong units or expecting sector geometry for IVUS).
+2. **Cyclic angular convolution, wide kernel.** IVUS angles wrap 360° (= `num_scanlines`), so the lateral convolution kernel wraps source row indices via `((iy + k) % N + N) % N` rather than truncating at the edges. The kernel radius is `num_scanlines / 2` so the kernel can span the full half-circumference at any depth without truncation. L1 normalisation (`sum = 1`) is used; L2 normalisation amplifies the residual sub-voxel scatter correlation at small radii and breaks the established `gain_db` calibration.
 
----
+When `element_radius_mm` and `focal_length_mm` are both zero, the 2D path is bypassed and a 1D lateral kernel with a safe fallback width is used.
 
-## 9. Utilities: vessel phantom meshes
+**Elevational.** Standard Gaussian PSF across the elevational planes followed by averaging. For 2D IVUS `num_el_samples = 1` and this stage is a no-op.
 
-**Implementation:** [phantom_maker.py#L327-L394](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py#L327-L394) (`generate_cylinder_mesh`), [phantom_maker.py#L396-L458](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py#L396-L458) (`generate_cylinder_thick_mesh`), [phantom_maker.py#L489-L541](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py#L489-L541) (CLI cylinder).
+The lateral PSF is invalidated when the probe frequency, element radius, focal length, `buffer_size`, or `t_far` change.
 
-- **`generate_cylinder_mesh`**: Writes an open cylinder OBJ (no caps), axis along Y, cross-section in xz; optional **inward normals** so rays from the lumen hit the front face. Default 129 segments to avoid alignment with 256 IVUS rays.
-- **`generate_cylinder_thick_mesh`**: Writes **Cylinder_inner.obj** and **Cylinder_outer.obj** for a thick vessel wall (inner/outer radius, same segment count and inward normals).
-- **CLI**: New phantom type **cylinder** with options **--cylinder-radius**, **--cylinder-length**, **--cylinder-segments**, **--cylinder-thick**, **--cylinder-inner-radius**, **--cylinder-outer-radius**.
+The CUDA implementation is in `convolve_columns_depth_dependent_kernel` (lateral 2D) and `convolve_columns` (lateral 1D); the axial convolution is `convolve_rows`.
 
-**Justification:** IVUS validates against **vessel phantoms**: a lumen (blood) surrounded by a **cylindrical wall**. The cylinder axis is along **Y** (vessel axis); the **cross-section in xz** is the IVUS imaging plane. **Inward normals** ensure that rays cast **from the center** (probe) hit the **front face** of the mesh (OptiX back-face culling would otherwise hide the wall). **129 segments** avoids aligning mesh edges with 256 angular rays, which would cause **periodic intensity bands** (aliasing). The **thick-walled** variant (inner + outer cylinder) models a wall with finite thickness and two interfaces (lumen–wall, wall–extravascular) for attenuation and two-layer validation.
+### 5.3 Time-gain compensation
 
----
+A piecewise-linear gain curve indexed by depth. Two paths:
 
-## 10. Evaluation (vessel, wire phantom, cystic phantom)
+- **Probe-type default** (`SimParams.tgc_control_points` empty): IVUS uses `{(0, 0), (1, tgc_dB_per_cm)}` with `tgc_dB_per_cm = 2 dB/cm`; abdominal uses `{(0, 0), (40, 28)}`. Cached per probe type so switching probes rebuilds the curve.
+- **User-supplied** (list non-empty): the simulator rebuilds the curve every frame from the supplied `(depth_cm, gain_db)` pairs. The probe-type cache is invalidated so a later frame that reverts to the empty path re-builds the default schedule.
 
-A separate document **[ivus_evaluation_writeup.md](ivus_evaluation_writeup.md)** describes the three evaluation setups used to validate the IVUS implementation:
+The calibrated PV .035 YAML uses five control points spanning the 0–3 cm IVUS range; see `instrument-calibration/p035_visions/volcano_s5i.yaml`.
 
-- **IVUS vessel example** (`ivus_example.py`): thick-walled cylinder phantom; tests geometry, interface echoes, and attenuation; expected unwrapped image shows two concentric bright rings at ~3.5 and ~4 mm depth.
-- **Wire phantom** (`wire_phantom_evaluation.py`): point targets (bone spheres) at 1–5 mm in a spiral; tests resolution and geometric accuracy; expected unwrapped image shows five bright spots in a spiral pattern.
-- **Cystic-resolution phantom** (`cystic_resolution_phantom_evaluation.py`): tissue background with fluid cysts; tests contrast and scatter/TGC; expected unwrapped image shows speckled tissue with five darker cyst regions.
+### 5.4 Reference gain (`gain_db`)
 
-That writeup includes the **unwrapped B-mode images** from each simulation for review and the commands to regenerate them.
-
----
-
-## 11. Configuration-driven processing pipeline (Pass 1)
-
-This section describes the **Pass 1 plumbing** added to make the simulator dynamically configurable from a YAML config without recompiling. The motivating use case is the per-instrument calibration pipeline that lives in `instrument-calibration/p035_visions/` and emits a `volcano_s5i.yaml` consumed at runtime via `raysim.IvusSimConfig`.
-
-The design constraint throughout was **bit-identical default behavior**: every new field has a default value chosen so that any existing example/script that constructs `SimParams()` and only sets the previously exposed knobs produces an unchanged pipeline. Calibration data only takes effect when the YAML overrides those defaults.
-
-**Implementation pointers (Pass 1 surface area):**
-
-- C++ public API: [raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (new `TgcControlPoint`, extended `SimParams`).
-- C++ pipeline: [raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp) (`simulate()` reads the new `SimParams` fields).
-- OptiX header fix: [optix_trace.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/cuda/optix_trace.hpp) (added the three `Params` fields the .cu/.cpp already used).
-- Bindings: [raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/python/raysim_bindings.cpp) (new `TgcControlPoint`, extended `SimParams` `def_readwrite` set).
-- Python config: [raysim/config.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/raysim/config.py) (`IvusSimConfig.to_sim_params()` now sets every Pass 1 field; `_PARTIALLY_WIRED_PATHS` reduced to `()`).
-
-### 11.1 OptiX `Params` header fix (latent bug)
-
-`csrc/cuda/optix_trace.cu` and `csrc/core/raytracing_ultrasound_simulator.cpp` were both reading/writing `params.scattering_resolution_mm`, `params.disable_scatter`, and `params.scatter_integral_scale` (see §4.2 / §4.4 / §7), but the matching `struct Params` in `include/raysim/cuda/optix_trace.hpp` did not declare those fields. That is a **latent build bug**: the simulator could not have compiled against a strictly conforming `Params`. Pass 1 added the three fields at the end of the struct (preserves layout for fields that were already there).
-
-**Diff (vs main) — `Params`:**
-```diff
-  struct Params {
-    ...
-    float source_frequency;
-    float contact_epsilon;
-+   // Pipeline parameters consumed by optix_trace.cu (also see §4):
-+   float scattering_resolution_mm;  // voxel size used to sample scattering texture
-+   uint32_t disable_scatter;        // non-zero disables scatter accumulation
-+   float scatter_integral_scale;    // multiplier on the scatter line integral (0 = strict)
-  };
-```
-
-**Justification:** The kernels needed these fields and were already reading them; the header just had to declare them so that any future `static_assert`/sizeof check or fresh build environment works. Behavior is unchanged because the .cpp continues to write the same values into them.
-
-### 11.2 Public `TgcControlPoint` and extended `SimParams`
-
-A new public struct **`raysim::TgcControlPoint { float depth_cm; float gain_db; }`** was added to `raytracing_ultrasound_simulator.hpp` so callers can build a piece-wise-linear TGC schedule without touching the file-local `ControlPoint` used inside `simulate()`. `SimParams` then carries:
-
-| `SimParams` field | YAML path | Default | Behavior at default |
-|---|---|---|---|
-| `tgc_control_points` (`std::vector<TgcControlPoint>`) | `processing.tgc_control_points` | empty | use the existing probe-type schedule (IVUS: 2 dB/cm to 1 cm; abdo: 0–28 dB to 40 cm) and keep the per-probe-type cache |
-| `log_multiplier` | `processing.log_multiplier` | `20.f` | matches the prior literal in `cuda_algorithms_->log_compression(...)` |
-| `log_floor` | `processing.log_floor` | `1e-19f` | matches the prior literal |
-| `median_clip_size` | `processing.median_clip.size` | `5` | matches the prior 5×1 kernel |
-| `median_clip_d_min_db` | `processing.median_clip.d_min_db` | `-60.f` | matches the prior dMin |
-| `median_clip_d_max_db` | `processing.median_clip.d_max_db` | `0.f` | matches the prior dMax |
-| `scattering_resolution_mm` | `processing.scattering_resolution_mm` | `0.f` | sentinel ⇒ probe-type auto (10 IVUS / 50 other) |
-| `scatter_integral_scale` | `processing.scatter_integral_scale` | `40.f` | matches the prior literal |
-| `disable_scatter` | (not in YAML yet) | `false` | scatter on, as before |
-
-**Justification:** Pass 1 deliberately chose **knobs that were already hard-coded in `simulate()`** (bucket B in the calibration plan) rather than introducing any new physics. Each entry is therefore a one-line replacement of a literal with the corresponding `sim_params.X`, plus a default that reproduces the literal exactly. This minimizes risk and lets the calibration pipeline drive the simulator immediately for the parameters we already extracted (TGC, log compression, median clip, scatter scale).
-
-### 11.3 Pipeline wiring inside `simulate()`
-
-The `simulate()` body picks up the new fields at the same places §4.4, §5.3, §7 already documented:
-
-**Diff (vs main) — pipeline params before optixLaunch:**
-```diff
-- params.scattering_resolution_mm =
--     (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) ? 10.f : 50.f;
-+ params.scattering_resolution_mm =
-+     (sim_params.scattering_resolution_mm > 0.f)
-+         ? sim_params.scattering_resolution_mm
-+         : ((probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) ? 10.f : 50.f);
-  ...
-- params.disable_scatter = 0;
-+ params.disable_scatter = sim_params.disable_scatter ? 1u : 0u;
-- params.scatter_integral_scale = 40.f;
-+ params.scatter_integral_scale = sim_params.scatter_integral_scale;
-```
-
-**Diff (vs main) — TGC block (extends the §5.3 caching to a user-supplied path):**
-```diff
-+ const bool user_tgc = !sim_params.tgc_control_points.empty();
-- if (!tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
-+ if (user_tgc || !tgc_curve_ || !tgc_size_ok || !tgc_probe_match) {
-    std::vector<ControlPoint> control_points;
-+   if (user_tgc) {
-+     control_points.reserve(sim_params.tgc_control_points.size());
-+     for (const auto& cp : sim_params.tgc_control_points) {
-+       control_points.push_back({cp.depth_cm, cp.gain_db});
-+     }
-+   } else if (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS) {
-      control_points = {{0.f, 0.f}, {1.f, tgc_dB_per_cm}};
-    } else {
-      control_points = {{0.f, 0.f}, {40.f, 28.f}};
-    }
-    tgc_curve_ = create_piece_wise_tgc(...);
--   tgc_probe_type_ = probe->get_probe_type();
-+   // Invalidate the probe-type cache when the curve was built from user control
-+   // points so that switching back to the default path on a later frame triggers a rebuild.
-+   tgc_probe_type_ = user_tgc ? std::nullopt
-+                              : std::optional<ProbeType>(probe->get_probe_type());
-  }
-```
-
-**Diff (vs main) — log compression and median clip:**
-```diff
-- cuda_algorithms_->log_compression(d_scanlines.get(), plane_size, 20.f, 1e-19f, sim_params.stream);
-+ cuda_algorithms_->log_compression(
-+     d_scanlines.get(), plane_size,
-+     sim_params.log_multiplier, sim_params.log_floor,
-+     sim_params.stream);
-  ...
-- cuda_algorithms_->median_clip_filter(
--     d_scanlines.get(), plane_size, d_filtered.get(), 5, -60.0f, 0.0f, sim_params.stream);
-+ cuda_algorithms_->median_clip_filter(
-+     d_scanlines.get(), plane_size, d_filtered.get(),
-+     sim_params.median_clip_size,
-+     sim_params.median_clip_d_min_db, sim_params.median_clip_d_max_db,
-+     sim_params.stream);
-```
-
-The CUDA kernel signatures (`log_compression`, `median_clip_filter`, `mul_row`) were already templated on the right scalar/integer types, so no kernel-side changes were needed for Pass 1.
-
-### 11.4 Python bindings and package exports
-
-`raysim_bindings.cpp` exposes:
-
-- **`TgcControlPoint`** as a class with the two-argument constructor `TgcControlPoint(depth_cm, gain_db)`, read/write properties for both fields, and a `__repr__` for debug printing.
-- All new `SimParams` fields via `def_readwrite` (`tgc_control_points`, `log_multiplier`, `log_floor`, `median_clip_size`, `median_clip_d_min_db`, `median_clip_d_max_db`, `scattering_resolution_mm`, `scatter_integral_scale`, `disable_scatter`).
-- The `SimParams` docstring was updated to document the new knobs.
-
-`raysim/__init__.py` re-exports `TgcControlPoint` so the canonical user-facing import is `from raysim import SimParams, TgcControlPoint, IvusSimConfig`.
-
-### 11.5 Python config layer (`IvusSimConfig.to_sim_params`)
-
-`raysim.config.IvusSimConfig.to_sim_params()` was extended to set every Pass 1 field. The TGC list of `(depth_cm, gain_db)` tuples in YAML is converted into a `list[rs.TgcControlPoint]` before assignment. An empty YAML list keeps the simulator on its probe-type default schedule (preserves backward compat for configs that omit `processing.tgc_control_points`). `scattering_resolution_mm` in YAML defaults to `10.0` (the historical IVUS value) and is forwarded as-is; setting it to `0.0` falls back to the C++ probe-type auto.
-
-The book-keeping registry `_PARTIALLY_WIRED_PATHS` — which previously listed every YAML path that was in the schema but still hard-coded in C++ — has been emptied since all bucket-B knobs are now plumbed. The list is kept (with a comment) so future schema additions can be flagged before their bindings land.
-
-Verified locally (without a CUDA build) by loading `instrument-calibration/p035_visions/volcano_s5i.yaml` through the schema and checking the diagnostic registries:
-
-```
-_PARTIALLY_WIRED_PATHS = ()
-partially_wired_fields() (should be empty after Pass 1):    <empty>
-pending_fields() (Future, not yet wired):
-  processing.dynamic_range_db = 40.6
-  processing.reject_db = -40.6
-  processing.noise.sigma = 2.6347
-  processing.ring_down.amplitude = 46.37
-  processing.ring_down.extent_mm = 3.0
-  processing.ring_down.decay = measured
-  processing.ring_down.waveform_path = P_035_PointScatter/derived/ringdown/...
-```
-
-### 11.6 What's still on the to-do list
-
-Pass 1 deliberately did not touch any new physics. **Pass 2 (§11.7) lands the ring-down injection stage and the dynamic-range / reject display window**; only `gain_db`, `compression_lut`, and `noise.{type,sigma}` remain in `_FUTURE_PATHS`. Noise is intentionally deferred until after ring-down so we can measure noise on a ring-down-subtracted simulator rather than fitting a number that conflates noise with residual catheter signal. `_FUTURE_PATHS` in `raysim/config.py` is the live source of truth for what's still pending.
-
-### 11.7 Configuration-driven processing pipeline (Pass 2)
-
-Pass 2 adds the first batch of new physics on top of Pass 1's plumbing: a calibrated **ring-down injector** that reproduces the catheter's near-field signature, and a **post-log display window** that reproduces the device's reject / saturation palette. Both are off by default so default `SimParams()` continues to be byte-identical to pre-Pass-1 (validated end-to-end: `max abs diff = 0` against the pre-Pass-1 build of the same example).
-
-**Implementation pointers (Pass 2 surface area):**
-
-- C++ surface: [include/raysim/core/raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (new public `struct RingDownParams`; `SimParams::ring_down`, `SimParams::reject_palette`, `SimParams::saturation_palette` — see §11.9 for the Pass 3b rename of the display-window knobs).
-- C++ pipeline: [csrc/core/raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp) (stage **1.6 Ring-down injection** between TGC and envelope detection; stage **3.5 Display window** after log compression).
-- CUDA helpers: [csrc/cuda/cuda_algorithms.{hpp,cu}](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu) — new `add_row` (broadcast vector add along depth) and `apply_display_window` (Pass 3b: direct palette clamp; replaces the dB-shift formulation that landed in Pass 2).
-- Python bindings: [csrc/python/raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/python/raysim_bindings.cpp) (`RingDownParams` class with `def_readwrite` for every field including a numpy-backed `waveform`; `SimParams.ring_down / reject_palette / saturation_palette`).
-- Python config: [raysim/config.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/raysim/config.py) (`RingDownConfig` gained `enabled`, `template_pitch_mm`, `template_speckle_floor_palette`; `to_sim_params` loads the .npy template, subtracts the speckle floor, converts palette → envelope amp, and resamples to the simulator's depth-sample pitch).
-- Calibrated YAML: [`instrument-calibration/p035_visions/volcano_s5i.yaml`](../../../instrument-calibration/p035_visions/volcano_s5i.yaml) (`ring_down.enabled: true`, `template_pitch_mm: 0.12`, `template_speckle_floor_palette: 45.0`).
-
-**Where things go in `simulate()`:** ring-down is added pre-Hilbert (between TGC at step 1.5 and envelope detection at step 2). The calibrated template is stored on the host as `std::vector<float>` in envelope-amplitude units, uploaded once per change, and added row-wise via `add_row` so the existing Hilbert + log-compression handle the resulting peak shape naturally. Cache invalidation keys on (`decay`, `amplitude`, `extent_mm`, `buffer_size`, and the host pointer + size of the measured waveform) so callers that swap templates frame-to-frame get a fresh upload. The display window is applied post-log-compression and pre-median-clip (so the median clip filter still operates on a reasonable local window). Both stages skip themselves when their toggle is off (`ring_down.enabled == false` and `saturation_palette <= reject_palette`), so default callers see no change.
-
-**Sample-pitch convention.** The OptiX raygen maps the radial range `[0, t_far_mm]` onto `buffer_size` samples (`offset = round(t / t_far * (buffer_size - 1))` in `optix_trace.cu`), so the spatial pitch in the scanlines is `t_far / buffer_size` mm/sample — *not* `c / SAMPLING_FREQ / 2`. Both the C++ ring-down stage and the Python loader's resampler use this convention so a calibration template peak at 1.8 mm in the file lands at 1.8 mm in the simulator output (verified end-to-end: median-over-angle radial profile peaks at 1.787 mm for the PV .035 calibrated template, matching the calibrated 1.80 mm). The pre-existing `create_piece_wise_tgc` path uses the legacy `SAMPLING_FREQ`-based convention for its own depth → sample math and is left alone (a separate alignment cleanup).
-
-**Acceptance check (PV .035 calibrated YAML against the cylinder phantom):**
-
-| metric                                | expected (calibration / device)             | observed                                  |
-|---------------------------------------|---------------------------------------------|-------------------------------------------|
-| Inner ~3 mm peak depth (ring_down ON) | ~1.80 mm (E6, calibration_delta.md)         | **1.787 mm** (peak palette 227.9)         |
-| Frame palette range (display window)  | reject ≈ 11, saturation ≈ 239 (E7)          | **[~11, 227.9]** with calibrated dr/reject |
-| `default SimParams()` regression      | bit-identical to Pass 1                     | **max abs diff = 0** (vs Pass 1 reference) |
-
-**What's intentionally not in Pass 2:** noise (deferred per the calibration plan — measurable only on a ring-down-subtracted simulator), `gain_db` (kept informational; per-frame gain is applied by scaling the ring-down `amplitude` and the speckle calibration externally), `compression_lut` (no calibrated LUT yet — full E7 sweep needed). All three remain in `_FUTURE_PATHS`.
-
-### 11.8 Log-compression: fixed-reference mapping (Pass 3a → Pass 3b / K2v2)
-
-Tier 1 evaluation (test G in `instrument-calibration/p035_visions/tier1_results/tier1_results.md`) surfaced a structural divergence between the calibration sheet and the simulator's `log_compression_kernel`:
-
-* The sheet defines `pixel = log_multiplier · log10(amp / log_floor)` — an **absolute, fixed-reference** mapping between envelope amplitude and palette.
-* The legacy kernel computed `pixel = log_multiplier · log10(max(amp, log_floor) / per_frame_quantile)` where `per_frame_quantile` was the per-frame 99.999 %-quantile of the envelope buffer. This made absolute palette values **frame-dependent** (every frame's brightest pixel landed at palette 0 regardless of absolute amplitude) and broke the round-trip with the calibration sheet for any non-degenerate scene.
-
-**Pass 3a (K2)** removed the per-frame quantile and used `log10(max(amp, log_floor)) · log_multiplier`. **Pass 3b (K2v2)** further switches to the spec form so `amp == log_floor` lands at palette 0 (instead of palette `log_multiplier · log10(log_floor)`), and so `amp < log_floor` produces *negative* palette values that the display-window stage can clamp to the device's reject palette:
-
-```diff
-- buffer[offset] = log10f(max(buffer[offset], minimum)) * mutliplicator;
-+ const float floor_safe = fmaxf(minimum, 1e-30f);
-+ const float amp_safe   = fmaxf(buffer[offset], 1e-30f * floor_safe);
-+ buffer[offset] = log10f(amp_safe / floor_safe) * mutliplicator;
-```
-
-The two epsilon clamps make `amp == 0` / `log_floor == 0` produce a finite, very-negative palette value (~`-30 · log_multiplier`) instead of NaN/-inf. The corresponding C++ caller (`CUDAAlgorithms::log_compression`) drops the `cub::DeviceRadixSort` reduction and the `log_compression_sorted_` / `temp_log_compression_` scratch buffers (Pass 3a). The host-side `<cub/cub.cuh>` include is also no longer needed by `cuda_algorithms.cu`.
-
-**Default change (Pass 3b).** `SimParams::log_floor` default changes from `1e-19f` to `1.f`. With `log_multiplier == 20` (default) this puts the post-log palette in roughly `[-60, 0]` for envelope amplitudes in `[1e-3, 1]` — the same range the existing `examples/ivus_example.py` `MIN_VAL/MAX_VAL` window assumes. Default callers that constructed `SimParams()` see a palette shift of `+log_multiplier · log10(1e-19) = -380` cancelled out by the new default, so their displayed images look the same as before Pass 3a.
-
-**Tier 1 acceptance after K2v2:** test G (log-compression mapping) passes by construction (kernel now mirrors the spec exactly). The display-window rewrite (Pass 3b, §11.9) and the calibrated `gain_db` stage (Pass 3a, §11.9.1) close out the rest of the gain-alignment story.
-
-### 11.9 Display window + reference gain (Pass 3b)
-
-Pass 3b lands two coupled fixes that together let the calibrated PV .035 YAML reproduce the device's reject behaviour and put the simulator's envelope amplitudes onto the bench's reference scale at slider 54.
-
-#### 11.9.1 Reference gain stage (`gain_db`)
-
-A new `SimParams::gain_db` is applied **between TGC (stage 1.5) and ring-down injection (stage 1.6)** as `rf ← rf · 10^(gain_db / 20)`. The CUDA wrapper short-circuits on `gain_db == 0` so default callers pay no kernel-launch cost.
-
-The pre-Hilbert location is deliberate — `gain_db` has to scale the raytraced RF up to bench-calibrated amplitude *before* ring-down is added, because ring-down's `amplitude` field is specified in bench-calibrated envelope units. Putting `gain_db` after ring-down would double-scale the ring-down by `10^(gain_db/20) = 10^7.86 ≈ 7×10^7`, blowing out the inner ring and cascading saturation through the lateral PSF into the rest of the image. By linearity of the Hilbert transform (`|H(s·rf)| = s·|H(rf)|`), scaling RF pre-Hilbert is mathematically equivalent to scaling envelope post-Hilbert for the scattering signal, so the pure-amplitude derivation in `derive_gain_db.py` is unchanged by the move.
+Applied pre-Hilbert (between TGC and ring-down injection) as `rf ← rf · 10^(gain_db / 20)`. The CUDA wrapper short-circuits on `gain_db == 0` so default callers pay no kernel-launch cost.
 
 `gain_db` lumps two physically distinct effects into one calibrated scalar:
 
-1. The bench's **slider-gain offset** (the device's gain control: slider 54 maps to 0 dB by convention; a 10-step change is ±10 dB on the bench gain LUT).
-2. A **renderer-specific reference-amplitude offset** — the simulator's raw envelope amplitudes are not on the same linear scale as the bench's calibrated amplitudes. The calibration sheet treats the bench's "amp at slider 54" as the reference (in arbitrary linear units), so this offset is the constant that puts the simulator's output onto that scale. See `instrument-calibration/p035_visions/derive_gain_db.py` for the analytical derivation.
+1. The bench's **slider-gain offset** (the device's user-facing gain control; for the PV .035, slider 54 maps to 0 dB).
+2. A **renderer-specific reference-amplitude offset** that puts the simulator's raw envelope amplitudes onto the bench's calibrated scale (the bench reference amplitude is "amp at slider 54").
 
-The PV .035 YAML calibrates `gain_db` against the **bench water-scatter background** (palette 46.2 at slider 54). `derive_gain_db.py` runs in two passes:
+Pre-Hilbert placement is required because the ring-down template (§5.5) is specified in bench-calibrated envelope units; applying `gain_db` after ring-down would double-scale the ring-down by `10^(gain_db/20)`. By linearity of the Hilbert transform (`|H(s · rf)| = s · |H(rf)|`), scaling RF pre-Hilbert is mathematically equivalent to scaling envelope post-Hilbert for the scattering signal, so the pure-amplitude derivation in `derive_gain_db.py` is unaffected by the placement.
 
-1. *Pure-amplitude seed.* Render the wire phantom in raw-envelope mode (`log_floor=1.0, log_multiplier=1.0, ring-down OFF, display window OFF, gain_db=0`) so the post-log palette equals `log10(envelope_amp)`. The geometric-mean water-bg amplitude is `sim_bg_amp = 10^(mean(log10(amp_i)))`; the bench reference is `bench_bg_amp = 10^(46.2 / log_multiplier)`; the seed is `gain_db_seed = 20·log10(bench_bg_amp / sim_bg_amp) = +157.20 dB`.
-2. *Bisection refinement.* The seed systematically over-shoots because the simulator's rendered bg distribution is wider than the bench's (Rayleigh log10 std ≈ 31 palette vs the bench's narrower-than-Rayleigh 20.3 palette). The seeded mean palette would be 46 if no clipping occurred; in the calibrated render the long left tail of `log10(amp)` crashes through `reject_palette = 11` and the clamp lifts the post-clamp mean by ~33 palette. The script bisects `gain_db` against the *post-pipeline post-clamp mean palette* of an anechoic lumen render until the rendered bg matches the bench reference within 0.5 palette. For PV .035 this lands at **`gain_db = +132.83 dB`**.
+The PV .035 calibration anchors `gain_db` against the bench wire-peak target; see `instrument-calibration/p035_visions/derive_gain_db.py`.
 
-Calibrating against the background (rather than the wire peaks) is deliberate: the bench's wire-vs-bg amplitude contrast (~26 dB) is much smaller than the simulator's (~100 dB on the current renderer), so a single `gain_db` scalar cannot align both. Anchoring at the background preserves the device's reject-palette behaviour; the wire echoes will then saturate at `saturation_palette = 239`, which matches how the bench frames already render their inner wires (palette ≥ 220 on the device's display) but over-saturates the bench's outer wires. Closing that contrast gap is a scattering-strength problem in the OptiX pipeline — orthogonal to the gain/log/display-window calibration and tracked in `instrument-calibration/p035_visions/calibration_delta.md`.
+### 5.5 Ring-down injection (post-Hilbert)
 
-#### 11.9.2 Display window: direct palette clamp
+The catheter sheath produces a near-field ring-down signature that the simulator emits as a post-Hilbert envelope template. The stage runs between envelope detection and log compression so the cuFFTDx Hilbert transform — which is a length-`buffer_size` cyclic FFT — never sees the ring-down transient. (If the ring-down were added pre-Hilbert, spectral side lobes would smear it across the whole buffer.)
 
-The Pass 2 display window had two bugs:
+`SimParams::ring_down` carries a `RingDownParams` struct:
 
-* It used dB-space anchors (`reject_db`, `dynamic_range_db`) and remapped `[reject_db, reject_db + dr_db]` onto `[0, log_multiplier · dr_db / 20]`. With K2v2's *negative* palette outputs (which represent `amp < log_floor`), the kernel's input pixel of 0 was shifted *up* to the saturation ceiling instead of clamped *down* to the reject floor — exactly the opposite of the device's behaviour. So everything below the reject window came out white instead of black.
-* The re-zeroing step meant the device's documented reject palette (e.g. 11 for the PV .035) was never actually displayed; the simulator's reject floor was always palette 0.
+| Field | Meaning |
+|---|---|
+| `enabled` | toggle |
+| `amplitude` | overall scale (envelope-amp units) |
+| `extent_mm` | radial truncation (samples beyond this are untouched) |
+| `decay` | `"measured"` (use the supplied waveform verbatim) or `"exponential"` |
+| `waveform` | 1D numpy float32 array, envelope amplitudes |
 
-Pass 3b replaces the dB-shift formulation with a **direct palette clamp**:
+The host stores the resolved template as `std::vector<float>` in envelope-amp units, uploads it once per change, and adds it row-wise to the envelope buffer with `add_row` (broadcast vector add along depth). The Python loader (`raysim.config.IvusSimConfig`) resolves the `.npy` template relative to the workspace root, subtracts the bench speckle floor, converts palette → envelope amplitude via `log_multiplier`, and resamples from the device's display pitch (0.12 mm/sample for PV .035) onto the simulator's `t_far / buffer_size` pitch. Cache invalidation keys on `(decay, amplitude, extent_mm, buffer_size, host_pointer, host_size)` so callers can swap templates frame-to-frame.
+
+The OptiX raygen maps `[0, t_far]` mm onto `buffer_size` samples (`offset = round(t / t_far · (buffer_size - 1))`), so the spatial pitch in the scanlines is `t_far / buffer_size` mm/sample — *not* `c / SAMPLING_FREQ / 2`. Both the C++ ring-down stage and the Python loader's resampler use this convention.
+
+### 5.6 Post-envelope Gaussian noise
+
+A small additive noise term applied to the envelope after Hilbert (and after ring-down injection) and before log compression. Models residual sensor noise that survives envelope detection in real systems. Configured via `SimParams::envelope_noise` (`EnvelopeNoiseConfig`: `mean`, `sigma`, `gain_db_ref`, `frame_seed`, `scale_with_gain`).
+
+When `scale_with_gain == true`, both `mean` and `sigma` track the receive-chain gain by scaling with `10^((gain_db - gain_db_ref) / 20)`. This matches how bench-measured noise references at slider 54 and then scales with the device's gain knob.
+
+### 5.7 Post-Hilbert radial low-pass
+
+Optional Gaussian low-pass filter along the radial axis (`SimParams::post_hilbert_lpf`). Smooths residual high-frequency ringing left in the envelope signal after Hilbert.
+
+### 5.8 Log compression
+
+`20 · log10(max(envelope, log_floor)) · log_multiplier / 20` — i.e., a fixed-reference mapping from envelope amplitude to palette value:
+
+\[\text{palette} = \log_{10}\left(\frac{\max(\text{amp}, \text{log\_floor})}{1}\right) \cdot \text{log\_multiplier}\]
+
+`amp == log_floor` lands at palette 0 by construction. `amp < log_floor` produces *negative* palette values that the display-window stage (§5.9) clamps to the device's reject palette. Two epsilon clamps inside the kernel make `amp == 0` / `log_floor == 0` produce a finite, very-negative palette value (`~ -30 · log_multiplier`) instead of NaN/-∞.
+
+The default `log_floor = 1.0` and `log_multiplier = 20.0` put the post-log palette in roughly `[-60, 0]` for envelope amplitudes in `[1e-3, 1]` — the range the default `MIN_VAL/MAX_VAL` in `examples/ivus_example.py` expects.
+
+### 5.9 Display window — palette clamp
+
+`apply_display_window` clamps each sample to `[reject_palette, saturation_palette]`:
 
 ```cpp
 buffer[offset] = fminf(fmaxf(buffer[offset], reject_palette), saturation_palette);
 ```
 
-`SimParams::reject_palette` and `SimParams::saturation_palette` replace the old `reject_db` / `dynamic_range_db` knobs. With both at 0 (default) the display-window stage is skipped entirely. The PV .035 YAML uses the values straight out of `gain_lut.json` (`reject_palette: 11.0`, `saturation_palette: 239.0`), so the device's reject floor and saturation ceiling reproduce by construction.
+The kernel is skipped when `saturation_palette <= reject_palette` (the default `0/0` configuration). The PV .035 YAML reads these values straight out of the device's `gain_lut.json` (`reject_palette: 11.0`, `saturation_palette: 239.0`).
 
-**Tier 1 acceptance after Pass 3b:** the Tier 1 evaluation script (`instrument-calibration/p035_visions/tier1_evaluation.py`) reports five PASSes (configuration round-trip A, configuration self-consistency B, log-compression mapping G with 0.0 palette error, TGC schedule H with 0.0 dB error, and the new gain-alignment diagnostic with bg landing at palette 47.3 vs the bench reference 46.2 — Δ = +0.19 dB). The remaining FAILs (axial PSF C, lateral PSF D, ring-down RMS E) are all attributable to the wire-vs-bg contrast gap: every wire saturates at `saturation_palette = 239`, so the −6 dB FWHM measurement is undefined and the PSF-ringdown shape RMS is dominated by saturation rather than ringdown shape. Test F (noise floor σ) remains N/A pending the additive-noise wiring deferred to Pass 4. The renderer-vs-bench wire-vs-bg contrast gap (~74 dB) is tracked separately in `instrument-calibration/p035_visions/calibration_delta.md` as the next blocking issue for closing C/D/E.
+A softplus-smoothed variant (`apply_display_window_softplus`) is also available, controlled by `SimParams::display_softplus_scale`. When the scale is positive the reject floor is smoothed by a softplus so the transition from "noise pixels below reject" to "noise pixels at reject" is differentiable rather than discontinuous.
 
-### 11.10 Ring-down post-Hilbert + depth-uniformity test (Pass 4)
+### 5.10 Median clip
 
-Pass 3b shipped a calibrated PV .035 build that visually showed a "bright centre, dark middle, bright outer" radial pattern in anechoic regions. Pass 4 adds a quantitative diagnostic for that pattern (Tier 1 test I — depth uniformity in anechoic ROI) and uses it to root-cause two distinct effects:
+A 5×1 median filter on the post-display-window image, clamped to `[median_clip_d_min_db, median_clip_d_max_db]` (defaults `-60`/`0`). Reduces salt-and-pepper artefacts from the log/display chain while preserving structure.
 
-1. **Mysterious far-field rise (r ≈ 20 → 29 mm).** The simulator's anechoic mean palette grew by ~+50 from r ≈ 20 mm to the buffer edge at r ≈ 29 mm, with the rise correlated with `ring_down.enabled = true` even though `extent_mm = 3.0`. Diagnostic with shared scatter texture isolated it: cuFFTDx's Hilbert is a length-N (= 4096) cyclic FFT, so any inner-zone transient gets smeared across the entire buffer via spectral side lobes. Predicted leakage envelope at sample 4000 (computed offline by FFT-Hilberting a zero-padded copy of the ring-down template): ~4.1 envelope-amp, equivalent to ~+68 palette at the calibrated `log_multiplier = 112.3`. Observed in-pipeline excess matched within a few palette.
+### 5.11 Catheter dead-zone
 
-   **Fix.** Move the ring-down add stage to **post-Hilbert** (`raytracing_ultrasound_simulator.cpp` §2.5, between envelope detection and log compression). The bench template is already in envelope-amp units (the YAML loader applies `amp = 10^(palette/log_mult) - 1` with the speckle-floor subtraction), so adding it to the envelope buffer is the literal mathematical operation we want — "the catheter contributes this envelope on top of the scattering envelope". The cuFFTDx Hilbert now sees only the broadband scatter signal and there is no transient to smear. The ring-down `extent_mm` truncation is honoured exactly (samples past `extent_samples` are untouched).
+A radial zeroing kernel (`zero_inner_radial_kernel`) sets every sample at `r < catheter_dead_zone_mm` to palette 0. Applied at the very end of the pipeline (post log-compression / display window / median clip), so the dead-zone is solid black (palette 0) rather than reject-floor (palette 11) — matching the bench's solid-black inner zone. Calibrated to 1.4 mm for PV .035 from `tier1_results/figures/ringdown_inner_zone_paired.png`.
 
-   Knock-on: the bisection in `derive_gain_db.py` was using a calibrated render that previously included the Hilbert-leakage bg lift; with that lift gone, the calibrated `gain_db` had to grow by **+12.19 dB** (132.83 → 145.02) to keep the post-clamp anechoic mean palette at the bench's 46.2 reference. Test I drops from RMS = 31.4 → 21.4 → ~30 palette across the chain (the third number is after the gain re-fit; max |Δ| now sits in the bright shoulder at r ≈ 4-7 mm rather than the spurious far-field rise).
+### 5.12 Scan conversion and display bounds
 
-2. **Bright shoulder at r ≈ 4-7 mm — root-caused but not yet fixed (Pass 5).** Pure-scatter renders (ring-down OFF, scatter ON) show a near-field palette peak (mean ≈ 100-200, vs bench ~33-44) that the bench does not. A controlled diagnostic comparing 2D-depth-dependent vs 1D-constant lateral PSF (probe `element_radius=0` falls back to 1D const) showed the **2D depth-dependent lateral PSF is the source**:
+IVUS scan conversion (`scan_convert_ivus`) takes the (depth_norm, angle_norm) scanline buffer through a CUDA texture and resamples to an unwrapped 2D buffer with horizontal axis = angle, vertical axis = depth. The simulator exposes the display bounds via `get_min_x()` / `get_max_x()` / `get_min_z()` / `get_max_z()`; for IVUS these are `(0, 360, 0, t_far_mm)`.
 
-   - The 1D-constant lateral PSF gives mean palette ≈ 18-45 across all depths — consistent with the bench's 33-44 floor.
-   - The 2D depth-dependent PSF (`update_psfs` Gaussian-beam model) produces wild depth-dependent oscillation (palette 14 → 200 over ~1 mm intervals in r ∈ [0, 7] mm) that converges to the 1D fallback past r ≈ 12 mm.
-
-   Three sub-issues identified in the implementation (`csrc/cuda/cuda_algorithms.cu` `convolve_columns_depth_dependent_kernel` and `csrc/core/raytracing_ultrasound_simulator.cpp` `update_psfs`):
-
-   1. **Non-cyclic angular convolution.** IVUS angles wrap 360° but the convolution truncates at `index.y = 0` and `index.y = num_scanlines - 1` (lines 106-107). Should be cyclic (`(index.y + k + size.y) % size.y`).
-   2. **`kernel_radius = 64` too small for near-field beam.** At r = 1 mm the Gaussian σ = 113 angular bins (wider than the 64-bin half-window), so the kernel is severely truncated and the sum=1 normalization fails to renormalize against the lost mass.
-   3. **L1-normalized kernel makes envelope amplitude depth-dependent.** For random scatter, the envelope mean of a kernel-convolved zero-mean RF is proportional to the kernel's L2 norm. With sum=1 normalization, L2 ∝ 1/√σ → small-σ depths see disproportionately larger envelope amplitude than large-σ depths. Should normalize by L2 to make envelope amp depth-invariant for random-bg scatter.
-
-   Pass 5 should fix all three (one PR, requires re-running `derive_gain_db.py` since the bg statistics will shift again).
-
-**Tier 1 test I — depth uniformity in anechoic ROI.** New diagnostic in `tier1_evaluation.py` that:
-- Renders N anechoic frames with the calibrated YAML (ring-down ON since that's the deployed config).
-- Computes per-radius mean / median / std palette across angles + frames.
-- Reads bench polar frames (gain 54, D = 60 mm, 5 frames) and masks wires by per-radius p70 clip; takes mean across frames.
-- Compares sim vs bench in the band `r ∈ [max(extent_mm + 1, 4), min(0.97 · t_far_mm, 29)]` mm.
-- Pass criterion: RMS(sim − bench) ≤ 10 palette **AND** sim peak-to-trough span ≤ 1.5 × bench span.
-- Saves figure `tier1_results/figures/depth_uniformity.png` and persists per-radius profiles to `tier1_results/arrays/`.
-
-After Pass 4 with the re-derived `gain_db = +145.02`: bias is essentially zero (sim mean tracks bench mean within ±10 palette over r ∈ [10, 29] mm), but the bright shoulder at r ≈ 4-7 mm dominates the RMS (max |Δ| ≈ 100-120 palette there). Test I FAILS until the near-field scatter peak and the missing additive noise (test F) are addressed in Pass 5.
-
-### 11.11 Lateral-PSF cyclic+wide kernel and per-scanline scatter decorrelation (Pass 5 / Pass 5b)
-
-Pass 5 attacked the **bright shoulder** in the depth-uniformity profile (test I) at r ≈ 4-7 mm. The Pass 4 figure showed a +50-100 palette excess in that band that the calibrated `gain_db` could not absorb without darkening the deep field.
-
-**Pass 5 (lateral PSF correctness — `csrc/core/raytracing_ultrasound_simulator.cpp::update_psfs`, `csrc/cuda/cuda_algorithms.cu::convolve_columns_depth_dependent_kernel`):**
-
-The IVUS lateral PSF is intrinsically cyclic in angle (360° = `num_scanlines`), but `convolve_columns_depth_dependent_kernel` was truncating at `index.y == 0` and `index.y == size.y - 1`, producing a darkened seam at angle 0/360°. The Pass 4 kernel radius (`64`) was also smaller than the near-field Gaussian-beam σ (≈113 angular bins at r=1 mm), truncating the kernel before it captured the full beam.
-
-Pass 5 fixes both:
-
-1. **Cyclic angular convolution.** The kernel now wraps source row indices via `((iy + k) % N + N) % N` so the convolution matches the periodic IVUS geometry. Boundary darkening at the angle seam is gone.
-2. **Kernel radius scales with `num_scanlines`.** `kernel_radius = num_scanlines / 2` (= 128 for the PV .035 256-scanline geometry) so the kernel can span the full half-circumference at any depth without truncation.
-3. **Normalization choice (L1 retained).** L2 normalization (`sqrt(sum_sq) = 1`) was tried and rejected: with the OptiX scatter texture's positive angular correlation at small r (adjacent scanlines sample world points 0.025 mm apart at r=1 mm, well within one trilinearly-interpolated voxel), the L2-normalized cyclic Gaussian convolution amplifies the correlated near-field signal by ~`√σ_bins`, *worsening* the bright shoulder by another +50 palette. L1 normalization preserves the established `gain_db` calibration curve.
-
-After Pass 5 alone (cyclic + wide kernel + L1 + re-derived `gain_db = +144.02`), test I RMS dropped marginally from 30.0 → 32.8 (i.e. ≈ unchanged). The angle-seam darkening was visibly cured but the near-field bright shoulder persisted because its root cause is in the OptiX scatter sampling, not the PSF kernel.
-
-**Pass 5b (per-scanline scatter decorrelation — `csrc/cuda/optix_trace.cu::get_scattering_value`):**
-
-The scatter texture is a 256³ float2 volume in WRAP addressing mode (see `World::generate_scattering_texture`), sampled in world coordinates via trilinear interpolation. At small r the angular sampling is sub-voxel (arc length per scanline `2π·r/N ≈ 0.025 mm` at r=1 mm) so adjacent scanlines see *interpolated* values from the same texture neighbourhood — producing positive angular correlation that survives even at `scattering_resolution_mm = 0.01 mm` (verified by parameter sweep). The depth-dependent lateral PSF then sums these correlated samples coherently, manifesting as the bright shoulder.
-
-The Pass 5b fix adds a per-scanline pseudo-random offset to the texture coordinate before lookup:
-
-```cpp
-if (params.scatter_angular_decorrelate) {
-  const uint32_t base = ray_index * 3u + params.frame_seed * 2654435761u;
-  const float ox = pcg_to_unit_float(pcg_hash(base + 0u)) * 4096.f;
-  const float oy = pcg_to_unit_float(pcg_hash(base + 1u)) * 4096.f;
-  const float oz = pcg_to_unit_float(pcg_hash(base + 2u)) * 4096.f;
-  pos.x += ox;  pos.y += oy;  pos.z += oz;
-}
-```
-
-The hash is a standard PCG mix (Jarzynski & Olano 2020; O'Neill 2014) — adequate for per-ray jitter, not security. The 4096× scaling guarantees offsets span many texture periods so wrap-mode addressing places adjacent scanlines into independent regions of the texture. All depth samples *along* a scanline share the same offset so the axial scatter integral remains spatially coherent (preserving wire/sphere PSFs and the band-pass character that the axial Hanning-cosine PSF later filters). `frame_seed` is mixed in so successive frames draw independent speckle realizations, enabling temporal averaging to converge on the bench's noise-floor statistics; Tier 1 test I increments `frame_seed` per frame.
-
-Two new `SimParams` fields drive this:
-
-```cpp
-bool scatter_angular_decorrelate = true;   // default ON
-uint32_t frame_seed = 0u;                  // increment per frame for independent speckle
-```
-
-Mirrored into `Params` (`include/raysim/cuda/optix_trace.hpp`) and exposed via Python bindings.
-
-**Calibration impact.** With decorrelation enabled, the OptiX scatter contribution at every scanline becomes the *uncorrelated* mean of the texture statistics — significantly larger than the previous correlated-sample value. `derive_gain_db.py` re-calibrated `gain_db` from +144.02 dB → **+111.01 dB** (−33 dB). The wire-vs-bg contrast gap (sim 100 dB vs bench 26 dB) also closed by ≈14 dB to −59.6 dB because wires are insensitive to scatter-texture jitter (deterministic targets) while the bg amplitude rose.
-
-**Tier 1 test I result (Pass 5b):** RMS palette difference dropped from 30.0 (Pass 4) / 32.8 (Pass 5) to **29.2** (Pass 5b) — best yet, but still above the 10-palette pass threshold. Visual depth-uniformity is dramatically improved: the bright shoulder at r ≈ 4-7 mm is replaced by a smooth monotonic decay from the ring-down zone, and the rendered polar B-mode no longer shows the "bright-mid → dark → bright-outer" pattern that motivated this pass. The remaining +50 palette excess at r ≈ 4-10 mm and the median-palette dropout at r > 14 mm (sim median = `reject_palette = 11` in deep field) require an additive noise-floor stage (test F, Pass 6) — see §12.4.
-
-**Pass 5c (pre-focal beam clamp).** A wire-shape comparison against the bench (visible in `tier1_results/figures/wire_phantom_polar_paired.png`) revealed a second, related artifact: in the sim's diagnostic polar B-mode the wire at r = 5 mm spans 30-50° in angle while the bench wire at the same radius is a tight pinpoint. Root cause: the textbook Gaussian beam model `w(z) = w0 * sqrt(1 + (z/z_R)^2)` is symmetric about the focus and predicts a wide mm-scale beam at depths r << focal_length (≈ 2.8 mm beam radius at r = 1 mm with the PV .035 geometry). Combined with the angular conversion `sigma_bins = sigma_mm * N / (2π * r)` the `1/r` factor explodes σ_bins to >100 angular bins at r = 1 mm.
-
-Bench imagery shows the opposite: angular FWHM is approximately constant with depth, so the polar→Cartesian arc-length FWHM is *narrower* for near wires and *wider* for far wires (matching the synthetic-aperture IVUS chain — at depths r < focal_length the rotating element coherently sums over a narrow beam bounded by the element directivity, not the focused-aperture geometry). The depth-symmetric Gaussian model conflates static-focused-aperture behaviour with the SA-rotated-element geometry.
-
-Pass 5c clamps the pre-focal contribution to (z/z_R)² to zero in `update_psfs`:
-
-```cpp
-const float z_post = (z > 0.f) ? z : 0.f;
-const float sigma_mm = w0_mm * std::sqrt(1.f + (z_post * z_post) / (z_R_mm * z_R_mm));
-```
-
-so σ_mm == w0 for any depth r ≤ focal_length and the textbook expansion only applies post-focal where the model is meaningful. Wire pinpoint shape is restored across the full radial range.
-
-**Calibration impact.** `derive_gain_db` re-calibrated `gain_db` from +111.01 dB → **+130.55 dB** (+19.5 dB) because clamping the near-field beam removes coherent angular averaging that previously inflated near-field bg amplitude. Wire-vs-bg contrast gap moves slightly to −68.8 dB (was −59.6); the wire amplitude is unchanged (deterministic targets unaffected by σ_mm at depths < focal once the kernel is wider than the wire's geometric extent), only the bg dropped.
-
-**Tier 1 test I result (Pass 5c):** RMS dropped from 26.0 (Pass 5b) to **15.1** (Pass 5c) — a further 41 % reduction. Max |Δ| dropped from 88.8 → 51.5, sim/bench span ratio from 7 → 4. The sim mean palette now closely tracks the bench bg curve from r ≈ 10 mm onward; the residual gap is the +20-30 palette excess at r ≈ 4-9 mm and the deep-field median dropout. Both close once the calibrated additive noise floor (test F, Pass 6) is wired.
-
-### 11.12 Additive RF noise floor + wire-target gain (Pass 6)
-
-**Motivation.** With the geometry, ring-down, and beam shape all calibrated, the
-simulator's pixel-value distribution still differed sharply from the bench: the
-sim had a **bimodal** histogram (lots of pixels at the reject palette = 11
-*and* lots saturated at the top end), while the bench distribution at slider
-54 in anechoic water is a clean unimodal log-Rayleigh with mean 46.2, std 20.3,
-median 44.3 (E5, n = 19 frames, 800k+ samples). The simulator had no electronic-
-noise model, so anechoic regions were sourced entirely from water-scatter
-speckle whose long left tail in log-space crashed through the device's reject
-floor.
-
-**Fix overview.**
-1. Add a Gaussian RF-noise stage to the pipeline (post-`gain_db`, pre-Hilbert).
-2. Re-derive `processing.noise.sigma` so the simulator's anechoic post-clamp
-   palette mean / median / std match the bench gain-54 reference.
-3. Pivot the `processing.gain_db` calibration onto the **wire-peak** target,
-   since the bg floor is now anchored on `noise.sigma` (independent of `gain_db`).
-
-**Implementation.** A new CUDA kernel `add_gaussian_noise_kernel` in
-`cuda_algorithms.cu` generates per-sample Gaussian noise via Box-Muller from a
-PCG-hashed `(row, col, seed)` triplet and adds `sigma * z` to the post-gain RF
-buffer. Placement *post-gain, pre-Hilbert* matches the YAML's "RF noise std at
-gain-54 reference" convention: noise observed at the analog output, not
-referred to the transducer (referred-to-input would scale with gain_db, which
-the bench measurement does not). The host-side glue exposes `SimParams::
-noise_sigma` and `SimParams::frame_seed` (the latter doubles as the scatter-
-decorrelation salt from Pass 5b). `IvusSimConfig.to_sim_params` wires
-`processing.noise.sigma` and `processing.noise.type` directly through to the
-new field.
-
-```cpp
-// Pass 6: add Gaussian RF noise post-gain / pre-Hilbert. Independent of
-// gain_db, mirrors how bench-measured noise.sigma is referenced (at the
-// analog output, not at the transducer).
-if (sim_params.noise_sigma > 0.f) {
-  cuda_algorithms_->add_gaussian_noise(
-      reflection_buffer_.get_data(),
-      reflection_buffer_.size(),
-      sim_params.noise_sigma,
-      sim_params.frame_seed * 2654435761u + 0x9E3779B9u,
-      stream);
-}
-```
-
-**Calibration.** Two new derivations, both committed under
-`P_035_PointScatter/derived/`:
-- `derive_noise_sigma.py` bisects `noise.sigma` so that the *full-pipeline*
-  anechoic mean palette in pure water (`Material("water")`, mu0 = mu1 = sigma
-  = 0 — matches the bench's electronic-noise-only acquisition) hits the bench
-  reference 46.2. Result: **σ = 2.2719** (was 2.6347, derived from the gain-64
-  back-step that over-shoots; see §11.12.1). The full distribution shape
-  matches: sim mean = 46.4 (target 46.2), median = 45.5 (bench 44.3), std =
-  19.4 (bench 20.3, 4.2 % rel.err).
-- `derive_gain_db.py` pivots from the bg-bracket target to the **wire-peak
-  target** (bench median wire envelope amplitude). With noise anchoring the
-  bg, `gain_db` drops from +130.55 dB → **+73.92 dB**. The bg-bracket
-  diagnostic still runs and correctly degrades to "could not bracket" because
-  noise dominates the floor regardless of `gain_db`. *Note:* an earlier Pass 6
-  iteration mistakenly left `noise_sigma` at its YAML value during the
-  diagnostic-mode wire-amp measurement; the noise envelope's max-of-window
-  spike (~12 amp units in a 60×20-pixel ROI) dominates the wire signal
-  (true amp ~0.01) and inflated `sim_envelope_amp_median_wire` from 0.011
-  to 7.6, biasing `gain_db` down to +17 dB and rendering the outer three
-  wires below the reject palette. The fix (force `noise_sigma = 0` in the
-  diagnostic-mode render) yields the correct +73.92 dB.
-
-The YAML changes are minimal:
-
-```yaml
-gain_db: 73.92             # Pass 6 — wire-peak match (bg now noise-anchored)
-noise:
-  type: gaussian
-  sigma: 2.2719            # Pass 6 — fit to E5 anechoic palette mean+median+std
-```
-
-**Tier 1 results (Pass 6):**
-- **Test F (noise floor σ): PASS** — sim std = 19.41 vs bench 20.27 (4.2 %
-  rel.err, ≤ 20 % tol), mean 46.41 vs 46.25 (0.36 % off), median 45.5 vs 44.3.
-  This is the first pass of test F since the simulator had no noise model.
-- **Test I (depth uniformity): PASS** — RMS palette difference dropped from
-  15.1 (Pass 5c) to **3.4** (Pass 6); max |Δ| from 51.5 → 8.4; bias from
-  +20-30 → +0.7. Sim mean palette now overlays the bench bg curve from r ≈ 4
-  mm to 29 mm. *Caveat:* in Pass 6 we also fixed an apples-to-oranges bias in
-  test I — the bench profile is wire-masked (bottom-70 % per radial bin) but
-  the sim profile was the full mean. The new test applies the same masking
-  to the sim. With pre-Pass-6 sigma = 0, the unmasked sim profile bias was
-  +20 palette; with Pass-6 sigma + masking-equalization, it is +0.7.
-
-The wire-phantom polar comparison (`tier1_results/figures/wire_phantom_polar_paired.png`)
-shows the dramatic visual improvement: before Pass 6 the sim's anechoic field
-was almost uniformly black with bright wires; after Pass 6 it shows the same
-fine-grained log-Rayleigh speckle texture as the bench, with wires standing
-out at appropriate contrast.
-
-#### 11.12.1 Why σ = 2.2719 not 2.6347
-
-The original YAML σ = 2.6347 was derived analytically from the bench gain-64
-mean palette (`σ_complex(g64) = envelope_amp / √(π/2)`) back-stepped 10 dB to
-gain 54 (assuming the slider step is exactly 10 dB). That calculation also
-implicitly assumed `mean(envelope) = mean(palette/log_mult * 10^(...))` = a
-log-domain transform that ignores Jensen's inequality between
-`log(E[envelope])` and `E[log envelope]`. Both effects bias σ high.
-
-A direct fit to the gain-54 reference — the slider we actually deploy — is
-both more honest and more accurate: the simulator's noise distribution after
-the full nonlinear pipeline (Hilbert → log-compression → display window →
-median clip) reproduces the bench's mean, median, **and** std simultaneously,
-which a pure-amplitude derivation cannot.
-
-#### 11.12.2 Wire-vs-bg contrast gap (residual diagnostic)
-
-After the noise-contamination fix, `derive_gain_db` reports a **−68.8 dB**
-contrast gap (sim has *more* wire-vs-bg contrast than the bench, +95.3 dB
-sim vs +26.4 dB bench). The over-contrast is exactly why the inner two wires
-saturate at 239 in the calibrated render (matching bench inner-wire
-saturation) while the outer three sit comfortably above the noise floor at
-palette 150-200. So the contrast magnitude is *fine*; the qualitative
-mismatch with the bench is now in **wire shape**, not amplitude:
-
-- *Bench*: wires render as bright **arcs** spanning 30-60° in angle —
-  apparently because the rotating element sees the wire reflection across
-  many transmit angles (extended angular response).
-- *Sim*: wires render as near-pixel-sized **dots**. Pass 5c's pre-focal
-  beam clamp made the lateral PSF very narrow at small radii (intentional,
-  to match bench wire FWHM at the focal length), so each wire only paints
-  one or two angular bins.
-
-Bench arc width is the next obvious target for a Pass 7 lateral-PSF
-refinement (a probe-specific angular-response model on top of the Gaussian
-focused-beam model). Out of scope for Pass 6, which is focused on the
-amplitude calibration / additive-noise stage.
-
-### 11.13 Texture (noise pre-PSF) + catheter dead-zone (Pass 6 v2)
-
-**Motivation.** Two visible mismatches remained after Pass 6 v1:
-
-1. **Texture.** The bench's anechoic-water background renders as **mottled
-   speckle** with blob-like correlation length ≈ 0.5 mm; the Pass 6 v1 sim
-   rendered the same region as **fine static noise** (essentially per-pixel
-   uncorrelated). Per-pixel noise is wrong both visually and physically —
-   real receiver noise is bandlimited by the receive chain *before*
-   digitisation, so it has the same spatial correlation length as any
-   coherent scatter signal (≈ one resolution cell).
-2. **Catheter dead-zone.** The bench renders the inner ~1.4 mm as **solid
-   black** (palette 0) because the catheter sheath physically blocks any
-   acquired signal. The Pass 6 v1 sim filled that region with the
-   calibrated noise floor + leaked ring-down energy, producing a visible
-   inner-zone disagreement.
-
-**Fix overview.**
-1. **Move the additive-noise stage from post-gain to pre-PSF.** The noise
-   now sees the same axial + lateral PSF convolutions as the scatter
-   signal, giving it the physical resolution-cell correlation length. (See
-   §12.4 for the physical justification.)
-2. **Add a `catheter.dead_zone_mm` mask** at the very end of the pipeline
-   (post log-compression / display window / median clip) that zeros the
-   inner radial samples to palette 0. Calibrated to the bench-observed
-   1.4 mm.
-3. **Re-derive `noise.sigma`** because the new placement applies the
-   PSF L2 norm and the gain_db amplification on top of the noise
-   variance, so the input-RF sigma needs to be much smaller than the v1
-   output-RF sigma.
-
-**Implementation.** No new pipeline conceptually — the existing
-`add_gaussian_noise_kernel` is moved up the call chain. A new
-`zero_inner_radial_kernel` zeros samples with `index.x < dead_zone_samples`
-(short-circuits when `dead_zone_samples == 0`). Plumbing additions:
-`SimParams::catheter_dead_zone_mm`, Python binding, `CatheterConfig` in
-`raysim.config`, and the YAML `processing.catheter.dead_zone_mm` knob.
-
-```cpp
-// New stage 0.9 (raytracing_ultrasound_simulator.cpp): noise pre-PSF
-if (sim_params.noise_sigma > 0.f) {
-  cuda_algorithms_->add_gaussian_noise(d_scanlines.get(), plane_size,
-                                       sim_params.noise_sigma, noise_seed,
-                                       sim_params.stream);
-}
-// Then existing PSF convolution (axial + lateral) smooths BOTH scatter and noise.
-
-// New stage 4.5: catheter dead-zone mask, post log + display window + median clip
-if (sim_params.catheter_dead_zone_mm > 0.f) {
-  const uint32_t dead_zone_samples = sim_params.catheter_dead_zone_mm /
-                                     (sim_params.t_far / sim_params.buffer_size);
-  cuda_algorithms_->zero_inner_radial(d_scanlines.get(), plane_size,
-                                      dead_zone_samples, sim_params.stream);
-}
-```
-
-**YAML changes.** σ shrinks by ~3 orders of magnitude; gain_db is
-unchanged because the wire signal path still goes scatter → PSF → TGC →
-gain_db (only the noise-floor amplification path differs).
-
-```yaml
-processing:
-  gain_db: 73.92                # unchanged from Pass 6 v1
-  noise:
-    type: gaussian
-    sigma: 0.000895             # Pass 6 v2 — input-RF (pre-PSF) noise std
-  catheter:
-    dead_zone_mm: 1.4           # observed bench dead-zone radius
-```
-
-**Tier 1 results (Pass 6 v2):**
-- **Test F (noise floor σ): PASS** — sim std = 22.91 vs bench 20.27
-  (13.0 % rel.err, ≤ 20 % tol); sim mean 43.25 vs bench 46.25; sim median
-  42.24 vs bench 44.29. Slightly noisier than v1 (which had 4 %), but
-  still well within tolerance and now with the correct *spatial structure*.
-- **Test I (depth uniformity): FAIL (regression).** RMS palette dropped
-  9.5 (within ≤ 10 limit), max |Δ| = 24.3, bias −2.2; **but** sim
-  peak-to-trough = 29.5 vs bench 14.1 (ratio 2.10, ≤ 1.5 required). The
-  failure is the **focal-zone hump**: convolving white noise with the
-  L1-normalized depth-dependent lateral PSF amplifies noise variance where
-  the kernel is narrowest (focal zone, r ≈ 15-20 mm). The bench's noise
-  variance is approximately depth-flat, so we now over-shoot by ~10
-  palette in the focal zone and under-shoot by ~10 palette at the
-  near/far edges.
-- All other tests unchanged from Pass 6 v1 (A, B, G, H, gain alignment
-  PASS; C, D, E pre-existing FAIL).
-
-**Visual evidence.**
-- `tier1_results/figures/ringdown_inner_zone_paired.png`: sim now has a
-  solid-black inner zone matching the bench, and the speckle texture is
-  visibly mottled (distinct blobs ≈ 0.2-0.3 mm) rather than per-pixel
-  static. The bench mottling is slightly larger (~0.5 mm) — see "Open
-  trade-offs" below.
-- `tier1_results/figures/wire_phantom_polar_paired.png`: the calibrated
-  sim panel shows wires standing out of the new mottled background with
-  the same dead-zone disk as the bench.
-
-**Open trade-offs.**
-1. *Test I focal-zone hump.* This is a fundamental consequence of using
-   an L1-normalized depth-dependent PSF on white noise. Three feasible
-   fixes for a future pass:
-   1. Per-row noise-sigma compensation `σ_in(r) = σ_const · ||k(r)||₂`
-      so that `σ_out(r) = σ_const` after convolution. Cleanest.
-   2. Use an L2-normalized PSF for noise and L1 for scatter (two PSF
-      stages). More invasive.
-   3. Move noise back to post-PSF and add a *separate* small-constant-
-      width smoothing kernel for noise only. Loses some physical fidelity
-      (noise gets a different correlation length than the resolution
-      cell) but is the simplest engineering fix.
-2. *Mottling correlation length.* Sim mottling (~0.2-0.3 mm) is finer
-   than bench (~0.5 mm). The sim's lateral PSF FWHM at 15 mm is ~0.3 mm
-   (calibrated against wire FWHM in test D). The bench's effective noise
-   correlation length is ~0.5 mm — a reasonable hypothesis is that the
-   bench probe's *receive-only* aperture is wider than its effective
-   transmit-receive product, so noise sees a wider kernel than scatter.
-   Modeling this requires separating TX and RX response, which is the
-   same architectural change as fix 1.2 above.
-3. *Gain-db unchanged.* The wire-target calibration was re-run and
-   landed on +73.92 dB exactly — the wire signal path is unchanged
-   (raytraced amplitude → PSF → TGC → gain_db → Hilbert → log), so this
-   is expected.
-
-### 11.14 Depth-weighted pre-PSF noise (Pass 7)
-
-**Motivation.** Pass 6 v2 closed the texture / dead-zone gaps but
-introduced a Tier 1 regression: the **focal-zone bg hump** in Test I
-(sim peak-to-trough = 29.5 vs bench 14.1; sim/bench span ratio 2.10
-vs ≤ 1.5 tolerance). Quantitative diagnostic
-(`scripts/diag_bench_depth.py`) traced the hump to the depth-dependent
-lateral PSF concentrating the pre-PSF white noise:
-
-```
-r(mm) | bench mean | Pass-6-v2 sim mean | delta
-   5  |   35.5     |      32.1          |  -3.4   ← matches
-  19  |   34.0     |      56.2          | +22.2   ← focal hump
-  28  |   41.4     |      36.4          |  -5.0   ← matches
-```
-
-The bench is essentially **flat at ~35 palette** across r ∈ [4, 29] mm.
-Sim matched the inner / outer wings but over-shoot by +22 palette at
-the focal length r = 19 mm — the same depth where the lateral Gaussian
-beam is narrowest (`sigma_bins(z_focal)` is the minimum across z, see
-`update_psfs` in `raytracing_ultrasound_simulator.cpp`). User-visible
-consequence: wires at r = 15 and r = 20 mm appeared "missing" in the
-calibrated polar B-mode because the elevated focal-zone bg (~57 palette)
-left them with `wire_peak − bg ≈ 100` palette of contrast vs ~207 at
-r = 5 mm — they were physically present but visually washed out.
-
-**Physics + fix.** For an L1-normalised lateral Gaussian PSF of std
-`sigma_bins(z)` (in angular-bin units) that convolves i.i.d. Gaussian
-input noise of std `sigma_pre`, the per-output-bin noise variance is
-
-> `var_post(z) = sigma_pre^2 · sum_k psf_k(z)^2`
->             `≈ sigma_pre^2 / (2·sqrt(pi)·sigma_bins(z))`
-
-(continuous Gaussian L2-squared norm; valid for kernels well-resolved
-on the angular grid). Making `var_post(z)` uniform requires
-`sigma_pre(z) ∝ sqrt(sigma_bins(z))`. Taking the focal length as the
-reference depth keeps the YAML's `noise.sigma` bench-anchored:
-
-> `weight(z) = sqrt(sigma_bins(z) / sigma_bins(z_focal))`
-
-At `z = z_focal` the weight is 1; pre-focal (1/r factor inflates
-`sigma_bins`) and post-focal (Gaussian beam expansion inflates
-`sigma_mm`) the weight grows so the wider local kernel sums to the same
-post-PSF std as the narrow focal kernel. This is fix 1.1 from the
-Pass 6 v2 trade-offs above ("per-row noise-sigma compensation").
-
-**Implementation.**
-1. New CUDA kernel `add_gaussian_noise_depth_weighted_kernel` (same
-   Box-Muller draw as `add_gaussian_noise_kernel`, multiplies sigma by
-   `depth_weight[index.x]` per radial sample).
-2. New host method `CUDAAlgorithms::add_gaussian_noise_depth_weighted`.
-3. New `noise_depth_weight_` `CudaMemory` member on the simulator;
-   built in `update_psfs` alongside the depth-dependent lateral PSF
-   (same probe params drive both, same cache-invalidation keys).
-4. `update_psfs` is now called unconditionally (not gated on
-   `conv_psf`) so the noise-weight buffer is available to stage 0.9
-   even when PSF convolution is bypassed; the second call inside the
-   `conv_psf` block is a cheap cache hit.
-5. Stage 0.9 prefers the weighted variant when the buffer is built
-   (IVUS + valid focal/element params); falls back to the unweighted
-   `add_gaussian_noise` otherwise (non-IVUS probes or
-   ill-defined-beam configs).
-
-```cpp
-// Stage 0.9 (raytracing_ultrasound_simulator.cpp): depth-weighted noise.
-if (sim_params.noise_sigma > 0.f) {
-  const uint32_t noise_seed = sim_params.frame_seed * 2246822519u + 1u;
-  if (noise_depth_weight_ &&
-      noise_depth_weight_size_ == sim_params.buffer_size) {
-    cuda_algorithms_->add_gaussian_noise_depth_weighted(
-        d_scanlines.get(), plane_size, sim_params.noise_sigma,
-        noise_depth_weight_.get(), noise_seed, sim_params.stream);
-  } else {
-    cuda_algorithms_->add_gaussian_noise(d_scanlines.get(), plane_size,
-                                         sim_params.noise_sigma,
-                                         noise_seed, sim_params.stream);
-  }
-}
-```
-
-**YAML changes.** Only `noise.sigma` shifts (smaller because the
-off-focal weighting now adds extra noise where `sigma_bins(z) > sigma_bins(z_focal)`,
-so the focal-zone-anchored sigma must be lower to keep the global mean
-on target). `gain_db` is unchanged for the same reason as Pass 6 v2 —
-the wire signal path doesn't see the noise weight.
-
-```yaml
-processing:
-  gain_db: 73.92                # unchanged from Pass 6 v2
-  noise:
-    type: gaussian
-    sigma: 0.000712             # Pass 7 — input-RF noise std at z_focal
-                                # (depth-weighted pre-PSF; was 0.000895)
-```
-
-**Tier 1 results (Pass 7 vs Pass 6 v2):**
-
-| Test | Pass 6 v2 | Pass 7 |
-|---|---|---|
-| **I. Depth uniformity** | ❌ FAIL | **✅ PASS** |
-| RMS(sim − bench) palette | 9.52 | **3.53** |
-| Max \|Δ\| palette | 24.27 | **8.56** |
-| Bias (sim − bench) palette | -2.17 | **+0.18** |
-| Sim peak-to-trough | 29.46 | **6.46** |
-| Span ratio (sim / bench) | 2.10 | **0.46** |
-| F. Noise floor σ | ✅ PASS | ✅ PASS |
-| Other tests (A/B/C/D/E/G/H/gain) | unchanged | unchanged |
-
-Pass 7 lifts the Tier 1 score from **7/10 → 8/10**. The remaining FAILs
-(C axial PSF, D lateral PSF, E ring-down) are pre-existing physics-
-fidelity issues unrelated to noise weighting.
-
-**Wire-vs-bg contrast** (per-frame median wire peak minus per-frame
-local bg mean, palette units; `scripts/wire_visibility_diagnostic.py`):
-
-| r (mm) | Pass 6 v2 contrast | Pass 7 contrast |
-|---|---|---|
-| 5 | 207 (saturated wire) | 190 (saturated wire) |
-| 10 | 123 | 119 |
-| 15 *(focal)* | **100 ← lowest** | **105** |
-| 20 *(focal)* | 102 | **111** |
-| 25 | 93 ← lowest | 88 |
-
-The focal-zone wires (r = 15, 20 mm) are no longer the lowest-contrast
-pair. The bg mean is now uniform at ~48 palette across all five wire
-radii (was 32 → 57 in Pass 6 v2), so visual contrast tracks the wire
-amplitude alone. Closing the residual contrast gap (outer wires at
-~88-90 vs inner wires at ~190) is a scattering-strength problem
-(sphere-as-wire vs cylinder primitive, see §12.x in this writeup) —
-not addressable by noise weighting.
-
-**Visual evidence.**
-- `tier1_results/figures/depth_uniformity.png`: sim (red) and bench
-  (blue) curves now overlap from r = 4 mm onwards, both at ~38-45
-  palette across the full FOV. The Pass 6 v2 sim curve had a hump
-  centered at r ≈ 19 mm reaching 56+ palette; Pass 7 collapses that
-  hump entirely.
-- `tier1_results/figures/wire_phantom_polar_paired.png`: the
-  calibrated sim panel still has all five wires at consistent
-  brightness (no longer washed out at r = 15, 20 mm), with the same
-  uniform mottled bg the bench shows.
-
-**Diagnostic scripts.** New under `scripts/`:
-- `wire_visibility_diagnostic.py` — per-wire peak amp + hit rate +
-  local bg stats; ranks wires by SNR = (wire_med − bg_mean) / bg_std.
-- `diag_bench_depth.py` — sim vs bench depth-mean profile with
-  wire-masked bench, prints peak-to-trough comparison.
-- `diag_lumen_only.py`, `diag_scatter_scale.py` — exploratory scripts
-  used during Pass 7 design; preserved as documentation of the
-  alternative paths considered (boost lumen scatter, sweep
-  `scatter_integral_scale`) before settling on depth-weighted noise.
-
-
-
-The following are **missing elements** that could explain mismatches between simulation and real IVUS, plus **suggested next steps** to enhance the model.
-
-### 12.1 Frequency dependence of scattering
-
-Scattering strength is modulated by material σ and attenuation along the path, but there is **no explicit frequency dependence** (e.g. f⁴ for Rayleigh). Changing center frequency changes attenuation and beam width but not the inherent scattering strength vs frequency. That can distort relative speckle vs frequency when comparing 20 vs 40 MHz or when matching to real IVUS.
-
-**Next step:** Add a frequency-dependent scattering term (e.g. σ(f) ∝ f⁴ for Rayleigh, or a material-level exponent) so that scatter contribution scales correctly with probe frequency.
-
-### 12.2 Catheter / ring-down
-
-There is **no model of the catheter or sheath**: no near-field ring-down, guided waves, or fixed echo from the housing. Real IVUS has a dead zone and strong echo from the catheter; its absence can make the simulated lumen look “too clean” near the probe.
-
-**Status (Pass 2 — implemented):** The ring-down injector in `simulate()` (stage 1.6, between TGC and envelope detection) now consumes the calibrated `processing.ring_down.{enabled, amplitude, extent_mm, decay, waveform_path, template_pitch_mm, template_speckle_floor_palette}` block. The `IvusSimConfig` loader resolves the `.npy` template relative to the workspace root, subtracts the speckle floor, converts palette → envelope amplitude using `log_multiplier`, and resamples from the device's display pitch (0.12 mm/sample for PV .035) onto the simulator's `t_far / buffer_size` pitch. With `enabled=false` the simulator emits no ring-down signal at all (silent lumen); with `enabled=true` it adds the residual that survives the device's Acoustic Reference subtraction. See §11.7 for the full implementation table and the acceptance numbers (peak at 1.787 mm vs the calibrated 1.80 mm).
-
-**Status (Pass 6 v2 — implemented):** Catheter sheath dead-zone mask
-wired via `processing.catheter.dead_zone_mm` → `SimParams::
-catheter_dead_zone_mm` → `zero_inner_radial_kernel`. Applied at the very
-end of the pipeline (post log-compression / display window / median
-clip), so any sample at `r < dead_zone_mm` is set to palette 0 — deeper
-than `reject_palette = 11`, matching the bench's solid-black inner zone.
-Calibrated to 1.4 mm (observed bench dead-zone radius from
-`tier1_results/figures/ringdown_inner_zone_paired.png`). See §11.13.
-
-**Outstanding for ring-down:** the `subtract_reference` field is informational only (the device already does the AR subtraction; we model the residual).
-
-### 12.3 Element directivity at transmit
-
-Ray intensity starts at 1.0; **element directivity is only applied in the lateral PSF** (receive-side blur). Transmit directivity (e.g. angular sensitivity of the single element) is not applied to the ray weights. For a rotating single element this can affect angular uniformity of sensitivity.
-
-**Next step:** Apply an angular weighting (e.g. from element size and frequency) to the **transmit** ray contribution (e.g. in the raytracing or in the RF accumulation) so that both transmit and receive directivity are represented.
-
-### 12.4 Electronic / thermal noise
-
-There is **no noise model**. For SNR, contrast resolution, or detector-limited studies, at least a simple noise model is needed (e.g. additive Gaussian, or noise figure).
-
-**Status (Pass 7 — implemented).** A Gaussian RF-noise stage in
-`simulate()` consumes `processing.noise.{type, sigma}`. The stage was
-moved in Pass 6 v2 from post-gain (v1) to **pre-PSF** so the noise sees
-the same axial + lateral PSF convolutions as the scatter signal —
-matching the bench's bandlimited receiver noise (mottled speckle) instead
-of v1's per-pixel static. **Pass 7 then wraps the pre-PSF noise in a
-per-depth weight `sqrt(sigma_bins(z) / sigma_bins(z_focal))`** so the
-post-PSF noise std is uniform across depth (the L1-normalised
-depth-dependent lateral PSF would otherwise amplify the focal-zone
-noise variance, producing a +22 palette focal-zone hump in Test I).
-σ is now in **input-RF units** at the focal depth (pre-gain, pre-TGC,
-pre-PSF); calibrated to 0.000712 by `derive_noise_sigma.py`
-(pipeline-aware bisection against the bench gain-54 anechoic palette
-mean 46.2, std 20.3, median 44.3). Tier 1 test F PASS (sim std 22.30 vs
-bench 20.27, 10 % rel.err) and Tier 1 **test I now PASS** (sim
-peak-to-trough 6.46 vs bench 14.1, span ratio 0.46 vs ≤ 1.5; was 2.10
-in Pass 6 v2). Catheter dead-zone mask still wired in Pass 6 v2 stage
-4.5 (see §12.2). See §11.14 for the depth-weighted noise derivation
-and Tier 1 numbers.
-
-**Outstanding for noise:**
-- Schema accepts `noise.type ∈ {gaussian, rayleigh, none}` but only
-  `gaussian` is wired.
-- Per-frequency noise scaling (`noise.sigma(f)`) is not modelled.
-- The depth weight currently mirrors the *transmit/receive product*
-  Gaussian-beam model used by `psf_lat_2d_`. If a future pass separates
-  transmit and receive directivity (§12.3), the weight will need to
-  track the *receive-only* aperture, not the combined TX·RX product.
-
-### 12.5 Rotation and motion
-
-The simulation is **“all angles at once”** (full 360° in one frame). Real IVUS uses a rotating element; rotation blur and motion artifacts are not represented. Acceptable for static phantoms; relevant for moving vessels or pullback validation.
-
-**Next step:** Optionally model a finite rotation window per frame (e.g. angular sector and integration time) or add a simple motion-blur kernel for pullback studies.
-
-### 12.6 Speed-of-sound heterogeneity and refraction
-
-Refraction at **interfaces** is correct, but the ray is **straight between interfaces**. In reality, smooth variations in c would bend rays. For small vessels and relatively uniform lumen/wall, this is often a second-order effect.
-
-**Next step:** For tissue with spatially varying c, consider ray bending (e.g. ray tracing in a graded index or layered c) if validation targets require it.
-
-### 12.7 Multiple scattering
-
-Only **single scattering** is modeled in the scatter integral. In dense, heterogeneous tissue, multiple scattering can affect speckle and attenuation; that’s a known limitation of ray-based methods.
-
-**Next step:** Document as a known limitation; if needed for specific studies, consider hybrid or post-hoc corrections (e.g. extra attenuation term) rather than full multi-scatter raytracing.
-
-### 12.8 Additional gaps (summary)
-
-- **Near-field / beam formation:** The beam is represented via the lateral PSF and t_far; explicit near-field (Fresnel) beam evolution is not modeled. Fine for many validation cases; relevant if focal behavior or very short ranges are critical.
-- **Angle-dependent reflection:** Reflection uses an intensity coefficient; full angular dependence (e.g. obliquity factor, mode conversion) is not included. Can matter for steep angles and shear waves.
-- **System transfer function / calibration:** Real systems have gain curves, digitization, and bandpass; the sim assumes an ideal chain. For pixel-level matching to a specific scanner, a system TF or calibration step would help.
-- **Reverberation and multipath:** Ringing in layers (e.g. wall–catheter–wall) and multipath are not modeled; they can add clutter in real IVUS.
-
-Incorporating the items in §12.1–12.4 would address the most visible gaps (frequency scaling, catheter clutter, transmit directivity, noise); §12.5–12.8 are secondary for static phantom validation but matter for realism and clinical comparison.
+For polar display (clinical IVUS view) the unwrapped image is resampled by the client (see `examples/ivus_example.py::save_polar_frame` for a reference implementation).
 
 ---
 
-## 13. Summary of main implementation files changed/added
+## 6. Python bindings and configuration layer
 
-| Area                                  | Files (core implementation) |
-|---------------------------------------|-----------------------------|
-| Probe type                            | [probe_types.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe_types.hpp), [probe.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/probe.hpp), [ivus_probe.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/core/ivus_probe.hpp) (new) |
-| Materials                             | [material.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/core/material.cpp) |
-| Ray / scattering                      | [optix_trace.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/optix_trace.cu), [optix_trace.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/cuda/optix_trace.hpp) (Pass 1 header fix, §11.1) |
-| Simulator / PSF                       | [raytracing_ultrasound_simulator.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp), [raytracing_ultrasound_simulator.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/include/raysim/core/raytracing_ultrasound_simulator.hpp) (Pass 1 `TgcControlPoint`, extended `SimParams`, §11.2–11.3) |
-| CUDA algorithms                       | [cuda_algorithms.cu](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/csrc/cuda/cuda_algorithms.cu), [cuda_algorithms.hpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/include/raysim/cuda/cuda_algorithms.hpp) |
-| Python bindings & exports             | [raysim_bindings.cpp](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/csrc/python/raysim_bindings.cpp), [raysim/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/raysim/__init__.py), [raysim/cuda/__init__.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/raysim/cuda/__init__.py) |
-| Python config schema (Pass 1, §11.5)  | [raysim/config.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/main/ultrasound-raytracing/raysim/config.py) |
-| Utils                                 | [phantom_maker.py](https://github.com/mosaicintelligence/i4h-sensor-simulation/blob/3a00920723c7821b83b3fb6b400b006dbbc84e96/ultrasound-raytracing/utils/phantom_maker.py) |
-| Per-instrument calibration (consumer) | [`instrument-calibration/p035_visions/volcano_s5i.yaml`](../../instrument-calibration/p035_visions/volcano_s5i.yaml) |
+**Files:** [`csrc/python/raysim_bindings.cpp`](../csrc/python/raysim_bindings.cpp), [`raysim/__init__.py`](../raysim/__init__.py), [`raysim/cuda/__init__.py`](../raysim/cuda/__init__.py), [`raysim/config.py`](../raysim/config.py).
 
-Example and evaluation scripts (e.g. `ivus_example.py`, `ivus_evaluation.py`, `wire_phantom_evaluation.py`, `cystic_resolution_phantom_evaluation.py`) and the comparison doc **`docs/ivus_rotating_single_element_psf_comparison.md`** are not described step-by-step here, as requested.
+### 6.1 pybind11 classes
+
+| Class | Purpose |
+|---|---|
+| `IVUSProbe` | Bound directly; defaults `num_angular_rays=256`, `frequency=40`, `element_radius_mm=0.6`, `focal_length_mm=4`. |
+| `TgcControlPoint` | `(depth_cm, gain_db)`; constructible from a 2-tuple. |
+| `RingDownParams` | All ring-down fields including a numpy-backed `waveform`. |
+| `Materials` | Updated docstring lists the IVUS materials. |
+| `SimParams` | All RF/B-mode knobs exposed via `def_readwrite`. |
+
+`SimParams` exposes (in addition to the legacy fields): `tgc_control_points`, `log_multiplier`, `log_floor`, `median_clip_size`, `median_clip_d_min_db`, `median_clip_d_max_db`, `scattering_resolution_mm`, `scatter_integral_scale`, `disable_scatter`, `scatter_angular_decorrelate`, `frame_seed`, `noise_sigma`, `noise_focal_depth_mm`, `catheter_dead_zone_mm`, `envelope_noise`, `display_softplus_scale`, `ring_down`, `reject_palette`, `saturation_palette`, `gain_db`, `lateral_psf_kernel_type`, `lateral_psf_constant_sigma_rad`, `ivus_angular_subsampling`.
+
+### 6.2 `raysim.config.IvusSimConfig`
+
+`IvusSimConfig.from_yaml(path)` loads the calibrated PV .035 YAML and returns a config dataclass. `to_sim_params()` produces a `SimParams` instance with every field populated; `build_probe(pose)` constructs an `IVUSProbe` from the probe block; `materials()` returns the matching `Materials` registry.
+
+The YAML schema mirrors `SimParams` field-by-field:
+
+| YAML key | `SimParams` field |
+|---|---|
+| `processing.gain_db` | `gain_db` |
+| `processing.tgc_control_points` | `tgc_control_points` (list of `TgcControlPoint`) |
+| `processing.log_multiplier` / `log_floor` | `log_multiplier` / `log_floor` |
+| `processing.median_clip.{size, d_min_db, d_max_db}` | `median_clip_size` / `median_clip_d_min_db` / `median_clip_d_max_db` |
+| `processing.scattering_resolution_mm` | `scattering_resolution_mm` (`0.0` ⇒ probe-type auto) |
+| `processing.scatter_integral_scale` | `scatter_integral_scale` |
+| `processing.scatter_angular_decorrelate` / `frame_seed` | `scatter_angular_decorrelate` / `frame_seed` |
+| `processing.noise.{type, sigma}` | `noise_sigma` (`type=gaussian` wired; `none` ⇒ 0) |
+| `processing.noise.focal_depth_mm` | `noise_focal_depth_mm` |
+| `processing.envelope_noise.*` | `envelope_noise` |
+| `processing.ring_down.*` | `ring_down` (`waveform` resolved from `waveform_path`) |
+| `processing.catheter.dead_zone_mm` | `catheter_dead_zone_mm` |
+| `display.{reject_palette, saturation_palette}` | `reject_palette` / `saturation_palette` |
+| `display.softplus_scale` | `display_softplus_scale` |
+| `processing.lateral_psf.kernel_type` / `constant_sigma_rad` | `lateral_psf_kernel_type` / `lateral_psf_constant_sigma_rad` |
+| `probe.{frequency, element_radius_mm, focal_length_mm, num_angular_rays, ...}` | `IVUSProbe` constructor args |
+
+YAML values that are absent or `null` fall back to the corresponding `SimParams` default. Setting `scattering_resolution_mm: 0.0` keeps the C++ probe-type sentinel (10 mm for IVUS).
+
+---
+
+## 7. Vessel phantom utilities
+
+**File:** [`utils/phantom_maker.py`](../utils/phantom_maker.py).
+
+`generate_cylinder_mesh` writes an open cylinder OBJ (no caps), axis along Y, cross-section in xz; optional **inward normals** so rays from the lumen hit the front face. Default 129 segments to avoid aliasing with 256 IVUS scanlines.
+
+`generate_cylinder_thick_mesh` writes `Cylinder_inner.obj` and `Cylinder_outer.obj` for a thick vessel wall (same segment count and inward normals).
+
+CLI: `python utils/phantom_maker.py cylinder --output mesh [--cylinder-thick]`. Both files ship pre-generated in `mesh/`.
+
+---
+
+## 8. Evaluation
+
+Three example scripts exercise the IVUS implementation end-to-end:
+
+- [`examples/ivus_example.py`](../examples/ivus_example.py) — thick-walled cylinder phantom; tests geometry, interface echoes, and attenuation. Expected unwrapped image: two concentric bright rings at the lumen/wall and wall/extravascular interfaces.
+- [`examples/wire_phantom_evaluation.py`](../examples/wire_phantom_evaluation.py) — five 30 µm tungsten wires at 1–5 mm in a spiral; tests resolution and geometric accuracy. Expected unwrapped image: five bright spots in a spiral pattern.
+- [`examples/cystic_resolution_phantom_evaluation.py`](../examples/cystic_resolution_phantom_evaluation.py) — tissue background with fluid cysts; tests contrast and scatter/TGC. Expected unwrapped image: speckled tissue with five darker cyst regions.
+
+For per-instrument calibration the canonical evaluations live alongside the `p035_visions` calibration pipeline:
+
+- **Tier 1 (parameter-bank acceptance):** [`instrument-calibration/p035_visions/tier1_results/tier1_results.md`](../../../instrument-calibration/p035_visions/tier1_results/tier1_results.md) — 10 quantitative gates regenerated by `tier1_evaluation.py`.
+- **Vessel scenarios:** [`instrument-calibration/p035_visions/vessel_evaluation_output/VESSEL_EVALUATION_REPORT.md`](../../../instrument-calibration/p035_visions/vessel_evaluation_output/VESSEL_EVALUATION_REPORT.md) — seven canonical vessel cases rendered by `vessel_evaluation.py`.
+
+---
+
+## 9. Known limitations / not modelled
+
+### 9.1 Frequency dependence of scattering
+
+Scatter strength is modulated by `material.sigma_` and path-length attenuation but has **no explicit frequency dependence** (e.g. f⁴ for Rayleigh). Changing centre frequency changes attenuation and beam width but not the inherent scattering vs frequency. Relevant when comparing 20 vs 40 MHz acquisitions or matching multi-frequency clinical data. *Possible follow-up:* add a frequency-dependent term `σ(f) ∝ f^k` per material or globally.
+
+### 9.2 Wire-vs-bg contrast in the OptiX scatter integral
+
+The bench's wire-vs-bg amplitude contrast (~26 dB) is much smaller than the simulator's (~60–70 dB). `gain_db` anchored on the bench background plus the calibrated noise floor reproduces the device's anechoic palette mean/std and reject behaviour, but bench frames with stronger wire-vs-bg contrast (mid-radius wires at palette ~150 against bg ~46) saturate against `saturation_palette = 239` in the simulator. Closing the gap is a scattering-strength problem (sphere-as-wire primitive, sub-wavelength target representation) tracked in `instrument-calibration/p035_visions/calibration_delta.md`.
+
+### 9.3 Element directivity at transmit
+
+Ray intensity starts at 1.0; **element directivity is only applied in the lateral PSF** (receive-side blur). Transmit directivity (e.g. angular sensitivity of the single element) is not weighted onto the ray contribution. For a rotating single element this affects angular uniformity of sensitivity. *Possible follow-up:* apply an angular weighting (from element size and frequency) to the transmit ray contribution so both transmit and receive directivity are represented; the depth-weighted pre-PSF noise (§5.1) would then need to track the receive-only aperture rather than the combined TX·RX product.
+
+### 9.4 Other electronic / acquisition effects
+
+- **Rotation and motion:** the simulator renders "all angles at once". Real IVUS uses a rotating element, so rotation blur and per-frame motion artefacts are not represented. Adequate for static phantoms; relevant for moving vessels or pullback validation.
+- **Speed-of-sound heterogeneity:** refraction at *interfaces* is correct, but rays are straight between interfaces. Smooth `c` variations would bend rays. Usually a second-order effect for small vessels.
+- **Multiple scattering:** only single scattering is modelled in the line integral. Adequate for most vascular imaging; relevant for very heterogeneous tissue.
+- **Reverberation / multipath / mode conversion:** none of these are modelled. Can add clutter in real IVUS but rarely changes coarse interpretation.
+
+These are tracked as candidates for future work; none of them is required for the PV .035 calibration to reach its current state.
+
+---
+
+## 10. File map
+
+| Area | Files |
+|---|---|
+| Probe type | [`include/raysim/core/probe_types.hpp`](../include/raysim/core/probe_types.hpp), [`include/raysim/core/probe.hpp`](../include/raysim/core/probe.hpp), [`include/raysim/core/ivus_probe.hpp`](../include/raysim/core/ivus_probe.hpp) |
+| Materials | [`csrc/core/material.cpp`](../csrc/core/material.cpp) |
+| Ray / scattering | [`csrc/cuda/optix_trace.cu`](../csrc/cuda/optix_trace.cu), [`include/raysim/cuda/optix_trace.hpp`](../include/raysim/cuda/optix_trace.hpp) |
+| Simulator / PSF / TGC / pipeline | [`csrc/core/raytracing_ultrasound_simulator.cpp`](../csrc/core/raytracing_ultrasound_simulator.cpp), [`include/raysim/core/raytracing_ultrasound_simulator.hpp`](../include/raysim/core/raytracing_ultrasound_simulator.hpp) |
+| CUDA kernels (PSF, noise, log, display, scan conversion) | [`csrc/cuda/cuda_algorithms.cu`](../csrc/cuda/cuda_algorithms.cu), [`include/raysim/cuda/cuda_algorithms.hpp`](../include/raysim/cuda/cuda_algorithms.hpp) |
+| Python bindings & exports | [`csrc/python/raysim_bindings.cpp`](../csrc/python/raysim_bindings.cpp), [`raysim/__init__.py`](../raysim/__init__.py), [`raysim/cuda/__init__.py`](../raysim/cuda/__init__.py) |
+| Python configuration layer | [`raysim/config.py`](../raysim/config.py) |
+| Vessel phantom utilities | [`utils/phantom_maker.py`](../utils/phantom_maker.py) |
+| Per-instrument calibrated config | [`instrument-calibration/p035_visions/volcano_s5i.yaml`](../../../instrument-calibration/p035_visions/volcano_s5i.yaml) |

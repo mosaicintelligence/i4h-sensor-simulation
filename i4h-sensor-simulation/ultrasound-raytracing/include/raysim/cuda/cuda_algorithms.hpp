@@ -104,7 +104,7 @@ class CUDAAlgorithms {
   void mean_planes(CudaMemory* source, uint3 size, CudaMemory* dst, cudaStream_t stream);
 
   /**
-   * Log compression in place (Pass 3b / K2v2 spec mapping):
+   * Log compression in place (fixed-reference mapping):
    *
    *   buffer[i] = mutliplicator * log10(max(buffer[i], eps) / max(minimum, eps))
    *
@@ -156,9 +156,9 @@ class CUDAAlgorithms {
   /**
    * Multiply every element of `buffer` by a scalar in place.
    *
-   * Used by the Pass 3 reference-gain stage between envelope detection and
-   * log compression: `amp <- amp * 10^(gain_db / 20)`. When `scale == 1.f`
-   * the call is a no-op (kernel skipped), so default callers pay no cost.
+   * Used by the reference-gain stage between TGC and ring-down injection
+   * (pre-Hilbert): `rf <- rf * 10^(gain_db / 20)`. When `scale == 1.f` the
+   * call is a no-op (kernel skipped), so default callers pay no cost.
    *
    * @param buffer [in,out] Row-major buffer of shape (size.y, size.x).
    * @param size [in] Buffer extents in samples.
@@ -168,8 +168,8 @@ class CUDAAlgorithms {
   void scale_buffer(CudaMemory* buffer, uint2 size, float scale, cudaStream_t stream);
 
   /**
-   * Pass 6: additive Gaussian RF noise. Adds N(0, sigma^2) to every element
-   * of `buffer` using a per-element Box-Muller transform driven by a PCG
+   * Additive Gaussian RF noise. Adds N(0, sigma^2) to every element of
+   * `buffer` using a per-element Box-Muller transform driven by a PCG
    * hash of (linear_offset, seed).
    *
    * Intended pipeline placement: between the reference-gain stage
@@ -191,16 +191,16 @@ class CUDAAlgorithms {
    * @param sigma [in] Noise standard deviation in RF amplitude units.
    *                   No-op when <= 0.
    * @param seed [in] Per-frame seed mixed into the PCG hash so successive
-   *                  frames draw independent noise realizations
-   *                  (matches the convention from Pass 5b's
-   *                  `scatter_angular_decorrelate` / `frame_seed`).
+   *                  frames draw independent noise realizations (matches
+   *                  the convention used by `scatter_angular_decorrelate` /
+   *                  `frame_seed`).
    * @param stream [in] CUDA stream.
    */
   void add_gaussian_noise(CudaMemory* buffer, uint2 size, float sigma, uint32_t seed,
                           cudaStream_t stream);
 
   /**
-   * @brief Depth-weighted variant of `add_gaussian_noise` (Pass 7).
+   * @brief Depth-weighted variant of `add_gaussian_noise`.
    *
    * Adds N(0, (sigma_base * depth_weight[r])^2) per RF sample, with the
    * weight buffer indexed by the radial-sample index (`size.x` axis). The
@@ -227,7 +227,7 @@ class CUDAAlgorithms {
                                           cudaStream_t stream);
 
   /**
-   * Pass 20: post-envelope additive Gaussian noise with non-zero mean.
+   * Post-envelope additive Gaussian noise with non-zero mean.
    *
    * Adds N(mean, sigma^2) per element to the envelope buffer. Intended
    * placement: post-Hilbert, BEFORE the post-Hilbert low-pass (`psf_env_lp_`),
@@ -249,7 +249,7 @@ class CUDAAlgorithms {
                                  uint32_t seed, cudaStream_t stream);
 
   /**
-   * Pass 28i: depth-gain-scaled variant of `add_gaussian_noise_offset`.
+   * Depth-gain-scaled variant of `add_gaussian_noise_offset`.
    *
    * Behaves like `add_gaussian_noise_offset` but multiplies BOTH the
    * additive mean and the per-pixel Gaussian draw by `depth_gain[index.x]`
@@ -286,14 +286,13 @@ class CUDAAlgorithms {
    * post display window) to reproduce the bench's catheter-sheath dead zone
    * (the inner ~1.4 mm reads as a uniform floor on the device because the
    * catheter wall blocks signal acquisition entirely). Without this mask the
-   * Pass 6 additive-noise stage fills the dead zone with a noise floor,
-   * which differs visibly from the bench's flat inner zone.
+   * additive-noise stage fills the dead zone with a noise floor, which
+   * differs visibly from the bench's flat inner zone.
    *
-   * `fill_value` controls the palette value written into the dead-zone band.
-   * The legacy default 0.f reproduces the previous "solid-black" behaviour;
-   * Pass 28j callers pass `reject_palette` so the sim's dead zone matches
-   * the bench's flat soft-reject floor (palette ~ 11 across the c_take2_water
-   * E6 corpus, slider-independent).
+   * `fill_value` controls the palette value written into the dead-zone
+   * band. Pass `reject_palette` to match the bench's flat soft-reject floor
+   * (palette ~ 11 across the c_take2_water E6 corpus, slider-independent);
+   * passing 0.f gives a solid-black inner zone.
    *
    * `dead_zone_samples` is the number of leading radial samples to overwrite
    * (typically `int(catheter_dead_zone_mm / dr_mm)`). 0 disables the mask.
@@ -311,10 +310,10 @@ class CUDAAlgorithms {
    * In-place display window after log compression: clamp every element of
    * `buffer` to `[reject_palette, saturation_palette]` in palette units.
    *
-   * Pass 3b semantics: the post-log palette produced by `log_compression`
-   * is already in absolute palette units (because `log_compression` uses
-   * the calibrated `log_multiplier` / `log_floor`), so the display window
-   * only has to enforce the device's reject floor and saturation ceiling.
+   * The post-log palette produced by `log_compression` is already in
+   * absolute palette units (because `log_compression` uses the calibrated
+   * `log_multiplier` / `log_floor`), so the display window only has to
+   * enforce the device's reject floor and saturation ceiling.
    * No re-zeroing or shift is applied — palette 0 stays palette 0,
    * palette 100 stays palette 100, and the device's reject/saturation
    * values reproduce exactly when the calibrated palette anchors are used.
@@ -333,7 +332,7 @@ class CUDAAlgorithms {
                             float saturation_palette, cudaStream_t stream);
 
   /**
-   * Pass 20: soft reject-floor variant of `apply_display_window`.
+   * Soft reject-floor variant of `apply_display_window`.
    *
    * Same as `apply_display_window` but replaces the hard `max(palette, reject)`
    * clamp with a softplus blend that fades pixels at and below the floor
@@ -465,10 +464,10 @@ class CUDAAlgorithms {
   UniqueCudaEvent sub_event_;
   std::array<UniqueCudaStream, NUM_SUB_STREAMS> sub_streams_;
 
-  // Pass 3 (K2): the log-compression kernel no longer needs scratch buffers
-  // for the per-frame quantile sort. The members are kept (zero-sized) to
-  // avoid touching the constructor's member-initialiser list, but no longer
-  // resized at runtime.
+  // The log-compression kernel does not need scratch buffers (the
+  // fixed-reference mapping has no per-frame reduction). The members are
+  // kept zero-sized to avoid touching the constructor's member-initialiser
+  // list, but they are not resized at runtime.
   CudaMemory log_compression_sorted_;
   CudaMemory temp_log_compression_;
   std::shared_ptr<CudaArray> scan_convert_curvilinear_array_;

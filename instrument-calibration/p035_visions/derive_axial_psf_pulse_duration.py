@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pass 5e -- axial PSF tooling: expose pulse_duration_cycles as a knob.
+"""Axial PSF tooling: expose pulse_duration_cycles as a knob.
 
 The bench Wave 0 B2 aggregate
 (``ivus_test_0515/derived_aggregate/psf_b2_tungsten_water/psf_fit.json``)
@@ -46,9 +46,9 @@ Limitations.  The simulator has **one** axial-PSF knob today
 or separate SIR stage exposed.  If the sweep shows that no single
 ``pulse_duration_cycles`` recovers the bench shape across r (e.g. sim
 FWHM is independent of r but bench FWHM grows with r), that gates a
-sim-physics pass to add a receive-SIR stage (analogous to Pass 5d for
-the lateral kernel).  This script reports that diagnosis if it
-applies.
+sim-physics change to add a receive-SIR stage (analogous to the
+constant-angular lateral kernel switch). This script reports that
+diagnosis if it applies.
 """
 from __future__ import annotations
 

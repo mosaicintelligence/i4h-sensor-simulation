@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step 1 of Pass 23 — measure the bench's actual slider->dB curve.
+"""Measure the bench's actual slider->dB curve.
 
 The current YAML assumes a linear 1.0 dB / slider relationship between the
 PV.035 front-panel gain slider and the analog receive gain.  Test I and Test
@@ -419,7 +419,7 @@ def plot_curve(analysis: dict, out_path: Path):
     ax.set_xlim(0, 72)
     ax.set_ylim(-0.2, 1.8)
 
-    plt.suptitle("Pass 23 Step 1: Bench slider->dB measurement from "
+    plt.suptitle("Bench slider->dB measurement from "
                  "wire / water / milk probes",
                  fontsize=12, y=1.00)
     plt.tight_layout()

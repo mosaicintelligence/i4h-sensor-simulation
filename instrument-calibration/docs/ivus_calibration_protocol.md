@@ -8,6 +8,16 @@ repo at `../instrument-calibration/<instrument-id>/` — see e.g.
 `../instrument-calibration/p035_visions/` for the Visions PV .035 / Volcano s5i
 calibration that is the running example throughout this document.
 
+> **For new probes, start with [`probe_onboarding_protocol.md`](probe_onboarding_protocol.md).**
+> That document distils the PV .035 calibration into a three-experiment
+> onboarding workflow (O1 wire-phantom gain sweep, O2 anechoic gain sweep,
+> O3 uniform attenuating phantom) that is the necessary-and-sufficient
+> subset of E1–E9 below. This file remains the encyclopedic reference for
+> any experiment the onboarding workflow skips (E1, E3, E5, E7, E8, E9) and
+> for the per-experiment acceptance criteria, equipment specs, and fixture
+> drawings that the onboarding protocol cross-references but does not
+> repeat.
+
 The protocol is organized as nine experiments, **E1–E9**. E1–E8 feed the
 per-frame raysim simulator; E9 feeds the deferred motion / acquisition layer.
 Each experiment includes:
