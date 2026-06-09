@@ -1,0 +1,6 @@
+flask>=3.1
+pillow>=11.0
+pyyaml>=6.0
+scipy>=1.14
+trimesh>=4.0
+networkx>=3.0
