@@ -1,0 +1,15 @@
+# mosaic_sim dependencies.
+#
+# Two stages with different needs:
+#
+# 1) Recorder  (mosaic_sim.py, replay.py) — runs the catheter physics, so it
+#    needs the Newton physics engine. `newton` is installed from the Newton repo
+#    (https://github.com/newton-physics/newton), NOT PyPI; it pulls in warp-lang.
+#    Plus:
+numpy>=1.24
+trimesh>=4.0
+# warp-lang>=1.13.0rc1   # pulled in by newton; uncomment if installing standalone
+#
+# 2) Adapter  (to_pullback_poses.py) — pure post-processing, no newton/warp.
+#    Only needs numpy (above) + scipy, both already in the pullback project:
+scipy>=1.10
