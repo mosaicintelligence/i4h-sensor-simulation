@@ -118,3 +118,9 @@ instrument-calibration/p035_visions/tier1_results/figures/
 !P_035_PointScatter/derived/ringdown/ringdown_template_*.npy
 !ivus_test_0508/raw/c_take2_water/derived/ar_template/ar_template_canonical.npy
 !ivus_test_0508/raw/c_take2_water/derived/ar_template/ar_template_by_pair.npy
+
+# mosaic_sim run artifacts
+mosaic_sim/recordings/
+mosaic_sim/pig_inputs/
+mosaic_sim/outputs/
+mosaic_sim/**/__pycache__/
