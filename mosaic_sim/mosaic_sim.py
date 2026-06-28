@@ -439,6 +439,18 @@ class Example:
         # Detect open tube ends so an opening can be lined up to the rod tip.
         self._openings = self._detect_openings()
 
+        # --list-openings: print every opening (index + position in STL units) so
+        # you can identify which one is the entry vessel (e.g. the right femoral),
+        # then re-run with --entry N. Centroids are in the original STL frame.
+        if getattr(args, "list_openings", False):
+            print(f"\nOpenings in {self.mesh_name} ({len(self._openings)} found) — STL coordinates:")
+            print(f"  {'idx':>3}  {'ring':>4}  {'radius':>7}  centroid (x, y, z)")
+            for i, (size, c, _n, r) in enumerate(self._openings):
+                cta = np.asarray(c, dtype=np.float64) / self.mesh_scale
+                print(f"  {i:>3}  {size:>4}  {r / self.mesh_scale:>6.1f}   ({cta[0]:8.1f}, {cta[1]:8.1f}, {cta[2]:8.1f})")
+            print("\nPick the right-femoral index and pass it with --entry N (or press E in the viewer to cycle).\n")
+            raise SystemExit(0)
+
         # --entry N aligns opening N to the rod tip; otherwise, if the mesh has
         # open ends and no hand-tuned pose, auto-align opening 0 to the tip.
         entry_arg = getattr(args, "entry", None)
@@ -1416,6 +1428,11 @@ def _build_parser():
         default=None,
         metavar="N",
         help="Align open-end index N (0=largest ring) to the rod tip. Press E in-app to cycle.",
+    )
+    parser.add_argument(
+        "--list-openings",
+        action="store_true",
+        help="Print all vessel openings (index + STL-frame position) and exit, to pick an --entry.",
     )
     parser.add_argument(
         "--sign-scale",
