@@ -86,8 +86,14 @@ VESSEL_POSES: dict[str, tuple[np.ndarray, np.ndarray]] = {
         np.array([-4.502, -4.263, -0.335], dtype=np.float32),
         np.array([-0.588, 1.136, 0.886], dtype=np.float32),
     ),
-    # pig_cta.stl is not listed: it has many openings, so it auto-aligns opening
-    # 0 to the rod tip on launch (press E to cycle to the femoral).
+    # pig_cta.stl is not listed: it has many openings, so it auto-aligns an
+    # opening (see DEFAULT_ENTRY_OPENING) to the rod tip on launch.
+}
+
+# Default entry opening per mesh (index into the size-sorted openings). Used when
+# no --entry is given. Falls back to 0 (largest ring) for unlisted meshes.
+DEFAULT_ENTRY_OPENING: dict[str, int] = {
+    "pig_cta.stl": 3,  # right femoral
 }
 DEFAULT_VESSEL_OFFSET = np.array([13.887, 0.018, 0.156], dtype=np.float32)
 DEFAULT_VESSEL_ROTATION = np.array([-0.023, 0.159, -1.480], dtype=np.float32)
@@ -457,7 +463,7 @@ class Example:
         if entry_arg is not None and self._openings:
             self._align_opening_to_tip(entry_arg)
         elif self._openings and self.mesh_name not in VESSEL_POSES:
-            self._align_opening_to_tip(0)
+            self._align_opening_to_tip(DEFAULT_ENTRY_OPENING.get(self.mesh_name, 0))
 
         # CLI overrides let you align an imported vessel without the GUI sliders.
         offset_arg = getattr(args, "mesh_offset", None)
