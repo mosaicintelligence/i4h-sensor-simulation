@@ -54,9 +54,9 @@ assignment. Key fields:
 | `name` | Vessel identifier |
 | `seed` | Generation seed |
 | `wall.kind` | `"single"` or `"layered"` |
-| `surfaces[]` | `{obj_filename, material}` pairs |
-| `lesions[]` | `{name, obj_filename, material, kind}` |
-| `guidewire` | `{obj_filename, material, diameter_mm, ...}` or null |
+| `surfaces[]` | `{obj, material}` pairs |
+| `lesions[]` | `{name, obj, material, kind}` |
+| `guidewire` | `{obj, material, diameter_mm, ...}` or null |
 | `branches[]` | Branch topology summary |
 | `n_layers` | 1, 2, or 3 |
 
