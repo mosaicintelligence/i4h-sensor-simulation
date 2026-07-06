@@ -143,7 +143,17 @@ class SimRandomizationConfig:
     """Sampling distributions for simulator domain randomization."""
 
     ref_gain_slider: float = 54.0
-    gain_slider_range: tuple[float, float] = (44.0, 68.0)
+    # Slider 44..68 around the calibrated 54 (= +/- ~13 dB) was the
+    # original Tier-1 dataset distribution. Extended to slider 80 (+12
+    # past the bench-anchored upper bound) so the dataset includes
+    # noticeably brighter, near-saturating frames typical of clinical
+    # high-gain settings. Linear extrapolation (~0.9 dB/slider) past the
+    # last bench anchor at slider 68 -- not bench-validated above 68,
+    # but the calibrated saturation palette + max_saturation_fraction
+    # still cap the brightest frames so we do not overrun the display
+    # window. Lower bound stays at 44 to keep some quiet/low-gain
+    # frames in the mix.
+    gain_slider_range: tuple[float, float] = (44.0, 80.0)
     ar_on_probability: float = 0.5
 
     wall_attenuation: UniformRange = field(

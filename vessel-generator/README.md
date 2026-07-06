@@ -1,44 +1,94 @@
 # vessel-generator
 
-Procedural geometry for vessel segments used as **training data** for the
-IVUS deep-learning navigation model. This module is intentionally separate
-from the simulator (`i4h-sensor-simulation/`) and from the instrument
-calibration code (`instrument-calibration/`). Its only job is to emit
-realistic, varied **vessel volumes** with **per-vessel ground truth**, in
-a form the simulator can consume directly.
+Procedural vessel geometry for **IVUS training data**. Generates realistic,
+varied vessel volumes with per-frame ground truth, then renders paired
+B-mode + segmentation frames through the calibrated raysim simulator.
 
-## What it produces
+## Quick start
 
-For each generated vessel, the module writes a folder:
+**First realistic IVUS frame:** [docs/quickstart.md](docs/quickstart.md)
 
-```
-out/<vessel_id>/
-  lumen.obj          # closed, inward-facing lumen surface (simulator material: vessel_wall)
-  outer.obj          # closed, inward-facing outer surface (simulator material: extravascular)
-  preview.png        # 3D preview + cross-section gallery (QC)
-  vessel.json        # branch topology, generation parameters, seed, axis convention
-  branches/
-    branch_<id>.json # per-branch centerline, local frames, cross-section parameters
+```bash
+# From monorepo root — geometry only (no GPU)
+pip install -e vessel-generator
+vesselgen-vessel --out vessel-generator/out/smoke --seed 1 --layers 3 --guidewire
+
+# End-to-end paired IVUS dataset (requires built raysim + GPU)
+conda activate ultrasound
+python vessel-generator/examples/render_paired_dataset.py \
+  --out vessel-generator/out/paired_smoke --n 4 --frames-per-vessel 1
 ```
 
-Conventions:
-- **Vessel axis along Y**, cross-sections in the **xz** plane (matches
-  `i4h-sensor-simulation/ultrasound-raytracing/utils/phantom_maker.py`).
-- **Units: mm** everywhere.
-- **Inward-facing normals** on both surfaces, so rays from a probe inside
-  the lumen hit the front face. Each vessel surface is a **closed
-  watertight mesh**; the simulator can read the inner surface directly with
-  the `vessel_wall` material and the outer surface with the `extravascular`
-  material.
+## Two workflows
 
-## Why volumes, not pullback paths
+| Workflow | Command | Output |
+|----------|---------|--------|
+| **Single vessel** | `vesselgen-vessel` | One anatomy folder (OBJ + manifest) |
+| **Vessel batch** | `vesselgen-dataset` | N anatomy folders |
+| **Pose + GT sampling** | `vesselgen-frames` | JSON pose/GT records (no B-mode) |
+| **Paired IVUS dataset** | `render_paired_dataset.py` | B-mode + segmentation frames |
 
-The DL training pipeline samples **frame-level snapshots**: it picks a
-random point inside the lumen and a small probe-axis tilt, then renders one
-IVUS frame. There is no pullback. This module therefore exposes the
-sampling API needed for that workflow.
+See [Pipeline overview](docs/pipeline-overview.md) for how these connect.
 
-### Arbitrary random sampling (the typical training-loop call)
+## What's modelled
+
+- Non-circular lumen contours with smooth Fourier perturbation
+- Variable, eccentric wall thickness
+- Trilaminar intima/media/adventitia (bright–dark–bright IVUS wall)
+- In-wall lesions (calcified, lipid, fibrous, thrombus)
+- Optional tungsten guidewire with acoustic shadow
+- Side-branch bifurcations via boolean union
+- Frame-level pose sampling with geometric ground truth
+
+Anatomical scale targets **PV .035 peripheral** vessels (8–13 mm lumen
+diameter). Calibration reference:
+[instrument-calibration/p035_visions/volcano_s5i.yaml](../instrument-calibration/p035_visions/volcano_s5i.yaml).
+
+## Install
+
+```bash
+pip install -e vessel-generator
+pytest vessel-generator/tests/
+```
+
+IVUS rendering additionally requires the built raysim CUDA extension — see
+[simulator quick start](../i4h-sensor-simulation/ultrasound-raytracing/docs/quick_start.md).
+
+## Documentation
+
+| Doc | Contents |
+|-----|----------|
+| [Quick start](docs/quickstart.md) | First IVUS frame in minutes |
+| [CLI reference](docs/cli-reference.md) | All command-line flags |
+| [Pipeline overview](docs/pipeline-overview.md) | Geometry → rendering flow |
+| [Configuration](docs/configuration.md) | Anatomy and batch sampling knobs |
+| [On-disk format](docs/on-disk-format.md) | `vessel.json` manifest schema |
+| [Segmentation labels](docs/segmentation-labels.md) | Label IDs and legacy collapse |
+| [Simulator integration](docs/simulator-integration.md) | Calibration, materials, randomization |
+| [Design notes](docs/design.md) | Coordinate conventions, algorithms, limitations |
+
+## Layout
+
+```
+vessel-generator/
+  vesselgen/              # importable package
+    config.py             # generation parameter dataclasses
+    vessel.py             # Vessel class (build, sample, GT)
+    io.py                 # mesh + manifest IO
+    library.py            # batch generation
+    labels.py             # segmentation label IDs
+    sim_randomization.py  # per-frame simulator diversity
+    tools/                # CLIs (vesselgen-vessel, -dataset, -frames)
+  examples/
+    render_paired_dataset.py   # end-to-end IVUS dataset builder
+  docs/                   # user documentation
+  tests/
+```
+
+Output directories under `out/` are regenerable and not part of the source
+tree. Generate your own with the commands above.
+
+## Sampling API (Python)
 
 ```python
 from vesselgen import Vessel
@@ -47,119 +97,11 @@ import numpy as np
 v = Vessel.load("out/vessel_0001")
 rng = np.random.default_rng(0)
 
-for _ in range(100):
-    pose = v.sample_pose(rng, max_tilt_deg=15.0, edge_margin_mm=0.2)
-    gt = v.ground_truth_at(pose)
-    # pose.position, pose.rotation_euler_deg feed straight into rs.IVUSProbe
-    # gt.distance_to_lumen_wall_mm, gt.lumen_contour_polygons,
-    # gt.branch_ids_visible, gt.lumen_csa_mm2, ...
+pose = v.sample_pose(rng, max_tilt_deg=15.0, edge_margin_mm=0.2)
+gt = v.ground_truth_at(pose)
+# pose.position, pose.rotation_euler_deg → rs.IVUSProbe
+# gt.lumen_contour_polygons, gt.distance_to_lumen_wall_mm, ...
 ```
 
-Every call to `sample_pose` returns a different pose with no
-preselection: branch is sampled weighted by arclength, then arclength
-uniformly along that branch, then a 2D in-lumen position rejection-
-sampled (with optional `edge_margin_mm` wall clearance), then a small
-probe-axis tilt. **The simulator can render an unbounded number of
-distinct frames per vessel.**
-
-### When you want a specific pose
-
-```python
-# Pose pinned to a specific branch, optionally a specific arclength station
-pose = v.sample_pose_in_branch("daughter_a", rng, arclength_mm=5.0)
-
-# Pose at an explicitly chosen 3D point (probe axis defaults to local
-# vessel tangent; pass probe_axis_world to override)
-pose = v.pose_at(position=np.array([0.0, 2.5, 0.5]))
-
-# Quick check whether an arbitrary 3D point is inside the lumen
-v.contains_point(np.array([0.0, 0.0, 0.0]))
-```
-
-### Bifurcation snapshots are automatic
-
-When the imaging plane (perpendicular to the probe long axis) crosses an
-ostium, `gt.lumen_contour_polygons` returns multiple polygons and
-`gt.branch_ids_visible` lists every branch the plane intersects — that is
-how the model learns to recognise bifurcations.
-
-## What's modelled
-
-- **Non-circular lumen contours.** Smooth Fourier-perturbed shapes (modes
-  k = 2..6) that drift along arclength so adjacent cross-sections look
-  similar but never identical.
-- **Variable wall thickness.** Per-angle thickness modulation (k = 1..3)
-  so the wall is thick on one side and thin on another, with the pattern
-  varying along the length.
-- **Diameter taper.** Mean lumen radius varies smoothly along arclength.
-- **Side-branch ostia.** A daughter vessel buds off the parent at an
-  angle and continues away. The parent passes through unchanged. The
-  daughter origin is recessed *just inside* the parent (capped at 0.85
-  of the parent's local radius) so the daughter wall crosses the parent
-  wall on exactly one side, never both. The daughter is stitched into
-  the parent with a **trimesh + manifold3d boolean union** so the lumen
-  is a single watertight surface with a clean ostium.
-
-  Side-branch is the only bifurcation flavour modelled in v1. Full
-  Y-junctions (parent splits into two daughters) were prototyped and
-  pulled because the ostium geometry needs more work; see
-  ``docs/design.md`` for what was tried.
-
-### Anatomical scale (PV .035 peripheral ICE)
-
-Batch defaults in :class:`vesselgen.config.GenerationConfig` target **large
-peripheral** vessels, not coronary scale:
-
-| Draw | Lumen diameter | Wall thickness | Segment length |
-|------|----------------|----------------|----------------|
-| Typical (82%) | 8–13 mm | 0.65–1.2 mm | 45–75 mm |
-| Aortic-scale (18%) | 16–23 mm | 1.0–1.5 mm | 45–75 mm |
-| Side branch | 55–80% of parent radius | ~85% of parent wall | 40–75 mm |
-
-Inner wall radii start around **4 mm** so anatomy sits outside the catheter
-ring-down disc (~2–3.6 mm), matching femoral/iliac EVAR-style imaging.
-Calibration reference: ``instrument-calibration/p035_visions/vessel_evaluation.py``
-scenarios 06 (femoral) and 07 (aorta).
-
-## Install
-
-From repo root:
-
-```bash
-python -m pip install -e vessel-generator
-```
-
-## CLIs
-
-```bash
-# One vessel, parameters from a YAML preset (see configs/)
-vesselgen-vessel --preset peripheral_straight --out out/vessel_0001
-
-# A batch of N vessels with sampled parameters
-vesselgen-dataset --preset peripheral_mixed --n 64 --out out/dataset
-
-# Sample N (pose, ground truth) tuples from one vessel
-vesselgen-frames --vessel out/vessel_0001 --n 200 --out out/vessel_0001/frames
-```
-
-## Layout
-
-```
-vessel-generator/
-  vesselgen/            # importable package
-    config.py           # generation parameter dataclasses
-    centerline.py       # parametric centerlines + Frenet/Bishop frames
-    cross_section.py    # Fourier-perturbed lumen contours
-    wall.py             # per-angle wall thickness model
-    sweep.py            # cross-section -> closed trimesh
-    bifurcation.py      # daughter branch attachment via boolean union
-    vessel.py           # Vessel class (branches + unified mesh + sampling)
-    sampling.py         # pose sampling + ground-truth extraction
-    io.py               # mesh + manifest IO
-    visualize.py        # 3D + 2D QC plots
-    library.py          # batch generation
-    tools/              # CLIs
-  tests/                # smoke tests
-  examples/             # standalone scripts
-  docs/                 # design notes
-```
+The simulator can render an unbounded number of distinct frames per vessel
+by calling `sample_pose` repeatedly — there is no pullback path.

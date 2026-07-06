@@ -4,6 +4,14 @@ This repository contains high-performance GPU-accelerated sensor simulation tool
 
 ## Components
 
+### Vessel Generator
+
+Procedural peripheral-vessel geometry and paired IVUS dataset generation
+for ML training. Builds trilaminar anatomy, samples probe poses, and
+renders B-mode + segmentation frames through the calibrated simulator.
+
+[Quick start](../vessel-generator/docs/quickstart.md) · [README](../vessel-generator/README.md)
+
 ### Ultrasound Raytracing Simulator
 
 ![image](./docs/ultrasound-raytracing.png)
@@ -27,7 +35,7 @@ i4h-sensor-simulation/
 │   ├── ultrasound_simulator_technical_guide.md# Pipeline + physics deep dive
 │   ├── ultrasound_simulator_tutorial.md       # Hands-on tutorial (7+ examples)
 │   └── simulation_acceptance_criteria.md      # Porcine-lab acceptance gates
-└── ultrasound-raytracing/     # Ultrasound raytracing simulator
+├── ultrasound-raytracing/     # Ultrasound raytracing simulator
     ├── .devcontainer/         # Development container configuration
     ├── cmake/                 # CMake build configuration
     ├── configs/               # Reference simulator configurations
@@ -39,6 +47,10 @@ i4h-sensor-simulation/
     ├── raysim/                # Python package and bindings
     └── utils/                 # Utility scripts (phantom maker, etc.)
 ```
+
+`vessel-generator/` is a sibling package in the same monorepo root
+(`../vessel-generator` from this directory) for procedural anatomy and paired
+dataset generation.
 
 ## Requirements
 
@@ -60,6 +72,7 @@ See individual component READMEs for specific requirements.
 
 2. Pick a starting point:
    - **Just want a rendered frame?** → [Quick Start](./ultrasound-raytracing/docs/quick_start.md)
+   - **Generate realistic IVUS training data?** → [Vessel Generator Quick Start](../vessel-generator/docs/quickstart.md)
    - **Setting up a fresh cloud GPU?** → [VM Setup (GCP)](./ultrasound-raytracing/docs/vm_setup.md)
    - **Installing on a machine you already own?** → [Simulator README](./ultrasound-raytracing/README.md)
    - **Want to learn the simulator step by step?** → [Tutorial](./docs/ultrasound_simulator_tutorial.md)

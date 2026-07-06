@@ -1,12 +1,20 @@
 """Attach daughter branches to a parent vessel via boolean union.
 
 A side-branch daughter is constructed as its own :class:`Centerline` +
-:class:`CrossSectionField` + :class:`WallField`, swept into closed lumen
-and outer meshes, and then **boolean-unioned** with the parent's lumen
-and outer meshes. The union produces a single watertight surface with a
-clean ostium, so simulator rays passing through the opening from inside
-the parent actually see the daughter interior (rather than hitting a
-closed wall).
+:class:`CrossSectionField` + :class:`LayeredWallField`, swept into a
+nested set of closed surface meshes (lumen, every interior layer
+interface, outer adventitia boundary), and then **boolean-unioned**
+layer-by-layer with the matching parent surface. Each union produces a
+single watertight surface with a clean ostium, so simulator rays
+passing through the opening from inside any wall layer of the parent
+see the matching layer of the daughter (rather than a closed
+boundary).
+
+The number of layers must match between parent and daughter. The
+:class:`vesselgen.config.SideBranchConfig` builder coerces the
+daughter wall to layered form via
+:meth:`vesselgen.config.BranchConfig.layered_wall`, mirroring the
+parent's layer fractions.
 
 Y-junctions (parent splits into two daughters at a single station) are
 not implemented in v1; see ``docs/design.md`` for the rationale.
@@ -20,6 +28,7 @@ raises ``BifurcationError`` and the caller can re-sample.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 import trimesh
@@ -28,11 +37,18 @@ from vesselgen.centerline import Centerline
 from vesselgen.config import (
     BranchConfig,
     CenterlineConfig,
+    LayeredWallConfig,
     SideBranchConfig,
+    branch_wall_to_layered,
 )
 from vesselgen.cross_section import CrossSectionField, build_cross_sections
-from vesselgen.sweep import sweep_branch
-from vesselgen.wall import WallField, build_wall
+from vesselgen.sweep import sweep_branch, sweep_layered_branch
+from vesselgen.wall import (
+    LayeredWallField,
+    WallField,
+    build_layered_wall,
+    build_wall,
+)
 
 
 class BifurcationError(RuntimeError):
@@ -150,17 +166,32 @@ class DaughterArtifacts:
     parent_attachment_arclength_mm: float
     daughter_lumen_mesh: trimesh.Trimesh
     daughter_outer_mesh: trimesh.Trimesh
+    layered_wall_field: Optional[LayeredWallField] = None
+    """Per-layer wall radii so the lesion builder can query interior
+    interfaces inside the daughter."""
 
 
-def attach_side_branch(
-    parent_lumen_mesh: trimesh.Trimesh,
-    parent_outer_mesh: trimesh.Trimesh,
+def attach_side_branch_layered(
+    parent_layer_meshes: list[trimesh.Trimesh],
     parent_centerline: Centerline,
     parent_lumen_field,
     side_branch: SideBranchConfig,
     rng: np.random.Generator,
-) -> tuple[trimesh.Trimesh, trimesh.Trimesh, DaughterArtifacts]:
-    """Attach a side-branch and return updated (lumen, outer) meshes."""
+) -> tuple[list[trimesh.Trimesh], DaughterArtifacts]:
+    """Attach a side branch with layered walls and return updated layer meshes.
+
+    ``parent_layer_meshes`` carries the parent's ``n_layers + 1`` nested
+    surface meshes (lumen, every interior interface, outer adventitia
+    boundary). The daughter is built with the same number of layers
+    (its :class:`vesselgen.config.WallConfig` is coerced to a
+    :class:`vesselgen.config.LayeredWallConfig` if necessary), swept
+    into a matching nested mesh stack, and unioned layer-by-layer.
+
+    Returns ``(new_parent_layer_meshes, DaughterArtifacts)``. The
+    artifacts include the daughter's own pre-union meshes plus the
+    layered wall field used to interrogate per-layer interfaces.
+    """
+
     parent_local_radius = _parent_local_radius(
         parent_centerline, parent_lumen_field, side_branch.parent_arclength_frac,
     )
@@ -172,23 +203,8 @@ def attach_side_branch(
         side_branch.branch.centerline,
         parent_local_radius_mm=parent_local_radius,
     )
-    return _attach_daughter_branch(
-        parent_lumen_mesh, parent_outer_mesh, parent_centerline,
-        daughter_centerline, side_branch.branch, rng, name=side_branch.branch.name,
-        attachment_arclength_mm=side_branch.parent_arclength_frac * parent_centerline.length_mm,
-    )
 
-
-def _attach_daughter_branch(
-    parent_lumen_mesh: trimesh.Trimesh,
-    parent_outer_mesh: trimesh.Trimesh,
-    parent_centerline: Centerline,
-    daughter_centerline: Centerline,
-    branch_cfg: BranchConfig,
-    rng: np.random.Generator,
-    name: str,
-    attachment_arclength_mm: float,
-) -> tuple[trimesh.Trimesh, trimesh.Trimesh, DaughterArtifacts]:
+    branch_cfg = side_branch.branch
     daughter_seed = (
         branch_cfg.seed if branch_cfg.seed is not None else int(rng.integers(0, 2**31 - 1))
     )
@@ -200,25 +216,39 @@ def _attach_daughter_branch(
         daughter_centerline.config.n_stations,
         daughter_rng,
     )
-    wall_field = build_wall(
-        branch_cfg.wall,
-        lumen_field,
-        daughter_centerline.length_mm,
-        daughter_rng,
+
+    daughter_layered_cfg = branch_wall_to_layered(branch_cfg.wall)
+    daughter_layered_field = build_layered_wall(
+        daughter_layered_cfg, lumen_field, daughter_centerline.length_mm, daughter_rng,
     )
-    daughter_lumen_mesh, daughter_outer_mesh = sweep_branch(
-        daughter_centerline, lumen_field, wall_field
+    daughter_layer_meshes = sweep_layered_branch(
+        daughter_centerline, lumen_field, daughter_layered_field,
     )
 
-    new_lumen = _safe_union(parent_lumen_mesh, daughter_lumen_mesh, label=f"{name}/lumen")
-    new_outer = _safe_union(parent_outer_mesh, daughter_outer_mesh, label=f"{name}/outer")
+    if len(parent_layer_meshes) != len(daughter_layer_meshes):
+        raise BifurcationError(
+            f"layer count mismatch: parent has {len(parent_layer_meshes)} "
+            f"surface meshes, daughter '{branch_cfg.name}' has "
+            f"{len(daughter_layer_meshes)}. Both branches must specify the "
+            "same number of wall layers."
+        )
 
-    return new_lumen, new_outer, DaughterArtifacts(
-        name=name,
+    new_layer_meshes: list[trimesh.Trimesh] = []
+    for i, (p, d) in enumerate(zip(parent_layer_meshes, daughter_layer_meshes)):
+        new_layer_meshes.append(_safe_union(p, d, label=f"{branch_cfg.name}/layer_{i:02d}"))
+
+    daughter_outer_wall_field = daughter_layered_field.to_outer_wall_field()
+
+    art = DaughterArtifacts(
+        name=branch_cfg.name,
         centerline=daughter_centerline,
         lumen_field=lumen_field,
-        wall_field=wall_field,
-        parent_attachment_arclength_mm=attachment_arclength_mm,
-        daughter_lumen_mesh=daughter_lumen_mesh,
-        daughter_outer_mesh=daughter_outer_mesh,
+        wall_field=daughter_outer_wall_field,
+        parent_attachment_arclength_mm=(
+            side_branch.parent_arclength_frac * parent_centerline.length_mm
+        ),
+        daughter_lumen_mesh=daughter_layer_meshes[0],
+        daughter_outer_mesh=daughter_layer_meshes[-1],
+        layered_wall_field=daughter_layered_field,
     )
+    return new_layer_meshes, art
