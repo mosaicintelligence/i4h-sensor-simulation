@@ -74,9 +74,8 @@ def preview_vessel(
     ax3.add_collection3d(poly)
 
     # Interior layer interfaces (intima/media boundary, etc.).
-    interior_surfaces = [
-        s for s in vessel.surfaces if s.name not in ("lumen", "outer")
-    ]
+    outer_name = vessel.surfaces[-1].name
+    interior_surfaces = [s for s in vessel.surfaces if s.name not in ("lumen", outer_name)]
     for s in interior_surfaces:
         verts, faces = _decimate_faces(s.mesh, max_faces)
         color = _LAYER_FACECOLOR.get(s.material_name, "#a3b18a")
