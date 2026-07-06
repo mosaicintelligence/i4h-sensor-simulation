@@ -27,11 +27,28 @@ from vesselgen.vessel import Vessel
 
 
 def _decimate_faces(mesh, max_faces: int) -> tuple[np.ndarray, np.ndarray]:
-    if len(mesh.faces) <= max_faces:
+    n_faces = len(mesh.faces)
+    if n_faces <= max_faces:
         return mesh.vertices, mesh.faces
-    stride = max(1, len(mesh.faces) // max_faces)
+    stride = max(1, int(np.ceil(n_faces / max_faces)))
     faces = mesh.faces[::stride]
     return mesh.vertices, faces
+
+
+_LAYER_FACECOLOR = {
+    "intima": "#ffd166",
+    "media": "#ef476f",
+    "adventitia": "#118ab2",
+    "vessel_wall": "#7f7fff",
+    "extravascular": "#cdb4db",
+}
+
+_LESION_FACECOLOR = {
+    "calcified_plaque": "#f8f9fa",
+    "lipid_pool": "#fdcdac",
+    "fibrous_plaque": "#cbd5e8",
+    "thrombus": "#b3cde3",
+}
 
 
 def preview_vessel(
@@ -40,7 +57,12 @@ def preview_vessel(
     poses: Optional[Sequence[PoseSample]] = None,
     max_faces: int = 4000,
 ) -> Path:
-    """Save a 3D + cross-section gallery preview of a vessel to ``out_path``."""
+    """Save a 3D + cross-section gallery preview of a vessel to ``out_path``.
+
+    The 3D panel draws the outer wall, lumen, every interior layer
+    interface (when present), every lesion mesh coloured by kind, and
+    the guidewire as an opaque grey cylinder.
+    """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -52,10 +74,38 @@ def preview_vessel(
                             edgecolor="#3030a0", linewidth=0.1)
     ax3.add_collection3d(poly)
 
+    # Interior layer interfaces only — outer_mesh is surfaces[-1] and is
+    # drawn separately below.
+    outer_name = vessel.surfaces[-1].name
+    interior_surfaces = [
+        s for s in vessel.surfaces if s.name not in ("lumen", outer_name)
+    ]
+    for s in interior_surfaces:
+        verts, faces = _decimate_faces(s.mesh, max_faces)
+        color = _LAYER_FACECOLOR.get(s.material_name, "#a3b18a")
+        poly = Poly3DCollection(verts[faces], alpha=0.12,
+                                  facecolor=color, edgecolor=color,
+                                  linewidth=0.05)
+        ax3.add_collection3d(poly)
+
     verts, faces = _decimate_faces(vessel.lumen_mesh, max_faces)
     poly = Poly3DCollection(verts[faces], alpha=0.18, facecolor="#ff6060",
                             edgecolor="#a02020", linewidth=0.1)
     ax3.add_collection3d(poly)
+
+    # Lesion meshes, opaque so they're easy to spot.
+    for lesion in vessel.lesions:
+        verts, faces = _decimate_faces(lesion.mesh, max_faces)
+        color = _LESION_FACECOLOR.get(lesion.material_name, "#444444")
+        poly = Poly3DCollection(verts[faces], alpha=0.55, facecolor=color,
+                                  edgecolor="#222222", linewidth=0.2)
+        ax3.add_collection3d(poly)
+
+    if vessel.guidewire is not None:
+        verts, faces = _decimate_faces(vessel.guidewire.mesh, max_faces)
+        poly = Poly3DCollection(verts[faces], alpha=0.8, facecolor="#333333",
+                                  edgecolor="#000000", linewidth=0.2)
+        ax3.add_collection3d(poly)
 
     for b in vessel.branches:
         cl = b.centerline.positions

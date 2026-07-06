@@ -80,6 +80,9 @@ data_AGORALABS_MOSAIC_CTA_CASES_20260421_processed_PAT_23.zip
 # CT / vessel-generator patient directories unpacked from the AGORALABS dump.
 patient_*/
 
+# Regenerable vessel-generator outputs (meshes, previews, paired datasets).
+vessel-generator/out/
+
 # Top-level diagnostic plots produced by the gain-curve comparison scripts.
 # (Summary CSVs / pooled JSON stay tracked; only the rendered PNG comparisons
 # are regenerable diagnostics.)

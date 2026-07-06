@@ -65,10 +65,19 @@ def iter_dataset(
     name_prefix: str = "vessel",
     max_resamples_per_vessel: int = 5,
     require_side_branch: bool = False,
+    start_index: int = 0,
 ) -> Iterator[tuple[VesselConfig, Vessel]]:
-    """Iterator variant of :func:`generate_dataset` for in-memory consumption."""
+    """Iterator variant of :func:`generate_dataset` for in-memory consumption.
+
+    ``start_index`` skips the first N vessel slots without sampling
+    them. Used by ``render_paired_dataset.py --resume`` to continue a
+    partially-completed run without redoing the vessels that already
+    landed on disk: the seed schedule (``base_seed + i * 1000 + retry``)
+    is index-keyed, so the resumed iterator picks up the exact vessel
+    configs the original run would have produced.
+    """
     config = config or GenerationConfig()
-    for i in range(n):
+    for i in range(start_index, n):
         for retry in range(max_resamples_per_vessel):
             seed = base_seed + i * 1000 + retry
             rng = np.random.default_rng(seed)

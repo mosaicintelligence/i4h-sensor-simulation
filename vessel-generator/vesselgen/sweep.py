@@ -28,7 +28,7 @@ import trimesh
 
 from vesselgen.centerline import Centerline
 from vesselgen.cross_section import CrossSectionField
-from vesselgen.wall import WallField
+from vesselgen.wall import LayeredWallField, WallField
 
 
 def _build_tube_vertices(centerline: Centerline, radii: np.ndarray, thetas: np.ndarray) -> np.ndarray:
@@ -130,8 +130,8 @@ def sweep_branch(
     """Build the closed lumen and outer meshes for one branch.
 
     Returns (lumen_mesh, outer_mesh). Both are closed, watertight (after
-    trimesh's processing), and have inward-facing normals on the walls and
-    inward-facing caps.
+    trimesh's processing), and have outward-facing normals on the walls and
+    caps (the OBJ writer inverts them on export).
     """
     if lumen.radii.shape != wall.thicknesses.shape:
         raise ValueError(
@@ -143,3 +143,27 @@ def sweep_branch(
     outer_radii = lumen.radii + wall.thicknesses
     outer_mesh = _build_closed_mesh(centerline, outer_radii, lumen.thetas)
     return lumen_mesh, outer_mesh
+
+
+def sweep_layered_branch(
+    centerline: Centerline,
+    lumen: CrossSectionField,
+    wall: LayeredWallField,
+) -> list[trimesh.Trimesh]:
+    """Build closed meshes for the lumen + every layer interface.
+
+    Returns ``n_layers + 1`` meshes in nested order: the lumen surface,
+    then each interior interface, then the outer (adventitia) surface.
+    All meshes are closed, watertight (after trimesh processing), and
+    have outward-facing normals (the OBJ writer inverts them on export).
+    """
+
+    if lumen.radii.shape != wall.interface_radii[0].shape:
+        raise ValueError(
+            f"lumen and layered wall fields must share grid shape, got "
+            f"{lumen.radii.shape} and {wall.interface_radii[0].shape}"
+        )
+    meshes: list[trimesh.Trimesh] = []
+    for radii in wall.interface_radii:
+        meshes.append(_build_closed_mesh(centerline, radii, lumen.thetas))
+    return meshes
