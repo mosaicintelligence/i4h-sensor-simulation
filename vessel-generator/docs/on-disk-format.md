@@ -55,22 +55,19 @@ assignment. Key fields:
 | `seed` | Generation seed |
 | `wall.kind` | `"single"` or `"layered"` |
 | `surfaces[]` | `{obj, material}` pairs |
-
 | `lesions[]` | `{name, obj, material, kind}` |
-
 | `guidewire` | `{obj, material, diameter_mm, ...}` or null |
-
 | `branches[]` | Branch topology summary |
 | `n_layers` | 1, 2, or 3 |
 
 Example surface chain for trilaminar:
 
-    {"obj": "lumen.obj", "material": "intima"},
-    {"obj": "surfaces/interface_01.obj", "material": "media"},
-    {"obj": "surfaces/interface_02.obj", "material": "adventitia"}
-    {"obj_filename": "lumen.obj", "material": "intima"},
-    {"obj_filename": "surfaces/interface_01.obj", "material": "media"},
-    {"obj_filename": "surfaces/interface_02.obj", "material": "adventitia"}
+```json
+{
+  "surfaces": [
+    {"obj": "lumen.obj", "material": "intima"},
+    {"obj": "surfaces/interface_01.obj", "material": "media"},
+    {"obj": "surfaces/interface_02.obj", "material": "adventitia"}
   ]
 }
 ```

@@ -27,9 +27,10 @@ from vesselgen.vessel import Vessel
 
 
 def _decimate_faces(mesh, max_faces: int) -> tuple[np.ndarray, np.ndarray]:
-    if len(mesh.faces) <= max_faces:
+    n_faces = len(mesh.faces)
+    if n_faces <= max_faces:
         return mesh.vertices, mesh.faces
-    stride = max(1, len(mesh.faces) // max_faces)
+    stride = max(1, int(np.ceil(n_faces / max_faces)))
     faces = mesh.faces[::stride]
     return mesh.vertices, faces
 
@@ -73,9 +74,12 @@ def preview_vessel(
                             edgecolor="#3030a0", linewidth=0.1)
     ax3.add_collection3d(poly)
 
-    # Interior layer interfaces (intima/media boundary, etc.).
-    outer_name = vessel.surfaces[-1].name
-    interior_surfaces = [s for s in vessel.surfaces if s.name not in ("lumen", outer_name)]
+    # Interior layer interfaces only — outer_mesh is surfaces[-1] and is
+    # drawn separately below.
+    outer_name = vessel.surfaces[-1].name
+    interior_surfaces = [
+        s for s in vessel.surfaces if s.name not in ("lumen", outer_name)
+    ]
     for s in interior_surfaces:
         verts, faces = _decimate_faces(s.mesh, max_faces)
         color = _LAYER_FACECOLOR.get(s.material_name, "#a3b18a")

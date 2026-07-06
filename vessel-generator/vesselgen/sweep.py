@@ -130,8 +130,8 @@ def sweep_branch(
     """Build the closed lumen and outer meshes for one branch.
 
     Returns (lumen_mesh, outer_mesh). Both are closed, watertight (after
-    trimesh's processing), and have inward-facing normals on the walls and
-    inward-facing caps.
+    trimesh's processing), and have outward-facing normals on the walls and
+    caps (the OBJ writer inverts them on export).
     """
     if lumen.radii.shape != wall.thicknesses.shape:
         raise ValueError(
