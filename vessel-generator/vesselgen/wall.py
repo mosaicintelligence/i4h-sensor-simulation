@@ -229,7 +229,7 @@ def push_layered_interfaces_around_lesions(
 ) -> LayeredWallField:
     """Deform interior wall interfaces so they sit just outside every lesion.
 
-    The simulator only tracks two materials per ray (current + outter), so
+    The simulator only tracks two materials per ray (current + outer), so
     if a lesion mesh and a wall interface mesh both pass through the same
     region, rays inside the lesion lose track of the calcified / lipid /
     fibrous / thrombus material as soon as they hit the interior interface
