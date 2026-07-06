@@ -17,7 +17,7 @@ Canonical label IDs for paired-dataset segmentation masks. Implementation:
 | 7 | lipid_pool | `lipid_pool` |
 | 8 | fibrous_plaque | `fibrous_plaque` |
 | 9 | thrombus | `thrombus` |
-| 10 | guidewire | `guidewire` |
+| 10 | guidewire | `tungsten` |
 | 11 | vessel_wall | Legacy single-slab wall |
 
 IDs are dense and append-only — new classes extend the table without
