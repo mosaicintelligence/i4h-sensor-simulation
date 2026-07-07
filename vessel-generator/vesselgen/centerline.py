@@ -35,8 +35,8 @@ class Frame:
     """
 
     position: np.ndarray  # shape (3,)
-    tangent: np.ndarray   # shape (3,)
-    normal: np.ndarray    # shape (3,)
+    tangent: np.ndarray  # shape (3,)
+    normal: np.ndarray  # shape (3,)
     binormal: np.ndarray  # shape (3,)
 
     def to_world(self, x_local: float, y_local: float) -> np.ndarray:

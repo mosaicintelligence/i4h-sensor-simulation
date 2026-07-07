@@ -67,7 +67,11 @@ def test_frame_gain_within_slider_range():
     assert draw.artifact_reduction in ("on", "off")
     assert draw.ring_down_template in ("raw", "disabled")
     assert draw.ring_down_enabled == (draw.artifact_reduction == "on")
-    assert rand_cfg.tgc_deep_gain_scale_range[0] <= draw.tgc_deep_gain_scale <= rand_cfg.tgc_deep_gain_scale_range[1]
+    assert (
+        rand_cfg.tgc_deep_gain_scale_range[0]
+        <= draw.tgc_deep_gain_scale
+        <= rand_cfg.tgc_deep_gain_scale_range[1]
+    )
 
 
 def test_tier2_vessel_draw_ranges():

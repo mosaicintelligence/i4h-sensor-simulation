@@ -94,9 +94,7 @@ PoseSlot = Literal["random", "side_branch", "parent_ostium"]
 # ---------------------------------------------------------------------------
 
 
-def _meshes_from_manifest(
-    manifest: dict, vessel_dir: Path
-) -> list[tuple[Path, str]]:
+def _meshes_from_manifest(manifest: dict, vessel_dir: Path) -> list[tuple[Path, str]]:
     """Return ``[(obj_path, material_name)]`` for every mesh the simulator
     should load, in the order ``surfaces, lesions, guidewire``.
     """
@@ -278,9 +276,7 @@ def _cartesian_label_grid(
             continue
         labels[mask] = material_to_label.get(material_name, LABEL_BACKGROUND)
 
-    lumen_mask = _polygon_mask(
-        gt.lumen_contour_polygons, plane_pts, offset_mm=acoustic_offset_mm
-    )
+    lumen_mask = _polygon_mask(gt.lumen_contour_polygons, plane_pts, offset_mm=acoustic_offset_mm)
     labels[lumen_mask] = LABEL_LUMEN
 
     if gt.guidewire_polygons:
@@ -311,9 +307,7 @@ def _sample_cart_mask_on_polar(cart_mask: np.ndarray, cfg, *, cart_size: int) ->
     return cart_mask[yi, xi]
 
 
-def acoustic_segmentation_mask(
-    gt: GroundTruth, cfg, *, acoustic_offset_mm: float
-) -> np.ndarray:
+def acoustic_segmentation_mask(gt: GroundTruth, cfg, *, acoustic_offset_mm: float) -> np.ndarray:
     """Acoustic-boundary labels on the simulator's native ``(theta, r)`` grid."""
     cart_size = 512
     t_far = float(cfg.sim.t_far_mm)
@@ -368,12 +362,8 @@ def _build_bifurcation_pose_schedule(
 ) -> list[PoseSlot]:
     schedule: list[PoseSlot] = ["random"] * frames_per_vessel
     n_side = min(min_side_branch_frames, frames_per_vessel)
-    n_ostium = min(
-        min_parent_ostium_frames, max(0, frames_per_vessel - n_side)
-    )
-    for i, slot in enumerate(
-        ["side_branch"] * n_side + ["parent_ostium"] * n_ostium
-    ):
+    n_ostium = min(min_parent_ostium_frames, max(0, frames_per_vessel - n_side))
+    for i, slot in enumerate(["side_branch"] * n_side + ["parent_ostium"] * n_ostium):
         schedule[i] = slot
     rng.shuffle(schedule)
     return schedule
@@ -406,9 +396,7 @@ def _sample_pose_for_slot(
     cap_clearance_mm = 2.5
     if slot == "side_branch":
         side_length = side.centerline.length_mm
-        ostium_extent = max(
-            side_length * side_branch_ostium_arclength_frac, 2.0
-        )
+        ostium_extent = max(side_length * side_branch_ostium_arclength_frac, 2.0)
         lo = cap_clearance_mm
         hi = max(lo + 1e-3, min(ostium_extent, side_length - cap_clearance_mm))
         if hi <= lo:
@@ -704,10 +692,7 @@ def _scan_existing_for_resume(
     completed_indices: list[int] = []
     for v_name, entries in by_vessel.items():
         vessel_dir = vessels_dir / v_name
-        is_complete = (
-            len(entries) == frames_per_vessel
-            and (vessel_dir / "vessel.json").is_file()
-        )
+        is_complete = len(entries) == frames_per_vessel and (vessel_dir / "vessel.json").is_file()
         if is_complete:
             for _, meta in sorted(entries, key=lambda e: e[1].get("frame_id", 0)):
                 kept_meta.append(meta)
@@ -761,7 +746,9 @@ def generate_paired_dataset(
     resume_start_index = 0
     if resume:
         resume_meta, resume_start_index = _scan_existing_for_resume(
-            frames_dir, vessels_dir, frames_per_vessel,
+            frames_dir,
+            vessels_dir,
+            frames_per_vessel,
         )
         if resume_meta:
             print(
@@ -851,7 +838,7 @@ def generate_paired_dataset(
         apply_vessel_sim_draw(cfg, vessel_sim_params, vessel_sim_draw)
 
         n_ar_on = (frames_per_vessel + 1) // 2
-        ar_schedule = (["on"] * n_ar_on + ["off"] * (frames_per_vessel - n_ar_on))
+        ar_schedule = ["on"] * n_ar_on + ["off"] * (frames_per_vessel - n_ar_on)
         rng.shuffle(ar_schedule)
 
         has_bifurcation = bool(_daughter_branch_names(vessel))
@@ -874,9 +861,7 @@ def generate_paired_dataset(
                 break
             pose_attempts += 1
 
-            pose_slot: PoseSlot = pose_schedule[
-                min(poses_collected, len(pose_schedule) - 1)
-            ]
+            pose_slot: PoseSlot = pose_schedule[min(poses_collected, len(pose_schedule) - 1)]
             pose = _sample_pose_for_slot(
                 vessel,
                 pose_slot,
@@ -908,15 +893,9 @@ def generate_paired_dataset(
             # max_bad_fraction so genuine ostium transparency is
             # accepted while truly broken meshes are still caught.
             if pose.branch_name != "parent" and pose_slot == "random":
-                seg = acoustic_segmentation_mask(
-                    gt, cfg, acoustic_offset_mm=acoustic_offset
-                )
-                sector = side_branch_imaging_sector_mask(
-                    vessel, pose, gt.thetas_rad, gt
-                )
-                if _segmentation_side_branch_sector_missing_wall(
-                    seg, sector, max_bad_fraction=0.5
-                ):
+                seg = acoustic_segmentation_mask(gt, cfg, acoustic_offset_mm=acoustic_offset)
+                sector = side_branch_imaging_sector_mask(vessel, pose, gt.thetas_rad, gt)
+                if _segmentation_side_branch_sector_missing_wall(seg, sector, max_bad_fraction=0.5):
                     continue
 
             frame_draw = None
@@ -953,9 +932,7 @@ def generate_paired_dataset(
             # Compute seg for parent-branch poses (skipped during
             # the validity check above for the parent path).
             if seg is None:
-                seg = acoustic_segmentation_mask(
-                    gt, cfg, acoustic_offset_mm=acoustic_offset
-                )
+                seg = acoustic_segmentation_mask(gt, cfg, acoustic_offset_mm=acoustic_offset)
 
             frame_name = f"frame_{frame_idx:05d}"
             frame_dir = frames_dir / frame_name
@@ -967,7 +944,10 @@ def generate_paired_dataset(
             save_segmentation_png(seg, frame_dir / "segmentation.png")
             if not skip_overlay:
                 save_overlay_png(
-                    image, gt, cfg, frame_dir / "overlay.png",
+                    image,
+                    gt,
+                    cfg,
+                    frame_dir / "overlay.png",
                     acoustic_offset_mm=acoustic_offset,
                 )
 
@@ -1072,9 +1052,7 @@ def regenerate_segmentations(out_dir: Path) -> None:
         vessel = vessel_cache[vessel_name]
 
         pose = _pose_from_metadata(meta)
-        t_far_mm = float(
-            meta.get("sim_parameters", {}).get("t_far_mm", cfg.sim.t_far_mm)
-        )
+        t_far_mm = float(meta.get("sim_parameters", {}).get("t_far_mm", cfg.sim.t_far_mm))
         cfg.sim.t_far_mm = t_far_mm
         gt = vessel.ground_truth_at(
             pose,
@@ -1087,7 +1065,10 @@ def regenerate_segmentations(out_dir: Path) -> None:
         np.save(frame_dir / "segmentation.npy", seg)
         save_segmentation_png(seg, frame_dir / "segmentation.png")
         save_overlay_png(
-            image, gt, cfg, frame_dir / "overlay.png",
+            image,
+            gt,
+            cfg,
+            frame_dir / "overlay.png",
             acoustic_offset_mm=acoustic_offset,
         )
 

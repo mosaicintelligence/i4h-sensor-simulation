@@ -60,8 +60,13 @@ class BifurcationError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 
-def _spherical_to_unit(parent_tangent: np.ndarray, parent_normal: np.ndarray,
-                      parent_binormal: np.ndarray, polar_deg: float, azimuth_deg: float) -> np.ndarray:
+def _spherical_to_unit(
+    parent_tangent: np.ndarray,
+    parent_normal: np.ndarray,
+    parent_binormal: np.ndarray,
+    polar_deg: float,
+    azimuth_deg: float,
+) -> np.ndarray:
     """Direction vector at (polar, azimuth) from a parent's local frame.
 
     polar_deg is the angle from the parent tangent (0 = along the parent,
@@ -73,10 +78,7 @@ def _spherical_to_unit(parent_tangent: np.ndarray, parent_normal: np.ndarray,
     azimuth = np.radians(azimuth_deg)
     sp, cp = np.sin(polar), np.cos(polar)
     sa, ca = np.sin(azimuth), np.cos(azimuth)
-    direction = (
-        cp * parent_tangent
-        + sp * (ca * parent_normal + sa * parent_binormal)
-    )
+    direction = cp * parent_tangent + sp * (ca * parent_normal + sa * parent_binormal)
     return direction / np.linalg.norm(direction)
 
 
@@ -109,8 +111,11 @@ def build_daughter_centerline(
     s_origin = parent_arclength_frac * parent.length_mm
     parent_frame = parent.frame(s_origin)
     direction = _spherical_to_unit(
-        parent_frame.tangent, parent_frame.normal, parent_frame.binormal,
-        polar_deg, azimuth_deg,
+        parent_frame.tangent,
+        parent_frame.normal,
+        parent_frame.binormal,
+        polar_deg,
+        azimuth_deg,
     )
     safe_recess = min(
         max(0.1, recess_frac_of_parent_radius * parent_local_radius_mm),
@@ -193,7 +198,9 @@ def attach_side_branch_layered(
     """
 
     parent_local_radius = _parent_local_radius(
-        parent_centerline, parent_lumen_field, side_branch.parent_arclength_frac,
+        parent_centerline,
+        parent_lumen_field,
+        side_branch.parent_arclength_frac,
     )
     daughter_centerline = build_daughter_centerline(
         parent_centerline,
@@ -206,7 +213,7 @@ def attach_side_branch_layered(
 
     branch_cfg = side_branch.branch
     daughter_seed = (
-        branch_cfg.seed if branch_cfg.seed is not None else int(rng.integers(0, 2**31 - 1))
+        branch_cfg.seed if branch_cfg.seed is not None else int(rng.integers(0, 2 ** 31 - 1))
     )
     daughter_rng = np.random.default_rng(daughter_seed)
 
@@ -219,10 +226,15 @@ def attach_side_branch_layered(
 
     daughter_layered_cfg = branch_wall_to_layered(branch_cfg.wall)
     daughter_layered_field = build_layered_wall(
-        daughter_layered_cfg, lumen_field, daughter_centerline.length_mm, daughter_rng,
+        daughter_layered_cfg,
+        lumen_field,
+        daughter_centerline.length_mm,
+        daughter_rng,
     )
     daughter_layer_meshes = sweep_layered_branch(
-        daughter_centerline, lumen_field, daughter_layered_field,
+        daughter_centerline,
+        lumen_field,
+        daughter_layered_field,
     )
 
     if len(parent_layer_meshes) != len(daughter_layer_meshes):

@@ -35,17 +35,28 @@ def _vessel_with_layers_and_lesions(seed: int = 0) -> Vessel:
         seed=seed,
         lesions=[
             CalcificationLesionConfig(
-                arclength_frac=0.5, azimuth_deg=45.0, kind="hard",
-                arc_extent_deg=55.0, axial_extent_mm=7.0, seed=10,
+                arclength_frac=0.5,
+                azimuth_deg=45.0,
+                kind="hard",
+                arc_extent_deg=55.0,
+                axial_extent_mm=7.0,
+                seed=10,
             ),
             CalcificationLesionConfig(
-                arclength_frac=0.65, azimuth_deg=80.0, kind="soft_lipid",
-                arc_extent_deg=45.0, axial_extent_mm=6.0,
-                inner_offset_frac=0.25, outer_offset_frac=0.7, seed=11,
+                arclength_frac=0.65,
+                azimuth_deg=80.0,
+                kind="soft_lipid",
+                arc_extent_deg=45.0,
+                axial_extent_mm=6.0,
+                inner_offset_frac=0.25,
+                outer_offset_frac=0.7,
+                seed=11,
             ),
         ],
         guidewire=GuidewireConfig(
-            diameter_mm=0.46, lateral_offset_mm=1.5, offset_azimuth_deg=20.0,
+            diameter_mm=0.46,
+            lateral_offset_mm=1.5,
+            offset_azimuth_deg=20.0,
         ),
     )
     return Vessel.from_config(cfg)
@@ -86,14 +97,10 @@ def test_load_vessel_restores_layers_lesions_and_guidewire(tmp_path: Path):
 
     assert len(loaded.surfaces) == len(vessel.surfaces)
     assert [s.name for s in loaded.surfaces] == [s.name for s in vessel.surfaces]
-    assert [s.material_name for s in loaded.surfaces] == [
-        s.material_name for s in vessel.surfaces
-    ]
+    assert [s.material_name for s in loaded.surfaces] == [s.material_name for s in vessel.surfaces]
 
     assert len(loaded.lesions) == len(vessel.lesions)
-    assert [l.material_name for l in loaded.lesions] == [
-        l.material_name for l in vessel.lesions
-    ]
+    assert [l.material_name for l in loaded.lesions] == [l.material_name for l in vessel.lesions]
     for orig, restored in zip(vessel.lesions, loaded.lesions):
         # Volumes should match within mesh-export rounding.
         np.testing.assert_allclose(restored.mesh.volume, orig.mesh.volume, rtol=0.05)

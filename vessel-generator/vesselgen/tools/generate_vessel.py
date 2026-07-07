@@ -56,14 +56,16 @@ def _build_lesions(args: argparse.Namespace) -> list[CalcificationLesionConfig]:
     lesions = []
     for i in range(args.n_lesions):
         kind = kinds[i % len(kinds)]
-        lesions.append(CalcificationLesionConfig(
-            arclength_frac=float(rng.uniform(0.25, 0.75)),
-            azimuth_deg=base_az + float(rng.uniform(-30.0, 30.0)),
-            kind=kind,
-            arc_extent_deg=float(rng.uniform(40.0, 80.0)),
-            axial_extent_mm=float(rng.uniform(4.0, 10.0)),
-            seed=args.seed + 10_000 + i,
-        ))
+        lesions.append(
+            CalcificationLesionConfig(
+                arclength_frac=float(rng.uniform(0.25, 0.75)),
+                azimuth_deg=base_az + float(rng.uniform(-30.0, 30.0)),
+                kind=kind,
+                arc_extent_deg=float(rng.uniform(40.0, 80.0)),
+                axial_extent_mm=float(rng.uniform(4.0, 10.0)),
+                seed=args.seed + 10_000 + i,
+            )
+        )
     return lesions
 
 
@@ -138,14 +140,20 @@ def _make_config(args: argparse.Namespace) -> VesselConfig:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--name", default="vessel", help="Name written into the manifest.")
     p.add_argument("--seed", type=int, default=0)
 
     p.add_argument("--length-mm", type=float, default=55.0)
-    p.add_argument("--radius-mm", type=float, default=5.0,
-                   help="Mean lumen radius (mm); 5 mm ≈ 10 mm femoral-scale diameter.")
+    p.add_argument(
+        "--radius-mm",
+        type=float,
+        default=5.0,
+        help="Mean lumen radius (mm); 5 mm ≈ 10 mm femoral-scale diameter.",
+    )
     p.add_argument("--taper", type=float, default=0.95, help="Distal/proximal radius ratio.")
     p.add_argument("--wall-mm", type=float, default=0.85)
     p.add_argument("--n-stations", type=int, default=64)
@@ -159,24 +167,49 @@ def main() -> None:
     p.add_argument("--side-length-mm", type=float, default=45.0)
     p.add_argument("--side-radius-mm", type=float, default=3.5)
 
-    p.add_argument("--layers", type=int, choices=(1, 2, 3), default=1,
-                   help="Number of concentric wall layers. 1=single layer "
-                        "(legacy), 2=media+adventitia, 3=intima+media+adventitia.")
-    p.add_argument("--n-lesions", type=int, default=0,
-                   help="Number of in-wall lesions to embed in the parent. "
-                        "Side branches must be off to use this.")
-    p.add_argument("--lesion-kinds", type=str, default="hard",
-                   help="Comma-separated lesion kinds cycled through "
-                        "(hard, soft_lipid, fibrous, thrombus).")
-    p.add_argument("--lesion-azimuth-deg", type=float, default=0.0,
-                   help="Central angle of the diseased sector (deg).")
+    p.add_argument(
+        "--layers",
+        type=int,
+        choices=(1, 2, 3),
+        default=1,
+        help="Number of concentric wall layers. 1=single layer "
+        "(legacy), 2=media+adventitia, 3=intima+media+adventitia.",
+    )
+    p.add_argument(
+        "--n-lesions",
+        type=int,
+        default=0,
+        help="Number of in-wall lesions to embed in the parent. "
+        "Side branches must be off to use this.",
+    )
+    p.add_argument(
+        "--lesion-kinds",
+        type=str,
+        default="hard",
+        help="Comma-separated lesion kinds cycled through "
+        "(hard, soft_lipid, fibrous, thrombus).",
+    )
+    p.add_argument(
+        "--lesion-azimuth-deg",
+        type=float,
+        default=0.0,
+        help="Central angle of the diseased sector (deg).",
+    )
 
-    p.add_argument("--guidewire", action="store_true",
-                   help="Add a tungsten guidewire running through the lumen.")
-    p.add_argument("--guidewire-diameter-mm", type=float, default=0.36,
-                   help="Common interventional sizes: 0.36 (0.014\"), 0.46 (0.018\"), 0.89 (0.035\").")
-    p.add_argument("--guidewire-offset-mm", type=float, default=0.0,
-                   help="Lateral offset from the centerline.")
+    p.add_argument(
+        "--guidewire",
+        action="store_true",
+        help="Add a tungsten guidewire running through the lumen.",
+    )
+    p.add_argument(
+        "--guidewire-diameter-mm",
+        type=float,
+        default=0.36,
+        help='Common interventional sizes: 0.36 (0.014"), 0.46 (0.018"), 0.89 (0.035").',
+    )
+    p.add_argument(
+        "--guidewire-offset-mm", type=float, default=0.0, help="Lateral offset from the centerline."
+    )
     p.add_argument("--guidewire-azimuth-deg", type=float, default=0.0)
 
     p.add_argument("--no-preview", action="store_true")

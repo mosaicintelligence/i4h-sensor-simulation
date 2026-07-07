@@ -70,48 +70,56 @@ def preview_vessel(
     ax3 = fig.add_subplot(1, 2, 1, projection="3d")
 
     verts, faces = _decimate_faces(vessel.outer_mesh, max_faces)
-    poly = Poly3DCollection(verts[faces], alpha=0.08, facecolor="#7f7fff",
-                            edgecolor="#3030a0", linewidth=0.1)
+    poly = Poly3DCollection(
+        verts[faces], alpha=0.08, facecolor="#7f7fff", edgecolor="#3030a0", linewidth=0.1
+    )
     ax3.add_collection3d(poly)
 
     # Interior layer interfaces only — outer_mesh is surfaces[-1] and is
     # drawn separately below.
     outer_name = vessel.surfaces[-1].name
-    interior_surfaces = [
-        s for s in vessel.surfaces if s.name not in ("lumen", outer_name)
-    ]
+    interior_surfaces = [s for s in vessel.surfaces if s.name not in ("lumen", outer_name)]
     for s in interior_surfaces:
         verts, faces = _decimate_faces(s.mesh, max_faces)
         color = _LAYER_FACECOLOR.get(s.material_name, "#a3b18a")
-        poly = Poly3DCollection(verts[faces], alpha=0.12,
-                                  facecolor=color, edgecolor=color,
-                                  linewidth=0.05)
+        poly = Poly3DCollection(
+            verts[faces], alpha=0.12, facecolor=color, edgecolor=color, linewidth=0.05
+        )
         ax3.add_collection3d(poly)
 
     verts, faces = _decimate_faces(vessel.lumen_mesh, max_faces)
-    poly = Poly3DCollection(verts[faces], alpha=0.18, facecolor="#ff6060",
-                            edgecolor="#a02020", linewidth=0.1)
+    poly = Poly3DCollection(
+        verts[faces], alpha=0.18, facecolor="#ff6060", edgecolor="#a02020", linewidth=0.1
+    )
     ax3.add_collection3d(poly)
 
     # Lesion meshes, opaque so they're easy to spot.
     for lesion in vessel.lesions:
         verts, faces = _decimate_faces(lesion.mesh, max_faces)
         color = _LESION_FACECOLOR.get(lesion.material_name, "#444444")
-        poly = Poly3DCollection(verts[faces], alpha=0.55, facecolor=color,
-                                  edgecolor="#222222", linewidth=0.2)
+        poly = Poly3DCollection(
+            verts[faces], alpha=0.55, facecolor=color, edgecolor="#222222", linewidth=0.2
+        )
         ax3.add_collection3d(poly)
 
     if vessel.guidewire is not None:
         verts, faces = _decimate_faces(vessel.guidewire.mesh, max_faces)
-        poly = Poly3DCollection(verts[faces], alpha=0.8, facecolor="#333333",
-                                  edgecolor="#000000", linewidth=0.2)
+        poly = Poly3DCollection(
+            verts[faces], alpha=0.8, facecolor="#333333", edgecolor="#000000", linewidth=0.2
+        )
         ax3.add_collection3d(poly)
 
     for b in vessel.branches:
         cl = b.centerline.positions
-        ax3.plot(cl[:, 0], cl[:, 1], cl[:, 2], "-", lw=1.5,
-                  color=("k" if b.is_parent else "tab:orange"),
-                  label=b.name)
+        ax3.plot(
+            cl[:, 0],
+            cl[:, 1],
+            cl[:, 2],
+            "-",
+            lw=1.5,
+            color=("k" if b.is_parent else "tab:orange"),
+            label=b.name,
+        )
 
     if poses:
         for pose in poses:
@@ -122,16 +130,16 @@ def preview_vessel(
                 [p[0] - 1.5 * d[0], p[0] + 1.5 * d[0]],
                 [p[1] - 1.5 * d[1], p[1] + 1.5 * d[1]],
                 [p[2] - 1.5 * d[2], p[2] + 1.5 * d[2]],
-                "-", color="lime", lw=1.5,
+                "-",
+                color="lime",
+                lw=1.5,
             )
 
     bbox_min = vessel.outer_mesh.vertices.min(axis=0)
     bbox_max = vessel.outer_mesh.vertices.max(axis=0)
     span = (bbox_max - bbox_min).max()
     centre = 0.5 * (bbox_min + bbox_max)
-    for axis, set_lim in zip(
-        (0, 1, 2), (ax3.set_xlim, ax3.set_ylim, ax3.set_zlim)
-    ):
+    for axis, set_lim in zip((0, 1, 2), (ax3.set_xlim, ax3.set_ylim, ax3.set_zlim)):
         set_lim(centre[axis] - 0.55 * span, centre[axis] + 0.55 * span)
     ax3.set_xlabel("x (mm)")
     ax3.set_ylabel("y (mm)")
@@ -154,13 +162,17 @@ def preview_vessel(
         ax2.plot(
             np.append(outer[:, 0], outer[0, 0]),
             np.append(outer[:, 1], outer[0, 1]),
-            "--", color=col, lw=1.0,
+            "--",
+            color=col,
+            lw=1.0,
             label=f"s={s_mm:.1f} mm" if k in (0, len(sample_indices) - 1) else None,
         )
         ax2.plot(
             np.append(lumen[:, 0], lumen[0, 0]),
             np.append(lumen[:, 1], lumen[0, 1]),
-            "-", color=col, lw=1.5,
+            "-",
+            color=col,
+            lw=1.5,
         )
     ax2.set_aspect("equal")
     ax2.set_title("Parent branch cross-sections (lumen solid, outer dashed)")
@@ -174,9 +186,7 @@ def preview_vessel(
     return out_path
 
 
-def preview_ground_truth(
-    pose: PoseSample, gt: GroundTruth, out_path: str | Path
-) -> Path:
+def preview_ground_truth(pose: PoseSample, gt: GroundTruth, out_path: str | Path) -> Path:
     """Save an overlay showing the pose's lumen + outer contours and per-angle
     distance arrays."""
     out_path = Path(out_path)
@@ -186,18 +196,28 @@ def preview_ground_truth(
 
     ax = axes[0]
     for poly in gt.outer_contour_polygons:
-        ax.plot(np.append(poly[:, 0], poly[0, 0]),
-                np.append(poly[:, 1], poly[0, 1]),
-                "--", color="tab:blue", lw=1.0)
+        ax.plot(
+            np.append(poly[:, 0], poly[0, 0]),
+            np.append(poly[:, 1], poly[0, 1]),
+            "--",
+            color="tab:blue",
+            lw=1.0,
+        )
     for poly in gt.lumen_contour_polygons:
-        ax.plot(np.append(poly[:, 0], poly[0, 0]),
-                np.append(poly[:, 1], poly[0, 1]),
-                "-", color="tab:red", lw=1.5)
+        ax.plot(
+            np.append(poly[:, 0], poly[0, 0]),
+            np.append(poly[:, 1], poly[0, 1]),
+            "-",
+            color="tab:red",
+            lw=1.5,
+        )
     ax.plot(0, 0, "o", color="black", markersize=6, label="probe origin")
     ax.set_aspect("equal")
     ax.set_xlabel("imaging-plane x (mm)")
     ax.set_ylabel("imaging-plane y (mm)")
-    ax.set_title(f"branch={pose.branch_name}  s={pose.arclength_mm:.1f} mm  tilt={pose.tilt_deg:.1f}°")
+    ax.set_title(
+        f"branch={pose.branch_name}  s={pose.arclength_mm:.1f} mm  tilt={pose.tilt_deg:.1f}°"
+    )
     ax.legend(fontsize=8)
     ax.grid(True, ls=":", alpha=0.5)
 

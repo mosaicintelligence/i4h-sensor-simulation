@@ -142,9 +142,7 @@ class Vessel:
         ``self.surfaces[-1].mesh``.
         """
         if not self.surfaces:
-            raise AttributeError(
-                "Vessel has no surfaces; cannot derive outer_mesh."
-            )
+            raise AttributeError("Vessel has no surfaces; cannot derive outer_mesh.")
         return self.surfaces[-1].mesh
 
     # -----------------------------------------------------------------
@@ -224,6 +222,7 @@ class Vessel:
             next_branch_id += 1
 
         from vesselgen.inclusions import build_all_lesions
+
         lesions = build_all_lesions(
             list(cfg.lesions),
             parent_centerline,
@@ -265,6 +264,7 @@ class Vessel:
         guidewire = None
         if cfg.guidewire is not None:
             from vesselgen.guidewire import build_guidewire
+
             guidewire = build_guidewire(cfg.guidewire, parent_centerline)
 
         return cls(
@@ -317,8 +317,10 @@ class Vessel:
         small probe-axis tilt.
         """
         from vesselgen.sampling import sample_pose
+
         return sample_pose(
-            self, rng,
+            self,
+            rng,
             max_tilt_deg=max_tilt_deg,
             edge_margin_mm=edge_margin_mm,
             max_attempts=max_attempts,
@@ -338,8 +340,11 @@ class Vessel:
         """Sample a pose constrained to one named branch (and optionally one
         arclength station)."""
         from vesselgen.sampling import sample_pose_in_branch
+
         return sample_pose_in_branch(
-            self, branch_name, rng,
+            self,
+            branch_name,
+            rng,
             arclength_mm=arclength_mm,
             max_tilt_deg=max_tilt_deg,
             edge_margin_mm=edge_margin_mm,
@@ -360,8 +365,13 @@ class Vessel:
         branch's centerline if not supplied.
         """
         from vesselgen.sampling import pose_at
-        return pose_at(self, position, probe_axis_world=probe_axis_world,
-                       require_inside_lumen=require_inside_lumen)
+
+        return pose_at(
+            self,
+            position,
+            probe_axis_world=probe_axis_world,
+            require_inside_lumen=require_inside_lumen,
+        )
 
     def contains_point(self, position) -> bool:
         """True iff ``position`` (3,) lies inside the lumen."""
@@ -374,9 +384,8 @@ class Vessel:
         max_distance_mm: float = 30.0,
     ):
         from vesselgen.sampling import ground_truth_at
-        return ground_truth_at(
-            self, pose, n_angles=n_angles, max_distance_mm=max_distance_mm
-        )
+
+        return ground_truth_at(self, pose, n_angles=n_angles, max_distance_mm=max_distance_mm)
 
     # -----------------------------------------------------------------
     # IO (full IO lives in vesselgen.io to keep this module light)
@@ -384,11 +393,13 @@ class Vessel:
 
     def save(self, out_dir: str | Path) -> Path:
         from vesselgen.io import save_vessel
+
         return save_vessel(self, out_dir)
 
     @classmethod
     def load(cls, in_dir: str | Path) -> "Vessel":
         from vesselgen.io import load_vessel
+
         return load_vessel(in_dir)
 
     # -----------------------------------------------------------------
@@ -406,29 +417,35 @@ class Vessel:
 
         out: list[dict] = []
         for s in self.surfaces:
-            out.append({
-                "name": s.name,
-                "material": s.material_name,
-                "mesh": s.mesh,
-                "obj_filename": s.obj_filename,
-                "kind": "surface",
-            })
+            out.append(
+                {
+                    "name": s.name,
+                    "material": s.material_name,
+                    "mesh": s.mesh,
+                    "obj_filename": s.obj_filename,
+                    "kind": "surface",
+                }
+            )
         for lesion in self.lesions:
-            out.append({
-                "name": lesion.name,
-                "material": lesion.material_name,
-                "mesh": lesion.mesh,
-                "obj_filename": f"lesions/{lesion.name}.obj",
-                "kind": "lesion",
-            })
+            out.append(
+                {
+                    "name": lesion.name,
+                    "material": lesion.material_name,
+                    "mesh": lesion.mesh,
+                    "obj_filename": f"lesions/{lesion.name}.obj",
+                    "kind": "lesion",
+                }
+            )
         if self.guidewire is not None:
-            out.append({
-                "name": "guidewire",
-                "material": self.guidewire.material_name,
-                "mesh": self.guidewire.mesh,
-                "obj_filename": "guidewire.obj",
-                "kind": "guidewire",
-            })
+            out.append(
+                {
+                    "name": "guidewire",
+                    "material": self.guidewire.material_name,
+                    "mesh": self.guidewire.mesh,
+                    "obj_filename": "guidewire.obj",
+                    "kind": "guidewire",
+                }
+            )
         return out
 
     def manifest_dict(self) -> dict:
@@ -514,12 +531,16 @@ class Vessel:
                 }
                 for b in self.branches
             ],
-            "lumen_mesh": {"n_vertices": int(len(self.lumen_mesh.vertices)),
-                            "n_faces": int(len(self.lumen_mesh.faces)),
-                            "is_watertight": bool(self.lumen_mesh.is_watertight)},
-            "outermost_mesh": {"n_vertices": int(len(self.outer_mesh.vertices)),
-                                "n_faces": int(len(self.outer_mesh.faces)),
-                                "is_watertight": bool(self.outer_mesh.is_watertight)},
+            "lumen_mesh": {
+                "n_vertices": int(len(self.lumen_mesh.vertices)),
+                "n_faces": int(len(self.lumen_mesh.faces)),
+                "is_watertight": bool(self.lumen_mesh.is_watertight),
+            },
+            "outermost_mesh": {
+                "n_vertices": int(len(self.outer_mesh.vertices)),
+                "n_faces": int(len(self.outer_mesh.faces)),
+                "is_watertight": bool(self.outer_mesh.is_watertight),
+            },
             "world": {"background_material": self.world_background_material},
             "surfaces": [
                 {
@@ -548,7 +569,9 @@ class Vessel:
                 for lesion in self.lesions
             ],
             "guidewire": (
-                None if self.guidewire is None else {
+                None
+                if self.guidewire is None
+                else {
                     "material": self.guidewire.material_name,
                     "obj": "guidewire.obj",
                     "config": {
@@ -660,10 +683,12 @@ def _build_emitted_surface_list(
         else:
             name = f"interface_{i:02d}"
             obj_filename = f"surfaces/{name}.obj"
-        entries.append(SurfaceEntry(
-            name=name,
-            material_name=material,
-            mesh=mesh,
-            obj_filename=obj_filename,
-        ))
+        entries.append(
+            SurfaceEntry(
+                name=name,
+                material_name=material,
+                mesh=mesh,
+                obj_filename=obj_filename,
+            )
+        )
     return entries

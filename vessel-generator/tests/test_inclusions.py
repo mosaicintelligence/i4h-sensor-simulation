@@ -67,14 +67,24 @@ def test_lesion_mesh_is_watertight_and_inside_wall(fields):
 def test_lesion_volume_grows_with_radial_extent(fields):
     centerline, lumen, wall = fields
     small = CalcificationLesionConfig(
-        arclength_frac=0.5, azimuth_deg=0.0, kind="hard",
-        arc_extent_deg=60.0, axial_extent_mm=8.0,
-        inner_offset_frac=0.3, outer_offset_frac=0.5, seed=1,
+        arclength_frac=0.5,
+        azimuth_deg=0.0,
+        kind="hard",
+        arc_extent_deg=60.0,
+        axial_extent_mm=8.0,
+        inner_offset_frac=0.3,
+        outer_offset_frac=0.5,
+        seed=1,
     )
     big = CalcificationLesionConfig(
-        arclength_frac=0.5, azimuth_deg=0.0, kind="hard",
-        arc_extent_deg=60.0, axial_extent_mm=8.0,
-        inner_offset_frac=0.05, outer_offset_frac=0.95, seed=1,
+        arclength_frac=0.5,
+        azimuth_deg=0.0,
+        kind="hard",
+        arc_extent_deg=60.0,
+        axial_extent_mm=8.0,
+        inner_offset_frac=0.05,
+        outer_offset_frac=0.95,
+        seed=1,
     )
     v_small = build_lesion_mesh(small, centerline, lumen, wall).volume
     v_big = build_lesion_mesh(big, centerline, lumen, wall).volume
@@ -85,8 +95,12 @@ def test_lesion_volume_grows_with_radial_extent(fields):
 def test_all_lesion_kinds_build(fields, kind):
     centerline, lumen, wall = fields
     cfg = CalcificationLesionConfig(
-        arclength_frac=0.5, azimuth_deg=0.0, kind=kind,
-        arc_extent_deg=60.0, axial_extent_mm=6.0, seed=2,
+        arclength_frac=0.5,
+        azimuth_deg=0.0,
+        kind=kind,
+        arc_extent_deg=60.0,
+        axial_extent_mm=6.0,
+        seed=2,
     )
     mesh = build_lesion_mesh(cfg, centerline, lumen, wall)
     assert mesh.is_watertight
@@ -97,18 +111,29 @@ def test_build_all_lesions_attaches_correct_materials(fields):
     centerline, lumen, wall = fields
     configs = [
         CalcificationLesionConfig(
-            arclength_frac=0.4, azimuth_deg=45.0, kind="hard", seed=10,
+            arclength_frac=0.4,
+            azimuth_deg=45.0,
+            kind="hard",
+            seed=10,
         ),
         CalcificationLesionConfig(
-            arclength_frac=0.6, azimuth_deg=120.0, kind="soft_lipid", seed=11,
+            arclength_frac=0.6,
+            azimuth_deg=120.0,
+            kind="soft_lipid",
+            seed=11,
         ),
         CalcificationLesionConfig(
-            arclength_frac=0.7, azimuth_deg=200.0, kind="fibrous", seed=12,
+            arclength_frac=0.7,
+            azimuth_deg=200.0,
+            kind="fibrous",
+            seed=12,
         ),
     ]
     out = build_all_lesions(configs, centerline, lumen, wall)
     assert [o.material_name for o in out] == [
-        "calcified_plaque", "lipid_pool", "fibrous_plaque",
+        "calcified_plaque",
+        "lipid_pool",
+        "fibrous_plaque",
     ]
     for o in out:
         assert o.mesh.is_watertight
@@ -129,8 +154,11 @@ def _tube_points(centerline, radii, thetas):
         pos = centerline.positions[i]
         nrm = centerline.normals[i]
         bin_ = centerline.binormals[i]
-        verts[i] = pos[None, :] + (radii[i] * cos_t)[:, None] * nrm[None, :] + \
-                   (radii[i] * sin_t)[:, None] * bin_[None, :]
+        verts[i] = (
+            pos[None, :]
+            + (radii[i] * cos_t)[:, None] * nrm[None, :]
+            + (radii[i] * sin_t)[:, None] * bin_[None, :]
+        )
     return verts.reshape(-1, 3)
 
 

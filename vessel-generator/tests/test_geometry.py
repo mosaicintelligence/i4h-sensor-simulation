@@ -31,19 +31,22 @@ from vesselgen.wall import build_wall
 def _basic_vessel(side_branch: bool = False) -> VesselConfig:
     sb = []
     if side_branch:
-        sb.append(SideBranchConfig(
-            parent_arclength_frac=0.5, azimuth_deg=0.0, polar_deg=55.0,
-            branch=BranchConfig(
-                centerline=CenterlineConfig(length_mm=12.0, n_stations=32),
-                cross_section=CrossSectionConfig(mean_radius_mm=1.5, distal_radius_mm=1.3),
-                wall=WallConfig(mean_thickness_mm=0.5),
-                name="side_branch",
-            ),
-        ))
+        sb.append(
+            SideBranchConfig(
+                parent_arclength_frac=0.5,
+                azimuth_deg=0.0,
+                polar_deg=55.0,
+                branch=BranchConfig(
+                    centerline=CenterlineConfig(length_mm=12.0, n_stations=32),
+                    cross_section=CrossSectionConfig(mean_radius_mm=1.5, distal_radius_mm=1.3),
+                    wall=WallConfig(mean_thickness_mm=0.5),
+                    name="side_branch",
+                ),
+            )
+        )
     return VesselConfig(
         parent=BranchConfig(
-            centerline=CenterlineConfig(length_mm=24.0, n_stations=48,
-                                         origin=(0.0, -12.0, 0.0)),
+            centerline=CenterlineConfig(length_mm=24.0, n_stations=48, origin=(0.0, -12.0, 0.0)),
             cross_section=CrossSectionConfig(mean_radius_mm=2.5, distal_radius_mm=2.2),
             wall=WallConfig(mean_thickness_mm=0.7),
             name="parent",
@@ -80,7 +83,9 @@ def test_single_branch_mesh_is_watertight_outward_in_memory():
     rng = np.random.default_rng(0)
     lumen = build_cross_sections(
         CrossSectionConfig(mean_radius_mm=2.5, max_perturbation_frac=0.15),
-        length_mm=20.0, n_stations=48, rng=rng,
+        length_mm=20.0,
+        n_stations=48,
+        rng=rng,
     )
     wall = build_wall(WallConfig(mean_thickness_mm=0.6), lumen, length_mm=20.0, rng=rng)
     lumen_mesh, outer_mesh = sweep_branch(cl, lumen, wall)
@@ -102,9 +107,9 @@ def test_single_branch_mesh_is_watertight_outward_in_memory():
             continue
         radial = radial / rn
         normal = lumen_mesh.face_normals[fi]
-        assert float(np.dot(normal, radial)) > 0.5, (
-            f"face {fi} normal {normal} not outward at radial {radial}"
-        )
+        assert (
+            float(np.dot(normal, radial)) > 0.5
+        ), f"face {fi} normal {normal} not outward at radial {radial}"
 
 
 def test_saved_obj_has_inward_normals(tmp_path):
@@ -183,9 +188,7 @@ def test_side_branch_does_not_pierce_opposite_wall():
     # inside the lumen because the daughter crosses through the parent.
     parent = v.parent_branch
     parent_radius = float(parent.lumen_field.mean_radius.max())
-    parent_center_at_attachment = parent.centerline.position(
-        side.parent_attachment_arclength_mm
-    )
+    parent_center_at_attachment = parent.centerline.position(side.parent_attachment_arclength_mm)
     far_side_point = parent_center_at_attachment - 1.5 * parent_radius * daughter_dir
     assert not v.contains_point(far_side_point), (
         f"Side branch is piercing the far side of the parent: "
@@ -196,9 +199,7 @@ def test_side_branch_does_not_pierce_opposite_wall():
 def test_pose_at_explicit_position():
     cfg = _basic_vessel()
     v = Vessel.from_config(cfg)
-    parent_center = v.parent_branch.centerline.position(
-        v.parent_branch.centerline.length_mm / 2.0
-    )
+    parent_center = v.parent_branch.centerline.position(v.parent_branch.centerline.length_mm / 2.0)
     pose = v.pose_at(parent_center)
     assert pose.branch_name == "parent"
     assert pose.centerline_offset_mm < 1e-3
@@ -237,9 +238,8 @@ def test_frame_00074_shows_parent_proximal_endcap():
 
     with meta_path.open() as f:
         meta = json.load(f)
-    stored_wall = (
-        np.array(meta["ground_truth_geometric"]["distance_to_outer_wall_mm"])
-        - np.array(meta["ground_truth_geometric"]["distance_to_lumen_wall_mm"])
+    stored_wall = np.array(meta["ground_truth_geometric"]["distance_to_outer_wall_mm"]) - np.array(
+        meta["ground_truth_geometric"]["distance_to_lumen_wall_mm"]
     )
     if not np.any(np.isfinite(stored_wall) & (stored_wall < 0.08)):
         return

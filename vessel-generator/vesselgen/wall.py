@@ -177,10 +177,12 @@ def build_layered_wall(
     for k in range(1, n_layers):
         nominal_k = float(cumulative[k])
         adj_frac = float(min(fracs[k - 1], fracs[k]))
-        amp_per_layer = float(min(
-            config.layers[k - 1].max_perturbation_frac,
-            config.layers[k].max_perturbation_frac,
-        ))
+        amp_per_layer = float(
+            min(
+                config.layers[k - 1].max_perturbation_frac,
+                config.layers[k].max_perturbation_frac,
+            )
+        )
         amp = max(adj_frac * amp_per_layer * 0.5, 0.0)
 
         if amp <= 0.0:

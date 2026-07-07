@@ -22,7 +22,9 @@ def main() -> None:
     cfg = VesselConfig(
         parent=BranchConfig(
             centerline=CenterlineConfig(
-                length_mm=30.0, origin=(0.0, -15.0, 0.0), direction=(0.0, 1.0, 0.0),
+                length_mm=30.0,
+                origin=(0.0, -15.0, 0.0),
+                direction=(0.0, 1.0, 0.0),
                 n_stations=64,
             ),
             cross_section=CrossSectionConfig(

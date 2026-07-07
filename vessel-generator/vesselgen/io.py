@@ -85,9 +85,7 @@ def save_vessel(vessel: Vessel, out_dir: str | Path) -> Path:
     # boolean engine work correctly. The simulator expects inward normals
     # on its phantom surfaces (see phantom_maker.generate_cylinder_thick_mesh
     # in the simulator repository), so we flip the winding at export time.
-    needs_surfaces_dir = any(
-        s.obj_filename.startswith("surfaces/") for s in vessel.surfaces
-    )
+    needs_surfaces_dir = any(s.obj_filename.startswith("surfaces/") for s in vessel.surfaces)
     if needs_surfaces_dir:
         surfaces_dir.mkdir(exist_ok=True)
     for s in vessel.surfaces:
@@ -197,12 +195,14 @@ def load_vessel(in_dir: str | Path) -> Vessel:
         # freshly built one (needed for trimesh.contains and any future
         # boolean ops on the loaded vessel).
         mesh.invert()
-        surfaces.append(SurfaceEntry(
-            name=entry["name"],
-            material_name=entry["material"],
-            mesh=mesh,
-            obj_filename=entry["obj"],
-        ))
+        surfaces.append(
+            SurfaceEntry(
+                name=entry["name"],
+                material_name=entry["material"],
+                mesh=mesh,
+                obj_filename=entry["obj"],
+            )
+        )
 
     if not surfaces:
         # Pre-manifest legacy layout: load lumen.obj + outer.obj directly.
@@ -211,17 +211,25 @@ def load_vessel(in_dir: str | Path) -> Vessel:
         if lumen_obj.exists():
             mesh = trimesh.load(lumen_obj, force="mesh", process=True)
             mesh.invert()
-            surfaces.append(SurfaceEntry(
-                name="lumen", material_name="vessel_wall",
-                mesh=mesh, obj_filename="lumen.obj",
-            ))
+            surfaces.append(
+                SurfaceEntry(
+                    name="lumen",
+                    material_name="vessel_wall",
+                    mesh=mesh,
+                    obj_filename="lumen.obj",
+                )
+            )
         if outer_obj.exists():
             mesh = trimesh.load(outer_obj, force="mesh", process=True)
             mesh.invert()
-            surfaces.append(SurfaceEntry(
-                name="outer", material_name="extravascular",
-                mesh=mesh, obj_filename="outer.obj",
-            ))
+            surfaces.append(
+                SurfaceEntry(
+                    name="outer",
+                    material_name="extravascular",
+                    mesh=mesh,
+                    obj_filename="outer.obj",
+                )
+            )
 
     lesions: list[LesionMesh] = []
     for entry in manifest.get("lesions", []):
@@ -241,12 +249,14 @@ def load_vessel(in_dir: str | Path) -> Vessel:
             outer_offset_frac=cfg_dict.get("outer_offset_frac", 0.75),
             seed=cfg_dict.get("seed"),
         )
-        lesions.append(LesionMesh(
-            name=entry["name"],
-            material_name=entry["material"],
-            mesh=mesh,
-            config=lesion_cfg,
-        ))
+        lesions.append(
+            LesionMesh(
+                name=entry["name"],
+                material_name=entry["material"],
+                mesh=mesh,
+                config=lesion_cfg,
+            )
+        )
 
     guidewire = None
     gw_entry = manifest.get("guidewire")

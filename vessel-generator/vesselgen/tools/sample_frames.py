@@ -27,8 +27,9 @@ def main() -> None:
     p.add_argument("--edge-margin-mm", type=float, default=0.2)
     p.add_argument("--gt-angles", type=int, default=360)
     p.add_argument("--max-distance-mm", type=float, default=30.0)
-    p.add_argument("--write-previews", action="store_true",
-                   help="Write a per-sample PNG (slow if N is large)")
+    p.add_argument(
+        "--write-previews", action="store_true", help="Write a per-sample PNG (slow if N is large)"
+    )
     args = p.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)

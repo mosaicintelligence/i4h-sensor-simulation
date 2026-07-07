@@ -58,8 +58,7 @@ class GuidewireArtifacts:
 def _local_offset(config: GuidewireConfig) -> np.ndarray:
     az = float(np.deg2rad(config.offset_azimuth_deg))
     return np.array(
-        [config.lateral_offset_mm * np.cos(az),
-         config.lateral_offset_mm * np.sin(az)],
+        [config.lateral_offset_mm * np.cos(az), config.lateral_offset_mm * np.sin(az)],
         dtype=float,
     )
 
@@ -134,8 +133,7 @@ def build_guidewire(
         b = (n_stations - 1) * n_radial + j_next
         faces.append([distal_idx, a, b])
 
-    mesh = trimesh.Trimesh(vertices=extended, faces=np.asarray(faces, dtype=np.int64),
-                            process=True)
+    mesh = trimesh.Trimesh(vertices=extended, faces=np.asarray(faces, dtype=np.int64), process=True)
     if mesh.volume < 0.0:
         mesh.invert()
 

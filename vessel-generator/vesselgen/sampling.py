@@ -235,9 +235,7 @@ def _pick_branch(vessel: Vessel, rng: np.random.Generator) -> BranchHandle:
     return vessel.branches[idx]
 
 
-def _interpolate_lumen_contour(
-    branch: BranchHandle, arclength_mm: float
-) -> np.ndarray:
+def _interpolate_lumen_contour(branch: BranchHandle, arclength_mm: float) -> np.ndarray:
     """Linearly interpolate the lumen contour at a non-grid arclength.
 
     Returns a (M, 2) contour in the local cross-section plane (x along
@@ -375,6 +373,7 @@ def sample_pose(
                     continue
         if guidewire_cfg is not None:
             from vesselgen.guidewire import guidewire_clearance_mm as _wire_clear
+
             if _wire_clear(candidate, guidewire_cfg) < float(guidewire_clearance_mm):
                 continue
         chosen_local = candidate
@@ -388,18 +387,13 @@ def sample_pose(
 
     frame = branch.centerline.frame(s)
     position_world = (
-        frame.position
-        + chosen_local[0] * frame.normal
-        + chosen_local[1] * frame.binormal
+        frame.position + chosen_local[0] * frame.normal + chosen_local[1] * frame.binormal
     )
 
     tilt_deg = float(rng.uniform(0.0, max_tilt_deg))
     tilt_azimuth = float(rng.uniform(0.0, 2.0 * np.pi))
-    probe_axis = (
-        np.cos(np.radians(tilt_deg)) * frame.tangent
-        + np.sin(np.radians(tilt_deg)) * (
-            np.cos(tilt_azimuth) * frame.normal + np.sin(tilt_azimuth) * frame.binormal
-        )
+    probe_axis = np.cos(np.radians(tilt_deg)) * frame.tangent + np.sin(np.radians(tilt_deg)) * (
+        np.cos(tilt_azimuth) * frame.normal + np.sin(tilt_azimuth) * frame.binormal
     )
     probe_axis /= np.linalg.norm(probe_axis) + 1e-12
 
@@ -475,10 +469,17 @@ def pose_at(
             raise ValueError("probe_axis_world must be a non-zero vector")
         probe_axis = probe_axis / n
 
-    tilt = float(np.degrees(np.arccos(
-        np.clip(float(np.dot(probe_axis, nearest_branch.centerline.tangent(nearest_arclength))),
-                -1.0, 1.0)
-    )))
+    tilt = float(
+        np.degrees(
+            np.arccos(
+                np.clip(
+                    float(np.dot(probe_axis, nearest_branch.centerline.tangent(nearest_arclength))),
+                    -1.0,
+                    1.0,
+                )
+            )
+        )
+    )
     R = _build_probe_rotation(probe_axis)
     return PoseSample(
         position=position.copy(),
@@ -545,17 +546,12 @@ def sample_pose_in_branch(
         )
     frame = target.centerline.frame(s)
     position_world = (
-        frame.position
-        + chosen_local[0] * frame.normal
-        + chosen_local[1] * frame.binormal
+        frame.position + chosen_local[0] * frame.normal + chosen_local[1] * frame.binormal
     )
     tilt_deg = float(rng.uniform(0.0, max_tilt_deg))
     tilt_azimuth = float(rng.uniform(0.0, 2.0 * np.pi))
-    probe_axis = (
-        np.cos(np.radians(tilt_deg)) * frame.tangent
-        + np.sin(np.radians(tilt_deg)) * (
-            np.cos(tilt_azimuth) * frame.normal + np.sin(tilt_azimuth) * frame.binormal
-        )
+    probe_axis = np.cos(np.radians(tilt_deg)) * frame.tangent + np.sin(np.radians(tilt_deg)) * (
+        np.cos(tilt_azimuth) * frame.normal + np.sin(tilt_azimuth) * frame.binormal
     )
     probe_axis /= np.linalg.norm(probe_axis) + 1e-12
     R = _build_probe_rotation(probe_axis)
@@ -629,8 +625,9 @@ def _min_distance_to_polygon_edge(point: np.ndarray, polygon: np.ndarray) -> flo
 # ---------------------------------------------------------------------------
 
 
-def _section_to_polygons(section, plane_origin: np.ndarray,
-                          probe_x: np.ndarray, probe_z: np.ndarray) -> list[np.ndarray]:
+def _section_to_polygons(
+    section, plane_origin: np.ndarray, probe_x: np.ndarray, probe_z: np.ndarray
+) -> list[np.ndarray]:
     """Project a trimesh Path3D section into 2D polygons in the imaging plane.
 
     Each discrete polyline of the 3D path is projected onto the
@@ -683,10 +680,8 @@ def ground_truth_at(
     probe_x = pose.rotation_matrix[:, 0]
     probe_z = pose.rotation_matrix[:, 2]
 
-    lumen_section = vessel.lumen_mesh.section(plane_origin=plane_origin,
-                                                plane_normal=plane_normal)
-    outer_section = vessel.outer_mesh.section(plane_origin=plane_origin,
-                                                plane_normal=plane_normal)
+    lumen_section = vessel.lumen_mesh.section(plane_origin=plane_origin, plane_normal=plane_normal)
+    outer_section = vessel.outer_mesh.section(plane_origin=plane_origin, plane_normal=plane_normal)
 
     lumen_polys = _section_to_polygons(lumen_section, plane_origin, probe_x, probe_z)
     outer_polys = _section_to_polygons(outer_section, plane_origin, probe_x, probe_z)
@@ -718,7 +713,9 @@ def ground_truth_at(
     for surface in vessel.surfaces:
         polys = _section_to_polygons(
             surface.mesh.section(plane_origin=plane_origin, plane_normal=plane_normal),
-            plane_origin, probe_x, probe_z,
+            plane_origin,
+            probe_x,
+            probe_z,
         )
         polys = [_ensure_ccw(p) for p in polys if len(p) >= 3]
         surface_polygons.append((surface.name, surface.material_name, polys))
@@ -727,7 +724,9 @@ def ground_truth_at(
     for lesion in vessel.lesions:
         polys = _section_to_polygons(
             lesion.mesh.section(plane_origin=plane_origin, plane_normal=plane_normal),
-            plane_origin, probe_x, probe_z,
+            plane_origin,
+            probe_x,
+            probe_z,
         )
         polys = [_ensure_ccw(p) for p in polys if len(p) >= 3]
         lesion_polygons.append((lesion.name, lesion.material_name, polys))
@@ -735,10 +734,10 @@ def ground_truth_at(
     guidewire_polygons: list[np.ndarray] = []
     if vessel.guidewire is not None:
         polys = _section_to_polygons(
-            vessel.guidewire.mesh.section(
-                plane_origin=plane_origin, plane_normal=plane_normal
-            ),
-            plane_origin, probe_x, probe_z,
+            vessel.guidewire.mesh.section(plane_origin=plane_origin, plane_normal=plane_normal),
+            plane_origin,
+            probe_x,
+            probe_z,
         )
         guidewire_polygons = [_ensure_ccw(p) for p in polys if len(p) >= 3]
 
@@ -760,9 +759,7 @@ def ground_truth_at(
     )
 
 
-def _imaging_ray_directions_world(
-    pose: PoseSample, thetas_rad: np.ndarray
-) -> np.ndarray:
+def _imaging_ray_directions_world(pose: PoseSample, thetas_rad: np.ndarray) -> np.ndarray:
     """Unit ray directions in world space for each imaging-plane angle."""
     probe_x = pose.rotation_matrix[:, 0]
     probe_z = pose.rotation_matrix[:, 2]
@@ -917,9 +914,7 @@ def ground_truth_is_valid_pose(
     side_branch_cone_half_angle_deg: float = 45.0,
 ) -> bool:
     """Reject poses whose GT is incomplete or includes mesh cap artifacts."""
-    finite = np.isfinite(gt.distance_to_lumen_wall_mm) & np.isfinite(
-        gt.distance_to_outer_wall_mm
-    )
+    finite = np.isfinite(gt.distance_to_lumen_wall_mm) & np.isfinite(gt.distance_to_outer_wall_mm)
     if finite.mean() < min_finite_fraction or gt.lumen_csa_mm2 <= 0.0:
         return False
     if pose.branch_name != "parent":

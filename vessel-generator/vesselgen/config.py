@@ -83,7 +83,7 @@ class CenterlineConfig:
     n_stations: int = 64
 
     curvature_amplitude_mm: float = 0.0  # reserved, v2
-    curvature_period_mm: float = 0.0     # reserved, v2
+    curvature_period_mm: float = 0.0  # reserved, v2
 
     def __post_init__(self) -> None:
         if self.length_mm <= 0:
@@ -222,9 +222,7 @@ class LayerSpec:
         if not self.material_name:
             raise ValueError("material_name must be non-empty")
         if not 0.0 < self.thickness_frac <= 1.0:
-            raise ValueError(
-                f"thickness_frac must be in (0, 1], got {self.thickness_frac}"
-            )
+            raise ValueError(f"thickness_frac must be in (0, 1], got {self.thickness_frac}")
         if not 0.0 <= self.max_perturbation_frac < 1.0:
             raise ValueError("max_perturbation_frac must be in [0, 1)")
 
@@ -258,9 +256,7 @@ class LayeredWallConfig:
             )
         total_frac = sum(layer.thickness_frac for layer in self.layers)
         if abs(total_frac - 1.0) > 1e-6:
-            raise ValueError(
-                f"layer thickness_frac values must sum to 1.0, got {total_frac:.4f}"
-            )
+            raise ValueError(f"layer thickness_frac values must sum to 1.0, got {total_frac:.4f}")
         if self.total_thickness_mm <= 0:
             raise ValueError("total_thickness_mm must be positive")
         if self.min_thickness_mm <= 0:
@@ -323,12 +319,17 @@ class LayeredWallConfig:
         """Classic intima / media / adventitia trilaminar wall."""
         return cls(
             layers=[
-                LayerSpec(material_name="intima", thickness_frac=intima_frac,
-                          max_perturbation_frac=0.35),
-                LayerSpec(material_name="media", thickness_frac=media_frac,
-                          max_perturbation_frac=0.25),
-                LayerSpec(material_name="adventitia", thickness_frac=adventitia_frac,
-                          max_perturbation_frac=0.35),
+                LayerSpec(
+                    material_name="intima", thickness_frac=intima_frac, max_perturbation_frac=0.35
+                ),
+                LayerSpec(
+                    material_name="media", thickness_frac=media_frac, max_perturbation_frac=0.25
+                ),
+                LayerSpec(
+                    material_name="adventitia",
+                    thickness_frac=adventitia_frac,
+                    max_perturbation_frac=0.35,
+                ),
             ],
             total_thickness_mm=total_thickness_mm,
             min_thickness_mm=min_thickness_mm,
@@ -345,10 +346,14 @@ class LayeredWallConfig:
         """Two-layer wall: dark media + bright adventitia (no thin intima)."""
         return cls(
             layers=[
-                LayerSpec(material_name="media", thickness_frac=media_frac,
-                          max_perturbation_frac=0.3),
-                LayerSpec(material_name="adventitia", thickness_frac=adventitia_frac,
-                          max_perturbation_frac=0.4),
+                LayerSpec(
+                    material_name="media", thickness_frac=media_frac, max_perturbation_frac=0.3
+                ),
+                LayerSpec(
+                    material_name="adventitia",
+                    thickness_frac=adventitia_frac,
+                    max_perturbation_frac=0.4,
+                ),
             ],
             total_thickness_mm=total_thickness_mm,
             min_thickness_mm=min_thickness_mm,
@@ -396,8 +401,7 @@ class CalcificationLesionConfig:
     def __post_init__(self) -> None:
         if self.kind not in LESION_KIND_TO_MATERIAL:
             raise ValueError(
-                f"kind must be one of {tuple(LESION_KIND_TO_MATERIAL)}, "
-                f"got {self.kind!r}"
+                f"kind must be one of {tuple(LESION_KIND_TO_MATERIAL)}, " f"got {self.kind!r}"
             )
         if not 0.0 <= self.arclength_frac <= 1.0:
             raise ValueError("arclength_frac must be in [0, 1]")
@@ -407,8 +411,7 @@ class CalcificationLesionConfig:
             raise ValueError("axial_extent_mm must be positive")
         if not 0.0 <= self.inner_offset_frac < self.outer_offset_frac <= 1.0:
             raise ValueError(
-                "inner_offset_frac must satisfy "
-                "0 <= inner_offset_frac < outer_offset_frac <= 1"
+                "inner_offset_frac must satisfy " "0 <= inner_offset_frac < outer_offset_frac <= 1"
             )
         if self.n_angular_samples < 6:
             raise ValueError("n_angular_samples must be >= 6")
@@ -571,12 +574,14 @@ class SideBranchConfig:
     parent_arclength_frac: float = 0.5
     azimuth_deg: float = 0.0
     polar_deg: float = 60.0
-    branch: BranchConfig = field(default_factory=lambda: BranchConfig(
-        centerline=CenterlineConfig(length_mm=45.0),
-        cross_section=CrossSectionConfig(mean_radius_mm=3.5),
-        wall=WallConfig(mean_thickness_mm=0.7),
-        name="side_branch",
-    ))
+    branch: BranchConfig = field(
+        default_factory=lambda: BranchConfig(
+            centerline=CenterlineConfig(length_mm=45.0),
+            cross_section=CrossSectionConfig(mean_radius_mm=3.5),
+            wall=WallConfig(mean_thickness_mm=0.7),
+            name="side_branch",
+        )
+    )
 
     def __post_init__(self) -> None:
         if not 0.05 <= self.parent_arclength_frac <= 0.95:
@@ -683,9 +688,9 @@ class _UniformRange:
 class GenerationConfig:
     """Distributions over vessel parameters for batch generation.
 
-    Defaults target large peripheral arteries and veins (femoral, iliac, renal,
-  EVAR-scale aorta) for the PV .035 ICE catheter. Lumen radii place the wall
-  outside the ring-down zone (r >~ 4 mm). ~18% of draws use aortic-scale lumina.
+      Defaults target large peripheral arteries and veins (femoral, iliac, renal,
+    EVAR-scale aorta) for the PV .035 ICE catheter. Lumen radii place the wall
+    outside the ring-down zone (r >~ 4 mm). ~18% of draws use aortic-scale lumina.
     """
 
     length_mm_range: tuple[float, float] = (45.0, 75.0)
@@ -797,9 +802,9 @@ class GenerationConfig:
         r_distal = r_proximal * taper
 
         wall_thickness_mm = _UniformRange(wall_lo, wall_hi).sample(rng)
-        wall_perturbation_frac = _UniformRange(
-            *self.parent_wall_perturbation_frac_range
-        ).sample(rng)
+        wall_perturbation_frac = _UniformRange(*self.parent_wall_perturbation_frac_range).sample(
+            rng
+        )
 
         # Decide side branches and wall layering independently;
         # ``attach_side_branch_layered`` does per-layer boolean unions
@@ -842,9 +847,7 @@ class GenerationConfig:
 
         side_branches: list[SideBranchConfig] = []
         for i in range(n_side):
-            sb_radius = r_proximal * _UniformRange(
-                *self.side_branch_radius_frac_range
-            ).sample(rng)
+            sb_radius = r_proximal * _UniformRange(*self.side_branch_radius_frac_range).sample(rng)
             sb_length = minimum_side_branch_length_mm(
                 length,
                 _UniformRange(*self.side_branch_length_mm_range).sample(rng),
@@ -879,9 +882,7 @@ class GenerationConfig:
                 SideBranchConfig(
                     parent_arclength_frac=float(rng.uniform(0.25, 0.8)),
                     azimuth_deg=float(rng.uniform(0.0, 360.0)),
-                    polar_deg=_UniformRange(
-                        *self.side_branch_polar_deg_range
-                    ).sample(rng),
+                    polar_deg=_UniformRange(*self.side_branch_polar_deg_range).sample(rng),
                     branch=BranchConfig(
                         centerline=CenterlineConfig(
                             length_mm=sb_length,
@@ -916,9 +917,7 @@ class GenerationConfig:
         ):
             diseased_sector = DiseasedSectorConfig(
                 dominant_azimuth_deg=float(rng.uniform(0.0, 360.0)),
-                sector_extent_deg=_UniformRange(
-                    *self.diseased_sector_extent_deg_range
-                ).sample(rng),
+                sector_extent_deg=_UniformRange(*self.diseased_sector_extent_deg_range).sample(rng),
             )
             lo, hi = self.calcification_count_range
             n_lesions = int(rng.integers(lo, hi + 1))

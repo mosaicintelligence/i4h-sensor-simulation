@@ -156,22 +156,14 @@ class SimRandomizationConfig:
     gain_slider_range: tuple[float, float] = (44.0, 80.0)
     ar_on_probability: float = 0.5
 
-    wall_attenuation: UniformRange = field(
-        default_factory=lambda: UniformRange(0.6, 1.4)
-    )
+    wall_attenuation: UniformRange = field(default_factory=lambda: UniformRange(0.6, 1.4))
     wall_mu0: UniformRange = field(default_factory=lambda: UniformRange(0.25, 0.75))
     wall_sigma: UniformRange = field(default_factory=lambda: UniformRange(0.15, 0.55))
-    wall_impedance: UniformRange = field(
-        default_factory=lambda: UniformRange(1.75, 1.90)
-    )
-    wall_speed_of_sound: UniformRange = field(
-        default_factory=lambda: UniformRange(1540.0, 1600.0)
-    )
+    wall_impedance: UniformRange = field(default_factory=lambda: UniformRange(1.75, 1.90))
+    wall_speed_of_sound: UniformRange = field(default_factory=lambda: UniformRange(1540.0, 1600.0))
     wall_specularity: UniformRange = field(default_factory=lambda: UniformRange(0.5, 2.0))
 
-    lumen_attenuation: UniformRange = field(
-        default_factory=lambda: UniformRange(0.15, 0.35)
-    )
+    lumen_attenuation: UniformRange = field(default_factory=lambda: UniformRange(0.15, 0.35))
     lumen_mu0: UniformRange = field(default_factory=lambda: UniformRange(0.05, 0.20))
     lumen_sigma: UniformRange = field(default_factory=lambda: UniformRange(0.05, 0.20))
 
@@ -336,10 +328,7 @@ def copy_tgc_control_points(control_points):
     """Copy TGC control points for per-frame scaling."""
     import raysim as rs
 
-    return [
-        rs.TgcControlPoint(float(cp.depth_cm), float(cp.gain_db))
-        for cp in control_points
-    ]
+    return [rs.TgcControlPoint(float(cp.depth_cm), float(cp.gain_db)) for cp in control_points]
 
 
 def scale_tgc_deep_control_point(
@@ -422,9 +411,7 @@ def resample_envelope_to_sim_grid(
         return envelope_amp.astype(np.float32, copy=False)
     src_grid = np.arange(len(envelope_amp), dtype=np.float64) * float(template_pitch_mm)
     dst_grid = np.arange(dst_n, dtype=np.float64) * sim_pitch_mm
-    return np.interp(dst_grid, src_grid, envelope_amp.astype(np.float64)).astype(
-        np.float32
-    )
+    return np.interp(dst_grid, src_grid, envelope_amp.astype(np.float64)).astype(np.float32)
 
 
 @dataclass
@@ -475,9 +462,7 @@ def load_ringdown_waveforms(cfg, rand_cfg: SimRandomizationConfig) -> RingDownWa
 
     off_path = cfg._resolve_asset_path(rand_cfg.ar_off_waveform_path)
     off_palette = np.load(off_path).astype(np.float32, copy=False)
-    ar_off = _to_sim_envelope(
-        off_palette, floor=rand_cfg.ar_off_speckle_floor_palette
-    )
+    ar_off = _to_sim_envelope(off_palette, floor=rand_cfg.ar_off_speckle_floor_palette)
 
     suppressed_fallback_disabled = False
     suppressed = None
@@ -492,9 +477,7 @@ def load_ringdown_waveforms(cfg, rand_cfg: SimRandomizationConfig) -> RingDownWa
         on_path = cfg._resolve_asset_path(rand_cfg.ar_on_waveform_path)
         if on_path.is_file():
             on_palette = np.load(on_path).astype(np.float32, copy=False)
-            suppressed = _to_sim_envelope(
-                on_palette, floor=rand_cfg.ar_on_speckle_floor_palette
-            )
+            suppressed = _to_sim_envelope(on_palette, floor=rand_cfg.ar_on_speckle_floor_palette)
         else:
             suppressed = np.zeros_like(ar_off)
             suppressed_fallback_disabled = True

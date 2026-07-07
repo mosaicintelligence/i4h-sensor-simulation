@@ -43,13 +43,10 @@ def test_guidewire_mesh_is_watertight_and_thin():
     assert np.all(radial_axes > cfg.diameter_mm * 0.8)
 
 
-@pytest.mark.parametrize("diameter,offset",
-                         [(0.36, 0.0), (0.36, 1.5), (0.46, 2.5), (0.89, 3.0)])
+@pytest.mark.parametrize("diameter,offset", [(0.36, 0.0), (0.36, 1.5), (0.46, 2.5), (0.89, 3.0)])
 def test_guidewire_mesh_extends_past_centerline(diameter, offset):
     centerline = _make_centerline()
-    cfg = GuidewireConfig(
-        diameter_mm=diameter, lateral_offset_mm=offset, offset_azimuth_deg=0.0
-    )
+    cfg = GuidewireConfig(diameter_mm=diameter, lateral_offset_mm=offset, offset_azimuth_deg=0.0)
     art = build_guidewire(cfg, centerline)
     proj = (art.mesh.vertices - centerline.origin) @ centerline.direction
     assert proj.min() < 0.0
@@ -57,9 +54,7 @@ def test_guidewire_mesh_extends_past_centerline(diameter, offset):
 
 
 def test_guidewire_clearance_signs():
-    cfg = GuidewireConfig(
-        diameter_mm=0.4, lateral_offset_mm=2.0, offset_azimuth_deg=0.0
-    )
+    cfg = GuidewireConfig(diameter_mm=0.4, lateral_offset_mm=2.0, offset_azimuth_deg=0.0)
     inside = guidewire_in_plane_position(cfg)
     assert guidewire_clearance_mm(inside, cfg) < 0.0
     far = inside + np.array([5.0, 0.0])
@@ -67,9 +62,7 @@ def test_guidewire_clearance_signs():
 
 
 def test_pose_avoids_guidewire_rejects_inside_and_accepts_outside():
-    cfg = GuidewireConfig(
-        diameter_mm=0.4, lateral_offset_mm=2.0, offset_azimuth_deg=90.0
-    )
+    cfg = GuidewireConfig(diameter_mm=0.4, lateral_offset_mm=2.0, offset_azimuth_deg=90.0)
     wire_xy = guidewire_in_plane_position(cfg)
     assert not pose_avoids_guidewire(wire_xy, cfg, clearance_mm=0.1)
     assert pose_avoids_guidewire(wire_xy + np.array([1.0, 0.0]), cfg, clearance_mm=0.1)
@@ -107,9 +100,9 @@ def test_sample_pose_avoids_guidewire():
         frame = parent.centerline.frame(s)
         rel = pose.position - frame.position
         local_xy = np.array([float(rel @ frame.normal), float(rel @ frame.binormal)])
-        assert guidewire_clearance_mm(local_xy, cfg) >= 0.1, (
-            f"sampled pose at local_xy={local_xy} is inside guidewire"
-        )
+        assert (
+            guidewire_clearance_mm(local_xy, cfg) >= 0.1
+        ), f"sampled pose at local_xy={local_xy} is inside guidewire"
 
 
 def test_wall_contact_sampling_returns_points_near_lumen():
@@ -121,7 +114,8 @@ def test_wall_contact_sampling_returns_points_near_lumen():
     near_wall_hits = 0
     for _ in range(30):
         pose = sample_pose(
-            vessel, rng,
+            vessel,
+            rng,
             edge_margin_mm=0.0,
             wall_contact_probability=1.0,
             wall_contact_margin_mm=0.02,
@@ -130,6 +124,4 @@ def test_wall_contact_sampling_returns_points_near_lumen():
         parent_radius = float(np.mean(vessel.parent_branch.lumen_field.mean_radius))
         if pose.centerline_offset_mm > 0.7 * parent_radius:
             near_wall_hits += 1
-    assert near_wall_hits >= 24, (
-        f"only {near_wall_hits}/30 wall-contact poses were near the wall"
-    )
+    assert near_wall_hits >= 24, f"only {near_wall_hits}/30 wall-contact poses were near the wall"

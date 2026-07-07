@@ -31,7 +31,9 @@ from vesselgen.cross_section import CrossSectionField
 from vesselgen.wall import LayeredWallField, WallField
 
 
-def _build_tube_vertices(centerline: Centerline, radii: np.ndarray, thetas: np.ndarray) -> np.ndarray:
+def _build_tube_vertices(
+    centerline: Centerline, radii: np.ndarray, thetas: np.ndarray
+) -> np.ndarray:
     """3D vertex grid (N_stations, M_angles, 3) for one swept surface."""
     n_stations, n_angles = radii.shape
     cos_t = np.cos(thetas)
@@ -115,9 +117,7 @@ def _build_closed_mesh(
     n_stations, n_angles = radii.shape
     grid = _build_tube_vertices(centerline, radii, thetas)
     faces_only_walls = _faces_with_outward_normals(n_stations, n_angles).tolist()
-    vertices, faces = _add_caps_with_outward_normals(
-        grid, faces_only_walls, n_stations, n_angles
-    )
+    vertices, faces = _add_caps_with_outward_normals(grid, faces_only_walls, n_stations, n_angles)
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=True)
     return mesh
 

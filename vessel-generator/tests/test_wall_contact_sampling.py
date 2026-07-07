@@ -47,7 +47,8 @@ def test_wall_contact_eccentricity_is_high():
     central = []
     for _ in range(50):
         pose = sample_pose(
-            vessel, rng,
+            vessel,
+            rng,
             edge_margin_mm=0.0,
             wall_contact_probability=1.0,
             wall_contact_margin_mm=0.02,
