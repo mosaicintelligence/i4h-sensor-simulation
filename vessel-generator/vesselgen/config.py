@@ -706,11 +706,15 @@ class GenerationConfig:
     aortic_radius_mm_range: tuple[float, float] = (8.0, 11.5)
     aortic_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
 
+    small_vessel_probability: float = 0.10
+    small_vessel_radius_mm_range: tuple[float, float] = (1.8, 3.5)
+    small_vessel_wall_thickness_mm_range: tuple[float, float] = (0.5, 0.9)
+
     # Large vessels whose wall runs past the imaging FOV on some angular
     # sectors for typical (naturally off-centre) poses, so those A-lines
     # have no wall echo. The lumen radius is drawn large enough that the
     # far wall exceeds the smaller ``t_far_mm`` FOVs (17.5 / 20 mm); at the
-    # 30 mm FOV these vessels mostly stay in view. aortic + large
+    # 30 mm FOV these vessels mostly stay in view. small + aortic + large
     # probabilities should sum to <= 1.0 (the remainder is the typical draw).
     large_vessel_beyond_fov_probability: float = 0.10
     large_vessel_radius_mm_range: tuple[float, float] = (12.0, 16.0)
@@ -803,10 +807,17 @@ class GenerationConfig:
         """Draw one VesselConfig from the configured distributions."""
         length = _UniformRange(*self.length_mm_range).sample(rng)
         u_scale = rng.random()
-        if u_scale < self.aortic_scale_probability:
+        if u_scale < self.small_vessel_probability:
+            r_proximal = _UniformRange(*self.small_vessel_radius_mm_range).sample(rng)
+            wall_lo, wall_hi = self.small_vessel_wall_thickness_mm_range
+        elif u_scale < self.small_vessel_probability + self.aortic_scale_probability:
             r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
-        elif u_scale < (self.aortic_scale_probability + self.large_vessel_beyond_fov_probability):
+        elif u_scale < (
+            self.small_vessel_probability
+            + self.aortic_scale_probability
+            + self.large_vessel_beyond_fov_probability
+        ):
             r_proximal = _UniformRange(*self.large_vessel_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.large_vessel_wall_thickness_mm_range
         else:
