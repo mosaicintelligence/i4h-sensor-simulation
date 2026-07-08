@@ -56,6 +56,9 @@ vesselgen-dataset --out OUT_DIR --n COUNT [options]
 | `--base-seed` | `0` | Seed for the batch |
 | `--name-prefix` | `vessel` | Folder prefix (`vessel_0000`, …) |
 | `--side-branch-probability` | `0.45` | Fraction of vessels with a side branch |
+| `--small-vessel-probability` | `0.10` | Fraction of vessels drawn from the small-vessel scale |
+| `--small-vessel-radius-mm-range` | `1.8 3.5` | Small-vessel proximal lumen radius range (mm) |
+| `--small-vessel-wall-thickness-mm-range` | `0.5 0.9` | Small-vessel wall thickness range (mm) |
 | `--no-previews` | off | Skip per-vessel `preview.png` |
 
 ## `vesselgen-frames` — pose + geometric GT
