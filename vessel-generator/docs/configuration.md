@@ -10,11 +10,13 @@ Batch defaults in `GenerationConfig` target **large peripheral** vessels
 
 | Draw | Lumen diameter | Wall thickness | Segment length |
 |------|----------------|----------------|----------------|
-| Typical (82%) | 8–13 mm | 0.65–1.2 mm | 45–75 mm |
+| Typical (72%) | 8–13 mm | 0.65–1.2 mm | 45–75 mm |
 | Aortic-scale (18%) | 16–23 mm | 1.0–1.5 mm | 45–75 mm |
+| Small-vessel (10%) | 3.6–7.0 mm | 0.5–0.9 mm | 45–75 mm |
 | Side branch | 55–80% of parent radius | ~85% of parent wall | ≥ parent length |
 
-Inner wall radii start around **4 mm** so anatomy sits outside the catheter
+Typical inner wall radii start around **4 mm**, while the small-vessel draw
+explicitly introduces cases with wall echoes inside or near the catheter
 ring-down disc (~2–3.6 mm).
 
 Calibration scenarios that motivated these scales:
@@ -99,7 +101,7 @@ cfg = GenerationConfig(
     side_branch_probability=0.45,
     layered_wall_probability=0.7,
     n_layers_weights=(0.15, 0.15, 0.70),  # 1-, 2-, 3-layer draw
-    diseased_vessel_probability=0.35,
+    calcification_probability=0.35,
     guidewire_probability=0.70,
     wall_contact_probability=0.12,
 )

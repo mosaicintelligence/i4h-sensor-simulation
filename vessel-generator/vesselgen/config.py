@@ -706,6 +706,10 @@ class GenerationConfig:
     aortic_radius_mm_range: tuple[float, float] = (8.0, 11.5)
     aortic_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
 
+    small_vessel_probability: float = 0.10
+    small_vessel_radius_mm_range: tuple[float, float] = (1.8, 3.5)
+    small_vessel_wall_thickness_mm_range: tuple[float, float] = (0.5, 0.9)
+
     side_branch_probability: float = 0.45
     side_branch_radius_frac_range: tuple[float, float] = (0.55, 0.80)
     side_branch_length_mm_range: tuple[float, float] = (40.0, 75.0)
@@ -792,7 +796,11 @@ class GenerationConfig:
     ) -> VesselConfig:
         """Draw one VesselConfig from the configured distributions."""
         length = _UniformRange(*self.length_mm_range).sample(rng)
-        if rng.random() < self.aortic_scale_probability:
+        u_scale = rng.random()
+        if u_scale < self.small_vessel_probability:
+            r_proximal = _UniformRange(*self.small_vessel_radius_mm_range).sample(rng)
+            wall_lo, wall_hi = self.small_vessel_wall_thickness_mm_range
+        elif u_scale < self.small_vessel_probability + self.aortic_scale_probability:
             r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
         else:
