@@ -43,7 +43,9 @@ def main() -> None:
             max_tilt_deg=args.max_tilt_deg,
             edge_margin_mm=args.edge_margin_mm,
         )
-        gt = vessel.ground_truth_at(pose, n_angles=args.gt_angles)
+        gt = vessel.ground_truth_at(
+            pose, n_angles=args.gt_angles, max_distance_mm=args.max_distance_mm
+        )
 
         record = {
             "index": i,
@@ -76,7 +78,9 @@ def main() -> None:
         summary.append(record)
 
         if args.write_previews:
-            preview_ground_truth(pose, gt, args.out / f"frame_{i:05d}.png")
+            preview_ground_truth(
+                pose, gt, args.out / f"frame_{i:05d}.png", fov_radius_mm=args.max_distance_mm
+            )
 
     with (args.out / "summary.json").open("w") as f:
         json.dump({"n_samples": len(summary), "vessel": str(args.vessel)}, f, indent=2)

@@ -186,15 +186,36 @@ def preview_vessel(
     return out_path
 
 
-def preview_ground_truth(pose: PoseSample, gt: GroundTruth, out_path: str | Path) -> Path:
+def preview_ground_truth(
+    pose: PoseSample,
+    gt: GroundTruth,
+    out_path: str | Path,
+    fov_radius_mm: Optional[float] = None,
+) -> Path:
     """Save an overlay showing the pose's lumen + outer contours and per-angle
-    distance arrays."""
+    distance arrays.
+
+    When ``fov_radius_mm`` is given, the imaging field of view is drawn as a
+    dashed circle (left panel) and a dashed reference line (right panel).
+    Angles whose wall lies beyond this radius appear as gaps ("open sectors")
+    in the per-angle distance curves, matching the ``NaN`` A-lines in ``gt``.
+    """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 5))
 
     ax = axes[0]
+    if fov_radius_mm is not None:
+        fov_thetas_rad = np.linspace(0.0, 2.0 * np.pi, 200)
+        ax.plot(
+            fov_radius_mm * np.cos(fov_thetas_rad),
+            fov_radius_mm * np.sin(fov_thetas_rad),
+            ":",
+            color="tab:green",
+            lw=1.0,
+            label=f"FOV r={fov_radius_mm:.1f} mm",
+        )
     for poly in gt.outer_contour_polygons:
         ax.plot(
             np.append(poly[:, 0], poly[0, 0]),
@@ -225,6 +246,14 @@ def preview_ground_truth(pose: PoseSample, gt: GroundTruth, out_path: str | Path
     th_deg = np.degrees(gt.thetas_rad)
     ax.plot(th_deg, gt.distance_to_lumen_wall_mm, "-", color="tab:red", label="lumen")
     ax.plot(th_deg, gt.distance_to_outer_wall_mm, "--", color="tab:blue", label="outer")
+    if fov_radius_mm is not None:
+        ax.axhline(
+            fov_radius_mm,
+            ls=":",
+            color="tab:green",
+            lw=1.0,
+            label=f"FOV {fov_radius_mm:.1f} mm",
+        )
     ax.set_xlabel("angle (deg)")
     ax.set_ylabel("distance from probe (mm)")
     ax.set_title(

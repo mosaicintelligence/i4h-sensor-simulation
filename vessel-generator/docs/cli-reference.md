@@ -59,6 +59,9 @@ vesselgen-dataset --out OUT_DIR --n COUNT [options]
 | `--small-vessel-probability` | `0.10` | Fraction of vessels drawn from the small-vessel scale |
 | `--small-vessel-radius-mm-range` | `1.8 3.5` | Small-vessel proximal lumen radius range (mm) |
 | `--small-vessel-wall-thickness-mm-range` | `0.5 0.9` | Small-vessel wall thickness range (mm) |
+| `--large-vessel-beyond-fov-probability` | `0.10` | Fraction of vessels drawn from the large beyond-FOV scale |
+| `--large-vessel-radius-mm-range` | `12.0 16.0` | Large-vessel proximal lumen radius range (mm) |
+| `--large-vessel-wall-thickness-mm-range` | `1.0 1.5` | Large-vessel wall thickness range (mm) |
 | `--no-previews` | off | Skip per-vessel `preview.png` |
 
 ## `vesselgen-frames` — pose + geometric GT
@@ -77,7 +80,8 @@ vesselgen-frames --vessel VESSEL_DIR --out OUT_DIR [options]
 | `--n` | `200` | Number of pose samples |
 | `--max-tilt-deg` | `15.0` | Maximum probe-axis tilt |
 | `--edge-margin-mm` | `0.2` | Minimum clearance from lumen wall |
-| `--write-previews` | off | Write per-frame contour PNGs |
+| `--max-distance-mm` | `30.0` | Imaging FOV radius; A-lines beyond it are `NaN`. Set to `17.5` to reproduce large-vessel open sectors |
+| `--write-previews` | off | Write per-frame contour PNGs (draws the FOV circle) |
 
 ## `render_paired_dataset.py` — paired IVUS dataset
 
