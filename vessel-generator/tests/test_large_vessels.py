@@ -74,7 +74,7 @@ def test_large_vessel_beyond_fov_produces_nan_alines():
         assert vessel.outer_mesh.is_watertight
 
         for _ in range(poses_per_vessel):
-            pose = vessel.sample_pose(rng_pose, max_tilt_deg=10.0, edge_margin_mm=0.2)
+            pose = vessel.sample_pose(rng_pose, max_tilt_deg=15.0, edge_margin_mm=0.2)
             gt = vessel.ground_truth_at(pose, n_angles=180, max_distance_mm=fov_radius_mm)
             lumen_distances_mm = gt.distance_to_lumen_wall_mm
             outer_distances_mm = gt.distance_to_outer_wall_mm
@@ -125,7 +125,7 @@ def test_large_vessel_open_sector_rate_meets_threshold_by_fov():
     for i in range(n_vessels):
         vessel = Vessel.from_config(cfg.sample(rng_cfg, seed=i))
         for _ in range(poses_per_vessel):
-            pose = vessel.sample_pose(rng_pose, max_tilt_deg=10.0, edge_margin_mm=0.2)
+            pose = vessel.sample_pose(rng_pose, max_tilt_deg=15.0, edge_margin_mm=0.2)
             n_poses += 1
             for fov_mm in fov_radii_mm:
                 gt = vessel.ground_truth_at(pose, n_angles=180, max_distance_mm=fov_mm)
