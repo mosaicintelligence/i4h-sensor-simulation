@@ -706,6 +706,16 @@ class GenerationConfig:
     aortic_radius_mm_range: tuple[float, float] = (8.0, 11.5)
     aortic_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
 
+    # Large vessels whose wall runs past the imaging FOV on some angular
+    # sectors for typical (naturally off-centre) poses, so those A-lines
+    # have no wall echo. The lumen radius is drawn large enough that the
+    # far wall exceeds the smaller ``t_far_mm`` FOVs (17.5 / 20 mm); at the
+    # 30 mm FOV these vessels mostly stay in view. aortic + large
+    # probabilities should sum to <= 1.0 (the remainder is the typical draw).
+    large_vessel_beyond_fov_probability: float = 0.10
+    large_vessel_radius_mm_range: tuple[float, float] = (12.0, 16.0)
+    large_vessel_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
+
     side_branch_probability: float = 0.45
     side_branch_radius_frac_range: tuple[float, float] = (0.55, 0.80)
     side_branch_length_mm_range: tuple[float, float] = (40.0, 75.0)
@@ -792,9 +802,13 @@ class GenerationConfig:
     ) -> VesselConfig:
         """Draw one VesselConfig from the configured distributions."""
         length = _UniformRange(*self.length_mm_range).sample(rng)
-        if rng.random() < self.aortic_scale_probability:
+        u_scale = rng.random()
+        if u_scale < self.aortic_scale_probability:
             r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
+        elif u_scale < (self.aortic_scale_probability + self.large_vessel_beyond_fov_probability):
+            r_proximal = _UniformRange(*self.large_vessel_radius_mm_range).sample(rng)
+            wall_lo, wall_hi = self.large_vessel_wall_thickness_mm_range
         else:
             r_proximal = _UniformRange(*self.parent_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.parent_wall_thickness_mm_range

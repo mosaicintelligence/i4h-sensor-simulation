@@ -10,12 +10,23 @@ Batch defaults in `GenerationConfig` target **large peripheral** vessels
 
 | Draw | Lumen diameter | Wall thickness | Segment length |
 |------|----------------|----------------|----------------|
-| Typical (82%) | 8–13 mm | 0.65–1.2 mm | 45–75 mm |
+| Typical (72%) | 8–13 mm | 0.65–1.2 mm | 45–75 mm |
 | Aortic-scale (18%) | 16–23 mm | 1.0–1.5 mm | 45–75 mm |
+| Large beyond-FOV (10%) | 24–32 mm | 1.0–1.5 mm | 45–75 mm |
 | Side branch | 55–80% of parent radius | ~85% of parent wall | ≥ parent length |
 
 Inner wall radii start around **4 mm** so anatomy sits outside the catheter
 ring-down disc (~2–3.6 mm).
+
+The **large beyond-FOV** draw scales the lumen up (radius 12–16 mm) so the
+wall runs past the imaging field of view (`t_far_mm` = 17.5 / 20 / 30 mm) on
+some angular sectors for typical, naturally off-centre poses. Those A-lines
+have no wall echo and their `distance_to_lumen_wall_mm` /
+`distance_to_outer_wall_mm` are `NaN`. Because triggering depends on the FOV,
+these vessels reliably show open sectors at the 17.5/20 mm FOVs and mostly
+stay in view at 30 mm. The scale probabilities (`aortic_scale_probability`,
+`large_vessel_beyond_fov_probability`) should sum to ≤ 1.0; the remainder is
+the typical draw.
 
 Calibration scenarios that motivated these scales:
 `instrument-calibration/p035_visions/vessel_evaluation.py` scenarios 06
