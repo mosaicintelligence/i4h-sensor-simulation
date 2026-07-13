@@ -186,15 +186,92 @@ def preview_vessel(
     return out_path
 
 
-def preview_ground_truth(pose: PoseSample, gt: GroundTruth, out_path: str | Path) -> Path:
+# Catheter ring-down artifact (probe-centered). Everything inside
+# ``RING_DOWN_INNER_MM`` reads as a black dead zone; the bright ring-down
+# echo spans out to ``RING_DOWN_OUTER_MM``. Defaults match the PV .035 /
+# Volcano s5i profile (black < ~1 mm, bright ring ~1-2.8 mm). These are
+# QA/analysis constants only -- ring-down is applied at render time by the
+# simulator and is never baked into geometry.
+RING_DOWN_INNER_MM = 1.0
+RING_DOWN_OUTER_MM = 2.8
+
+
+def _draw_ring_down_annulus(
+    ax,
+    ring_down_outer_mm: float,
+    ring_down_inner_mm: float,
+) -> None:
+    """Shade the probe-centered ring-down annulus on a cross-section axis.
+
+    The bright ring-down band (inner->outer) is drawn as a translucent
+    orange annulus and the central dead zone as a translucent dark disc, so
+    the wall contours underneath stay visible.
+    """
+    from matplotlib.patches import Circle
+
+    # Bright ring-down band: filled outer disc minus the dead-zone disc,
+    # both translucent so the lumen/outer contours remain readable.
+    ax.add_patch(
+        Circle(
+            (0.0, 0.0),
+            ring_down_outer_mm,
+            facecolor="tab:orange",
+            edgecolor="tab:orange",
+            alpha=0.18,
+            lw=1.0,
+            zorder=0,
+            label=f"ring-down ({ring_down_inner_mm:.1f}-{ring_down_outer_mm:.1f} mm)",
+        )
+    )
+    ax.add_patch(
+        Circle(
+            (0.0, 0.0),
+            ring_down_inner_mm,
+            facecolor="black",
+            edgecolor="none",
+            alpha=0.30,
+            zorder=1,
+        )
+    )
+
+
+def preview_ground_truth(
+    pose: PoseSample,
+    gt: GroundTruth,
+    out_path: str | Path,
+    fov_radius_mm: Optional[float] = None,
+    ring_down_outer_mm: Optional[float] = None,
+    ring_down_inner_mm: float = RING_DOWN_INNER_MM,
+) -> Path:
     """Save an overlay showing the pose's lumen + outer contours and per-angle
-    distance arrays."""
+    distance arrays.
+
+    When ``ring_down_outer_mm`` is provided, a translucent probe-centered
+    ring-down annulus is overlaid on both panels so it is visually obvious
+    which A-lines fall inside the ring-down zone (obscured wall) versus
+    outside it (visible wall the model can use to guess the true wall).
+
+    When ``fov_radius_mm`` is given, the imaging field of view is drawn as a
+    dashed circle (left panel) and a dashed reference line (right panel).
+    """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 5))
 
     ax = axes[0]
+    if ring_down_outer_mm is not None:
+        _draw_ring_down_annulus(ax, ring_down_outer_mm, ring_down_inner_mm)
+    if fov_radius_mm is not None:
+        fov_thetas_rad = np.linspace(0.0, 2.0 * np.pi, 200)
+        ax.plot(
+            fov_radius_mm * np.cos(fov_thetas_rad),
+            fov_radius_mm * np.sin(fov_thetas_rad),
+            ":",
+            color="tab:green",
+            lw=1.0,
+            label=f"FOV r={fov_radius_mm:.1f} mm",
+        )
     for poly in gt.outer_contour_polygons:
         ax.plot(
             np.append(poly[:, 0], poly[0, 0]),
@@ -223,6 +300,24 @@ def preview_ground_truth(pose: PoseSample, gt: GroundTruth, out_path: str | Path
 
     ax = axes[1]
     th_deg = np.degrees(gt.thetas_rad)
+    if ring_down_outer_mm is not None:
+        ax.axhspan(
+            0.0,
+            ring_down_outer_mm,
+            color="tab:orange",
+            alpha=0.15,
+            zorder=0,
+            label=f"ring-down (<{ring_down_outer_mm:.1f} mm)",
+        )
+        ax.axhspan(0.0, ring_down_inner_mm, color="black", alpha=0.25, zorder=1)
+    if fov_radius_mm is not None:
+        ax.axhline(
+            fov_radius_mm,
+            ls=":",
+            color="tab:green",
+            lw=1.0,
+            label=f"FOV {fov_radius_mm:.1f} mm",
+        )
     ax.plot(th_deg, gt.distance_to_lumen_wall_mm, "-", color="tab:red", label="lumen")
     ax.plot(th_deg, gt.distance_to_outer_wall_mm, "--", color="tab:blue", label="outer")
     ax.set_xlabel("angle (deg)")

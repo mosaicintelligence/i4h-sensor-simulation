@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from vesselgen.config import GenerationConfig
 from vesselgen.sampling import ground_truth_is_valid_pose
 from vesselgen.vessel import Vessel
+
+RING_DOWN_OUTER_MM = 2.8
+"""Outer radius of the catheter ring-down disc for the PV .035 profile
+(bright ring ~1-2.8 mm). Wall echoes inside this radius are obscured."""
 
 
 def test_small_vessel_forced_draw_respects_radius_and_wall_ranges():
@@ -76,3 +81,70 @@ def test_small_vessel_geometry_valid_and_pose_inside_lumen():
         assert finite_lumen_distances_mm.size > 0
         assert (finite_lumen_distances_mm > 0).all()
         assert ground_truth_is_valid_pose(vessel, pose, gt)
+
+
+def test_small_vessel_reproduces_partial_ring_down_obscuration():
+    """The target clinical scenario: on most small-vessel poses, part of the
+    wall is swallowed by the probe ring-down (lumen-wall distance < ring-down
+    radius) while part stays visible outside it.
+
+    Ring-down is probe-centered, so the geometric ground truth's per-A-line
+    lumen-wall distance (measured from the probe) is exactly the quantity that
+    decides whether a given A-line's wall is obscured. A "partial" pose has at
+    least one obscured A-line AND at least one visible one -- the case where a
+    good chunk of the wall is hidden but enough remains to guess the true wall.
+    """
+    cfg = GenerationConfig(
+        small_vessel_probability=1.0,
+        aortic_scale_probability=0.0,
+        side_branch_probability=0.0,
+        layered_wall_probability=0.0,
+        calcification_probability=0.0,
+        guidewire_probability=0.0,
+    )
+    rng_cfg = np.random.default_rng(4)
+    rng_pose = np.random.default_rng(5)
+
+    n_partial = 0
+    n_none = 0
+    n_poses = 0
+    obscured_fracs: list[float] = []
+    for i in range(10):
+        vessel = Vessel.from_config(cfg.sample(rng_cfg, seed=i))
+        for _ in range(6):
+            pose = vessel.sample_pose(rng_pose, max_tilt_deg=15.0, edge_margin_mm=0.15)
+            gt = vessel.ground_truth_at(pose, n_angles=180)
+            lumen_mm = gt.distance_to_lumen_wall_mm
+            finite = np.isfinite(lumen_mm)
+            if not finite.any():
+                continue
+            n_poses += 1
+            obscured = lumen_mm[finite] < RING_DOWN_OUTER_MM
+            obscured_fracs.append(float(obscured.mean()))
+            if obscured.any() and not obscured.all():
+                n_partial += 1
+            elif not obscured.any():
+                n_none += 1
+
+    assert n_poses >= 40
+    partial_rate = n_partial / n_poses
+    none_rate = n_none / n_poses
+    mean_obscured_frac = float(np.mean(obscured_fracs))
+
+    # The overwhelming majority of small-vessel poses must land in the
+    # partial-obscuration regime; almost none should have a fully visible wall.
+    assert partial_rate >= 0.80, f"partial-obscuration rate too low: {partial_rate:.2f}"
+    assert none_rate <= 0.05, f"too many fully-visible-wall poses: {none_rate:.2f}"
+    # A meaningful chunk of the wall is hidden on average (but not all of it).
+    assert 0.3 <= mean_obscured_frac <= 0.9, f"mean obscured fraction: {mean_obscured_frac:.2f}"
+
+
+@pytest.mark.parametrize(
+    "small_p, aortic_p",
+    [(0.7, 0.5), (1.2, 0.0), (-0.1, 0.0)],
+)
+def test_invalid_scale_probabilities_raise(small_p, aortic_p):
+    """Misconfigured scale probabilities fail fast instead of silently making
+    the typical-scale branch unreachable."""
+    with pytest.raises(ValueError):
+        GenerationConfig(small_vessel_probability=small_p, aortic_scale_probability=aortic_p)

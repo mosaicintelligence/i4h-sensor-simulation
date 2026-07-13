@@ -27,28 +27,17 @@ def main() -> None:
         "--small-vessel-probability",
         type=float,
         default=default_cfg.small_vessel_probability,
-    )
-    p.add_argument(
-        "--small-vessel-radius-mm-range",
-        nargs=2,
-        type=float,
-        metavar=("LOW_MM", "HIGH_MM"),
-        default=default_cfg.small_vessel_radius_mm_range,
-    )
-    p.add_argument(
-        "--small-vessel-wall-thickness-mm-range",
-        nargs=2,
-        type=float,
-        metavar=("LOW_MM", "HIGH_MM"),
-        default=default_cfg.small_vessel_wall_thickness_mm_range,
+        help=(
+            "Fraction of vessels drawn from the small-vessel scale (wall at or "
+            "inside the ring-down disc). Radius/wall ranges keep their "
+            "GenerationConfig defaults; set them via the config class for finer control."
+        ),
     )
 
     args = p.parse_args()
     cfg = GenerationConfig(
         side_branch_probability=args.side_branch_probability,
         small_vessel_probability=args.small_vessel_probability,
-        small_vessel_radius_mm_range=tuple(args.small_vessel_radius_mm_range),
-        small_vessel_wall_thickness_mm_range=tuple(args.small_vessel_wall_thickness_mm_range),
     )
     written = generate_dataset(
         n=args.n,

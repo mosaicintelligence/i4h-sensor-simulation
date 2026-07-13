@@ -59,8 +59,8 @@ interface-smoothing step is not yet safe after bifurcation boolean union).
 
 | Knob | Default | Notes |
 |------|---------|-------|
-| `diseased_vessel_probability` | 0.35 | Fraction of eligible vessels |
-| `lesions_per_vessel_range` | (1, 3) | Count when diseased |
+| `calcification_probability` | 0.35 | Fraction of eligible vessels |
+| `calcification_count_range` | (1, 3) | Count when diseased |
 | `lesion_arc_extent_deg_range` | (60, 150) | Circumferential extent |
 | `lesion_axial_extent_mm_range` | (6, 16) | Along-vessel extent |
 

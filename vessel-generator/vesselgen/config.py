@@ -688,9 +688,21 @@ class _UniformRange:
 class GenerationConfig:
     """Distributions over vessel parameters for batch generation.
 
-      Defaults target large peripheral arteries and veins (femoral, iliac, renal,
-    EVAR-scale aorta) for the PV .035 ICE catheter. Lumen radii place the wall
-    outside the ring-down zone (r >~ 4 mm). ~18% of draws use aortic-scale lumina.
+    Defaults target large peripheral arteries and veins (femoral, iliac, renal,
+    EVAR-scale aorta) for the PV .035 ICE catheter. Each vessel's scale is drawn
+    from a single uniform variate that partitions into three mutually exclusive
+    branches:
+
+    * **small vessel** (``small_vessel_probability``, default 10%): lumen radii
+      of ~1.8-3.5 mm so the wall sits at or inside the catheter ring-down disc
+      (~2-3.6 mm), intentionally reproducing the obscured-wall case;
+    * **aortic scale** (``aortic_scale_probability``, default 18%): 8-11.5 mm
+      radii for EVAR-scale segments;
+    * **typical peripheral** (the remaining probability mass): 4-6.5 mm radii,
+      placing the wall clearly outside the ring-down disc.
+
+    ``small_vessel_probability + aortic_scale_probability`` must not exceed 1.0
+    (validated in ``__post_init__``); the remainder is the typical-scale mass.
     """
 
     length_mm_range: tuple[float, float] = (45.0, 75.0)
@@ -785,6 +797,23 @@ class GenerationConfig:
     lumen wall (produces the bright contact rim + opposite-side shadow
     seen on real frames). Consumed by ``sampling.sample_pose`` when
     enabled via the per-vessel ``GenerationConfig`` knob."""
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.small_vessel_probability <= 1.0:
+            raise ValueError("small_vessel_probability must be in [0, 1]")
+        if not 0.0 <= self.aortic_scale_probability <= 1.0:
+            raise ValueError("aortic_scale_probability must be in [0, 1]")
+        # The scale draw partitions a single uniform variate into small /
+        # aortic / typical branches, so these mutually-exclusive buckets
+        # cannot sum to more than 1.0 or the typical branch becomes
+        # unreachable and the aortic band is silently truncated.
+        if self.small_vessel_probability + self.aortic_scale_probability > 1.0 + 1e-9:
+            raise ValueError(
+                "small_vessel_probability + aortic_scale_probability must be "
+                f"<= 1.0 (got {self.small_vessel_probability} + "
+                f"{self.aortic_scale_probability}); the two are mutually-exclusive "
+                "buckets of the scale partition carved out of the typical share"
+            )
 
     def sample(
         self,
