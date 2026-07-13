@@ -213,7 +213,7 @@ def attach_side_branch_layered(
 
     branch_cfg = side_branch.branch
     daughter_seed = (
-        branch_cfg.seed if branch_cfg.seed is not None else int(rng.integers(0, 2**31 - 1))
+        branch_cfg.seed if branch_cfg.seed is not None else int(rng.integers(0, 2 ** 31 - 1))
     )
     daughter_rng = np.random.default_rng(daughter_seed)
 
