@@ -30,7 +30,6 @@ import trimesh
 from vesselgen.centerline import Centerline
 from vesselgen.config import GuidewireConfig
 
-
 # A guidewire never has to look like a perfect cylinder -- IVUS rays
 # only see the silhouette. Keep the tessellation cheap.
 _GUIDEWIRE_RADIAL_SEGMENTS = 16

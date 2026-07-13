@@ -378,6 +378,7 @@ def _sample_pose_for_slot(
     edge_margin_mm: float,
     side_branch_ostium_bias_prob: float,
     side_branch_ostium_arclength_frac: float,
+    neighbor_bias_prob: float = 0.0,
 ) -> PoseSample:
     daughters = [b for b in vessel.branches if not b.is_parent]
     if slot == "random" or not daughters:
@@ -387,6 +388,7 @@ def _sample_pose_for_slot(
             edge_margin_mm=edge_margin_mm,
             side_branch_ostium_bias_prob=side_branch_ostium_bias_prob,
             side_branch_ostium_arclength_frac=side_branch_ostium_arclength_frac,
+            neighbor_bias_prob=neighbor_bias_prob,
         )
     side = daughters[0]
     # Tilt-cone reach that the imaging plane sweeps along the centerline.
@@ -871,6 +873,7 @@ def generate_paired_dataset(
                 edge_margin_mm=edge_margin_mm,
                 side_branch_ostium_bias_prob=rand_cfg.side_branch_ostium_bias_prob,
                 side_branch_ostium_arclength_frac=rand_cfg.side_branch_ostium_arclength_frac,
+                neighbor_bias_prob=gen_cfg.adjacent_vessel_pose_bias_prob,
             )
             gt = vessel.ground_truth_at(
                 pose,

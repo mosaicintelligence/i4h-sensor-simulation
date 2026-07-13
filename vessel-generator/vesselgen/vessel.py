@@ -23,6 +23,10 @@ from typing import Optional
 import numpy as np
 import trimesh
 
+from vesselgen.adjacent import (
+    build_adjacent_neighbor,
+    measured_outer_radius_mm,
+)
 from vesselgen.bifurcation import (
     BifurcationError,
     DaughterArtifacts,
@@ -33,17 +37,13 @@ from vesselgen.config import (
     BranchConfig,
     LayeredWallConfig,
     VesselConfig,
-    WallConfig,
-    branch_wall_to_layered,
 )
-from vesselgen.cross_section import CrossSectionField, build_cross_sections
-from vesselgen.sweep import sweep_branch, sweep_layered_branch
+from vesselgen.cross_section import CrossSectionField
+from vesselgen.sweep import sweep_layered_branch
 from vesselgen.wall import (
     LayeredWallField,
     WallField,
-    build_layered_wall,
-    build_wall,
-    layered_wall_from_wall_field,
+    build_branch_fields,
     push_layered_interfaces_around_lesions,
 )
 
@@ -69,6 +69,30 @@ class BranchHandle:
     """Populated when the branch's wall is described by a
     :class:`LayeredWallConfig`. Lets the lesion builder query interior
     interface radii."""
+
+
+@dataclass
+class AdjacentVesselArtifact:
+    """Lightweight record of one parallel neighbor vessel.
+
+    Neighbors are merged into the parent's surface meshes (they share the
+    parent's materials/labels), so they are not separate branches and the
+    pose sampler never places the probe inside them. This record keeps the
+    placement metadata handy for the manifest and for non-overlap checks.
+
+    ``center_xy_mm`` is the neighbor centerline position in the parent's
+    cross-section plane (parent normal, binormal); ``outer_radius_bound_mm``
+    is the measured maximum outer-wall radius used to size clearances.
+    """
+
+    name: str
+    azimuth_deg: float
+    center_offset_mm: float
+    center_xy_mm: tuple[float, float]
+    mean_radius_mm: float
+    outer_radius_bound_mm: float
+    centerline: Centerline
+    lumen_field: CrossSectionField
 
 
 @dataclass
@@ -127,6 +151,10 @@ class Vessel:
     guidewire: Optional[object] = None
     """Optional :class:`vesselgen.guidewire.GuidewireArtifacts`."""
 
+    adjacent_vessels: list = field(default_factory=list)
+    """List of :class:`AdjacentVesselArtifact`. Neighbors are merged into
+    the parent's surface meshes; this is placement metadata only."""
+
     world_background_material: str = "lumen"
     """Material the simulator should use for rays outside any mesh
     (the lumen blood pool, since the probe sits inside the lumen)."""
@@ -158,15 +186,9 @@ class Vessel:
         parent_rng = np.random.default_rng(
             cfg.parent.seed if cfg.parent.seed is not None else cfg.seed
         )
-        parent_lumen_field = build_cross_sections(
-            cfg.parent.cross_section,
-            parent_centerline.length_mm,
-            cfg.parent.centerline.n_stations,
-            parent_rng,
-        )
-
-        parent_layered_field, parent_layer_meshes = _build_parent_wall_meshes(
-            cfg.parent.wall, parent_lumen_field, parent_centerline, parent_rng
+        parent_lumen_field, parent_layered_field = build_branch_fields(cfg.parent, parent_rng)
+        parent_layer_meshes = sweep_layered_branch(
+            parent_centerline, parent_lumen_field, parent_layered_field
         )
         parent_wall_field = parent_layered_field.to_outer_wall_field()
 
@@ -259,6 +281,48 @@ class Vessel:
                 layered_wall_field=parent_layered_field,
             )
 
+        # Adjacent parallel neighbors: build each as its own nested tube
+        # and concatenate it layer-by-layer into the parent's surface
+        # meshes. A trimesh built from two disjoint closed shells is still
+        # watertight and ``contains``-correct, so the merged meshes flow
+        # through ground-truth slicing, the segmentation rasterizer,
+        # previews and raysim unchanged -- and each neighbor inherits the
+        # parent's per-layer materials/labels by construction. Neighbors
+        # are deliberately NOT added to ``branches`` so the pose sampler
+        # only ever places the probe in the parent lumen.
+        adjacent_artifacts: list[AdjacentVesselArtifact] = []
+        for adj in cfg.adjacent_vessels:
+            neighbor_meshes, neighbor_centerline, neighbor_lumen = build_adjacent_neighbor(
+                adj, parent_centerline
+            )
+            if len(neighbor_meshes) != len(cur_layer_meshes):
+                raise BifurcationError(
+                    f"adjacent vessel '{adj.branch.name}': neighbor has "
+                    f"{len(neighbor_meshes)} layer meshes but parent has "
+                    f"{len(cur_layer_meshes)}; wall layer counts must match"
+                )
+            cur_layer_meshes = [
+                trimesh.util.concatenate([parent_mesh, neighbor_mesh])
+                for parent_mesh, neighbor_mesh in zip(cur_layer_meshes, neighbor_meshes)
+            ]
+            az = np.radians(adj.azimuth_deg)
+            center_xy = (
+                adj.center_offset_mm * float(np.cos(az)),
+                adj.center_offset_mm * float(np.sin(az)),
+            )
+            adjacent_artifacts.append(
+                AdjacentVesselArtifact(
+                    name=adj.branch.name,
+                    azimuth_deg=adj.azimuth_deg,
+                    center_offset_mm=adj.center_offset_mm,
+                    center_xy_mm=center_xy,
+                    mean_radius_mm=float(adj.branch.cross_section.mean_radius_mm),
+                    outer_radius_bound_mm=measured_outer_radius_mm(adj.branch),
+                    centerline=neighbor_centerline,
+                    lumen_field=neighbor_lumen,
+                )
+            )
+
         surfaces = _build_emitted_surface_list(cur_layer_meshes, cfg.parent.wall)
 
         guidewire = None
@@ -276,6 +340,7 @@ class Vessel:
             surfaces=surfaces,
             lesions=lesions,
             guidewire=guidewire,
+            adjacent_vessels=adjacent_artifacts,
         )
 
     # -----------------------------------------------------------------
@@ -307,6 +372,7 @@ class Vessel:
         max_attempts: int = 64,
         side_branch_ostium_bias_prob: float = 0.0,
         side_branch_ostium_arclength_frac: float = 0.25,
+        neighbor_bias_prob: float = 0.0,
     ):
         """Draw a fresh random pose anywhere inside the vessel lumen.
 
@@ -315,6 +381,10 @@ class Vessel:
         sampled weighted by arclength, then arclength uniformly along that
         branch, then a 2D in-lumen position rejection-sampled, then a
         small probe-axis tilt.
+
+        ``neighbor_bias_prob`` biases a fraction of poses toward one of the
+        parallel adjacent vessels (see :func:`vesselgen.sampling.sample_pose`);
+        it is a no-op for vessels without neighbors.
         """
         from vesselgen.sampling import sample_pose
 
@@ -326,6 +396,7 @@ class Vessel:
             max_attempts=max_attempts,
             side_branch_ostium_bias_prob=side_branch_ostium_bias_prob,
             side_branch_ostium_arclength_frac=side_branch_ostium_arclength_frac,
+            neighbor_bias_prob=neighbor_bias_prob,
         )
 
     def sample_pose_in_branch(
@@ -513,6 +584,18 @@ class Vessel:
                 }
                 for sb in cfg.side_branches
             ],
+            # Adjacent neighbors are merged into the parent surface meshes
+            # (they share the parent's materials/labels), so this section is
+            # informational: it records each neighbor's placement + geometry
+            # rather than pointing at separate OBJ files.
+            "adjacent_vessels": [
+                {
+                    "azimuth_deg": adj.azimuth_deg,
+                    "center_offset_mm": adj.center_offset_mm,
+                    "branch": branch_cfg_to_dict(adj.branch),
+                }
+                for adj in cfg.adjacent_vessels
+            ],
             "branches": [
                 {
                     "name": b.name,
@@ -590,40 +673,6 @@ class Vessel:
 # ---------------------------------------------------------------------------
 
 
-def _build_parent_wall_meshes(
-    wall_cfg,
-    lumen: CrossSectionField,
-    centerline: Centerline,
-    rng: np.random.Generator,
-) -> tuple[LayeredWallField, list[trimesh.Trimesh]]:
-    """Build the layered-wall field + its closed surface meshes.
-
-    Returns the field and ``[lumen_surface, interior_interface_0, ...,
-    outer_surface]`` meshes (``n_layers + 1`` entries). The outermost
-    mesh is kept here because the bifurcation pipeline still needs
-    something to union daughters against, but it gets dropped before
-    being exported in :func:`_build_emitted_surface_list`. Legacy
-    single-layer :class:`WallConfig` is wrapped as a one-layer layered
-    field so the rest of the pipeline always sees the same shape.
-    """
-
-    if isinstance(wall_cfg, LayeredWallConfig):
-        field = build_layered_wall(wall_cfg, lumen, centerline.length_mm, rng)
-        meshes = sweep_layered_branch(centerline, lumen, field)
-        return field, meshes
-
-    wall_field = build_wall(wall_cfg, lumen, centerline.length_mm, rng)
-    field = layered_wall_from_wall_field(
-        wall_field,
-        lumen,
-        material_name="vessel_wall",
-        total_thickness_mm=wall_cfg.mean_thickness_mm,
-        min_thickness_mm=wall_cfg.min_thickness_mm,
-    )
-    lumen_mesh, outer_mesh = sweep_branch(centerline, lumen, wall_field)
-    return field, [lumen_mesh, outer_mesh]
-
-
 def _emitted_material_chain(wall_cfg) -> list[str]:
     """Material on the *outside* of each emitted closed surface, in nested order.
 
@@ -651,10 +700,11 @@ def _build_emitted_surface_list(
 ) -> list[SurfaceEntry]:
     """Build the simulator-facing :class:`SurfaceEntry` list.
 
-    ``layer_meshes`` is the full ``n_layers + 1`` list returned by
-    :func:`_build_parent_wall_meshes` (or the analogous bifurcation
-    output): innermost lumen mesh, each interior interface, and the
-    outer adventitia boundary. For a layered wall we drop the
+    ``layer_meshes`` is the full ``n_layers + 1`` list produced by
+    sweeping the fields from :func:`vesselgen.wall.build_branch_fields`
+    (or the analogous bifurcation output): innermost lumen mesh, each
+    interior interface, and the outer adventitia boundary. For a layered
+    wall we drop the
     outermost mesh -- nothing transitions a ray's material there
     anymore -- and emit ``n_layers`` surfaces.
 

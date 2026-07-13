@@ -33,6 +33,7 @@ from pathlib import Path
 import numpy as np
 
 from vesselgen.config import (
+    AdjacentVesselConfig,
     BranchConfig,
     CalcificationLesionConfig,
     CenterlineConfig,
@@ -371,6 +372,15 @@ def _vessel_config_from_manifest(m: dict) -> VesselConfig:
         for sb in m.get("side_branches", [])
     ]
 
+    adjacent_vessels = [
+        AdjacentVesselConfig(
+            azimuth_deg=adj["azimuth_deg"],
+            center_offset_mm=adj["center_offset_mm"],
+            branch=_branch_config_from_manifest(adj["branch"]),
+        )
+        for adj in m.get("adjacent_vessels", [])
+    ]
+
     lesions = [
         CalcificationLesionConfig(
             arclength_frac=entry["config"]["arclength_frac"],
@@ -403,4 +413,5 @@ def _vessel_config_from_manifest(m: dict) -> VesselConfig:
         name=m["name"],
         lesions=lesions,
         guidewire=guidewire,
+        adjacent_vessels=adjacent_vessels,
     )

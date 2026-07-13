@@ -26,8 +26,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from vesselgen.config import LayeredWallConfig, LayerSpec, WallConfig
-from vesselgen.cross_section import CrossSectionField
+from vesselgen.config import BranchConfig, LayeredWallConfig, LayerSpec, WallConfig
+from vesselgen.cross_section import CrossSectionField, build_cross_sections
 
 if TYPE_CHECKING:
     from vesselgen.centerline import Centerline
@@ -354,3 +354,38 @@ def layered_wall_from_wall_field(
         ),
         min_thickness_mm=float(min_thickness_mm),
     )
+
+
+def build_branch_fields(
+    branch: BranchConfig,
+    rng: np.random.Generator,
+) -> tuple[CrossSectionField, LayeredWallField]:
+    """Draw one branch's lumen + wall fields in a single, fixed RNG order.
+
+    Canonical entry point before sweeping: calls :func:`build_cross_sections`
+    first, then :func:`build_wall` or :func:`build_layered_wall`. Placement
+    measurement (:func:`vesselgen.adjacent.measured_outer_radius_mm`) and
+    mesh build both use this sequence so they agree on outer radius.
+
+    Single-layer :class:`WallConfig` walls are wrapped as a one-layer
+    :class:`LayeredWallField` via :func:`layered_wall_from_wall_field`, so
+    callers always read ``interface_radii[-1]`` as the outer wall.
+    Sweeping such a wrapped field yields meshes identical to the legacy
+    single-slab path (lumen + outer).
+    """
+    length_mm = branch.centerline.length_mm
+    n_stations = branch.centerline.n_stations
+    lumen_field = build_cross_sections(branch.cross_section, length_mm, n_stations, rng)
+    wall_cfg = branch.wall
+    if isinstance(wall_cfg, LayeredWallConfig):
+        layered_wall_field = build_layered_wall(wall_cfg, lumen_field, length_mm, rng)
+    else:
+        wall_field = build_wall(wall_cfg, lumen_field, length_mm, rng)
+        layered_wall_field = layered_wall_from_wall_field(
+            wall_field,
+            lumen_field,
+            material_name="vessel_wall",
+            total_thickness_mm=wall_cfg.mean_thickness_mm,
+            min_thickness_mm=wall_cfg.min_thickness_mm,
+        )
+    return lumen_field, layered_wall_field
