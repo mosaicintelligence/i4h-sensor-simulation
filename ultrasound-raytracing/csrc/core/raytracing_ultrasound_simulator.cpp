@@ -697,10 +697,11 @@ RaytracingUltrasoundSimulator::simulate_channel_capture(const BaseProbe* probe,
   if (probe == nullptr) {
     throw std::runtime_error("simulate_channel_capture: probe is null");
   }
-  if (probe->get_probe_type() != ProbeType::PROBE_TYPE_PHASED_ARRAY) {
+  const bool is_ivus = (probe->get_probe_type() == ProbeType::PROBE_TYPE_IVUS);
+  if (probe->get_probe_type() != ProbeType::PROBE_TYPE_PHASED_ARRAY && !is_ivus) {
     spdlog::warn(
-        "simulate_channel_capture: only PROBE_TYPE_PHASED_ARRAY is supported in v1; "
-        "treating probe as a linear phased aperture along its width.");
+        "simulate_channel_capture: only PROBE_TYPE_PHASED_ARRAY and PROBE_TYPE_IVUS are "
+        "supported; treating probe as a linear phased aperture along its width.");
   }
 
   const uint32_t num_rx = probe->get_num_elements();
@@ -714,21 +715,40 @@ RaytracingUltrasoundSimulator::simulate_channel_capture(const BaseProbe* probe,
   }
 
   // ---- Receive aperture geometry --------------------------------------
-  std::vector<float3> rx_positions_world;
-  std::vector<float3> rx_normals_world;
-  probe->get_world_element_positions(rx_positions_world);
-  probe->get_world_element_normals(rx_normals_world);
+  // Local (probe-frame) element positions, world positions, and outward
+  // normals. For a phased array these come straight from the probe. For IVUS
+  // the probe reports a single point source at the catheter axis, which has no
+  // aperture; we synthesise a rotating-element ring of radius
+  // `ivus_ring_radius_mm` so the synthetic aperture can be focused offline.
+  std::vector<float3> rx_positions_local(num_rx);
+  std::vector<float3> rx_dirs_local(num_rx);      // radial firing direction (IVUS)
+  std::vector<float3> rx_positions_world(num_rx);
+  std::vector<float3> rx_normals_world(num_rx);
+
+  const Pose& pose = probe->get_pose();
+  if (is_ivus) {
+    constexpr float two_pi = 6.28318530717958647692f;
+    const float r_ring = cc_params.ivus_ring_radius_mm;
+    for (uint32_t i = 0; i < num_rx; ++i) {
+      const float angle = two_pi * static_cast<float>(i) / static_cast<float>(num_rx);
+      const float3 radial = make_float3(std::sin(angle), 0.f, std::cos(angle));
+      rx_dirs_local[i] = radial;
+      rx_positions_local[i] = make_float3(r_ring * radial.x, 0.f, r_ring * radial.z);
+      rx_positions_world[i] = pose.local_to_world_point(rx_positions_local[i]);
+      rx_normals_world[i] = pose.local_to_world_direction(radial);
+    }
+  } else {
+    probe->get_world_element_positions(rx_positions_world);
+    probe->get_world_element_normals(rx_normals_world);
+    for (uint32_t i = 0; i < num_rx; ++i) {
+      probe->get_local_element_position(i, rx_positions_local[i]);
+    }
+  }
 
   CudaMemory d_rx_positions(rx_positions_world.size() * sizeof(float3), cc_params.stream);
   d_rx_positions.upload(rx_positions_world.data(), cc_params.stream);
   CudaMemory d_rx_normals(rx_normals_world.size() * sizeof(float3), cc_params.stream);
   d_rx_normals.upload(rx_normals_world.data(), cc_params.stream);
-
-  // Local (probe-frame) positions are needed to offset the ray origin per TX.
-  std::vector<float3> rx_positions_local(num_rx);
-  for (uint32_t i = 0; i < num_rx; ++i) {
-    probe->get_local_element_position(i, rx_positions_local[i]);
-  }
 
   // ---- Channel RF buffer ----------------------------------------------
   const size_t channel_count =
@@ -751,8 +771,11 @@ RaytracingUltrasoundSimulator::simulate_channel_capture(const BaseProbe* probe,
       reinterpret_cast<Material*>(materials_->get_material_data()->get_ptr(cc_params.stream));
   params.background_material_id = materials_->get_index(world_->get_background_material());
   params.scattering_texture = world_->get_scattering_texture();
-  // Use the same scale the legacy `simulate` uses for non-IVUS probes.
-  params.scattering_resolution_mm = 50.f;
+  // Scattering voxel size: honour an explicit override, else use the same
+  // probe-appropriate default the legacy `simulate` path uses (finer for IVUS).
+  params.scattering_resolution_mm = (cc_params.scattering_resolution_mm > 0.f)
+                                        ? cc_params.scattering_resolution_mm
+                                        : (is_ivus ? 10.f : 50.f);
   params.handle = world_->get_gas_handle();
   params.source_frequency = probe->get_frequency();
   params.contact_epsilon = 0.0f;
@@ -781,6 +804,11 @@ RaytracingUltrasoundSimulator::simulate_channel_capture(const BaseProbe* probe,
       rg_sbt.data.position = probe->get_pose().position_;
       rg_sbt.data.rotation_matrix = probe->get_pose().rotation_matrix_;
       rg_sbt.data.tx_origin_local = rx_positions_local[tx];
+      // Synthetic-aperture IVUS: fire a fan of rays about this element's radial
+      // direction. Ignored by the phased-array path (channel_rf gate + probe
+      // type check in the kernel).
+      rg_sbt.data.tx_dir_local = is_ivus ? rx_dirs_local[tx] : make_float3(0.f, 0.f, 1.f);
+      rg_sbt.data.tx_fan_half_deg = cc_params.ivus_tx_fan_half_deg;
 
       OPTIX_CHECK(optixSbtRecordPackHeader(raygen_prog_group_.get(), &rg_sbt));
       raygen_record_.upload(&rg_sbt, cc_params.stream);

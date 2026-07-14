@@ -100,6 +100,22 @@ class RaytracingUltrasoundSimulator {
     cudaStream_t stream = cudaStreamPerThread;
     /// Print timing of CUDA operations.
     bool enable_cuda_timing = false;
+
+    // ---- Synthetic-aperture IVUS options (PROBE_TYPE_IVUS only) ----------
+    /// Radius of the ring on which the rotating IVUS element positions are
+    /// placed, in the probe's local frame [mm]. A small non-zero radius gives
+    /// the synthetic aperture the spatial diversity needed for offline focusing
+    /// (a true point source at the axis has no aperture). Typical catheter
+    /// transducer offset is ~0.4-0.6 mm.
+    float ivus_ring_radius_mm = 0.5f;
+    /// Half-angle of the transmit fan emitted by each rotating element [deg].
+    /// Each TX event insonifies a wedge of this half-width about the element's
+    /// radial direction so neighbouring receive elements see the echo.
+    float ivus_tx_fan_half_deg = 25.f;
+    /// Voxel size (mm) at which the scattering texture is sampled. Smaller ->
+    /// finer speckle. 0 selects a probe-appropriate default (10 mm for IVUS,
+    /// 50 mm otherwise), matching the legacy `simulate` path.
+    float scattering_resolution_mm = 0.f;
   };
 
   /// Channel-capture simulation result.

@@ -87,6 +87,14 @@ struct RayGenData {
   // Channel-capture: lateral offset (mm) of the firing TX element within the
   // probe's local frame. Zero in legacy scanline mode (origin = array center).
   float3 tx_origin_local;
+
+  // Channel-capture (synthetic-aperture IVUS): center firing direction of the
+  // currently-firing element in the probe's local frame (unit vector in the
+  // xz imaging plane). Each TX event emits a fan of rays around this direction.
+  float3 tx_dir_local;
+  // Half-angle of the transmit fan in degrees. The launch dimension d_x in
+  // [-0.5, 0.5] maps to [-tx_fan_half_deg, +tx_fan_half_deg] about tx_dir_local.
+  float tx_fan_half_deg;
 };
 
 struct MissData {};

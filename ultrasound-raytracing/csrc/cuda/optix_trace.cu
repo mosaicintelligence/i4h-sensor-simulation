@@ -450,6 +450,23 @@ extern "C" __global__ void __raygen__rg() {
     }
   }
 
+  // Channel-capture synthetic-aperture IVUS: the legacy IVUS ray gen above
+  // sweeps a full 360 deg per launch (one A-line per angle). For channel
+  // capture each TX event is a *single* rotating element that emits a narrow
+  // fan of rays around its own radial direction `tx_dir_local`, so the whole
+  // aperture (all angular element positions) can receive each firing. Rotate
+  // the center firing direction about the elevation (y) axis by the fan angle.
+  if (params.channel_rf && ray_gen_data->probe_type == PROBE_TYPE_IVUS) {
+    const float fan_rad = (d_x * 2.f * ray_gen_data->tx_fan_half_deg) * (M_PI / 180.f);
+    const float c = cosf(fan_rad);
+    const float s = sinf(fan_rad);
+    const float3 d0 = ray_gen_data->tx_dir_local;
+    // Rotation about +y: x' = c*x + s*z, z' = -s*x + c*z.
+    direction = make_float3(c * d0.x + s * d0.z, 0.f, -s * d0.x + c * d0.z);
+    direction = normalize(direction);
+    origin = make_float3(0.f, 0.f, 0.f);  // tx_origin_local added below places it on the ring
+  }
+
   // Add elevation in probe's local coordinate system (common for all probes)
   const float d_y = (static_cast<float>(idx.y) / static_cast<float>(dim.y)) - 0.5f;
   const float elevation = ray_gen_data->elevational_height * d_y;

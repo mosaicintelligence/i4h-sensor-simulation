@@ -699,7 +699,19 @@ rays emanate radially over 360° for a cross-sectional vessel image.
       .def_readwrite(
           "enable_cuda_timing",
           &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::enable_cuda_timing,
-          "Print per-stage CUDA timings");
+          "Print per-stage CUDA timings")
+      .def_readwrite(
+          "ivus_ring_radius_mm",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::ivus_ring_radius_mm,
+          "IVUS only: radius [mm] of the synthetic rotating-element ring")
+      .def_readwrite(
+          "ivus_tx_fan_half_deg",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::ivus_tx_fan_half_deg,
+          "IVUS only: half-angle [deg] of the per-element transmit fan")
+      .def_readwrite(
+          "scattering_resolution_mm",
+          &raysim::RaytracingUltrasoundSimulator::ChannelCaptureParams::scattering_resolution_mm,
+          "Scattering texture voxel size [mm]; 0 = probe-appropriate default");
 
   // Bind Hitable base class
   py::class_<raysim::Hitable>(m, "Hitable", R"pbdoc(
