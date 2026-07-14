@@ -639,8 +639,10 @@ rays emanate radially over 360° for a cross-sectional vessel image.
         root for the full design discussion and a worked example.
 
         Args:
-            probe: BaseProbe instance (v1: phased array). Element positions are
-                taken from probe.get_local_element_position().
+            probe: BaseProbe instance (phased array or IVUS). Phased-array
+                element positions come from probe.get_local_element_position();
+                IVUS uses a synthetic rotating-element ring configured by
+                params.ivus_ring_radius_mm / params.ivus_tx_fan_half_deg.
             params: ChannelCaptureParams instance with capture settings.
 
         Returns:

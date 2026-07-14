@@ -76,9 +76,10 @@ class RaytracingUltrasoundSimulator {
    * rule changes: every scatter sample / specular hit is splat to all receive
    * elements at their respective times of flight.
    *
-   * v1 only supports the phased-array probe (linear element layout). For other
-   * probe types this method will fall back to the same layout as a phased array
-   * and a warning will be logged.
+   * Supported probes: phased array (linear element layout, full-matrix
+   * capture) and IVUS (synthetic-aperture rotating element on a ring; see
+   * CHANNEL_CAPTURE.md §10 and the `ivus_*` fields below). Other probe types
+   * fall back to the phased-array layout and a warning is logged.
    */
   struct ChannelCaptureParams {
     /// Maximum total (TX + RX) ray distance corresponding to the last sample bin [mm].

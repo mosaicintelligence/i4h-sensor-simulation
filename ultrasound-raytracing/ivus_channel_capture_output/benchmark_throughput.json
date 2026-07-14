@@ -1,0 +1,23 @@
+{
+  "frames_total": 100,
+  "frames_measured": 97,
+  "mean_ms": 6172.432055896372,
+  "std_ms": 147.03738850186855,
+  "min_ms": 5936.91088000196,
+  "max_ms": 6559.896602993831,
+  "p50_ms": 6170.5198459967505,
+  "p95_ms": 6423.495537391864,
+  "fps": 0.16201069383092273,
+  "tx_events_per_s": 20.73736881035811,
+  "primary_rays_per_s": 5308.766415451676,
+  "rf_samples_per_s": 10872353.618845033,
+  "config": {
+    "num_angular": 128,
+    "num_tx_rays": 256,
+    "buffer_size": 4096,
+    "t_far_mm": 14.0,
+    "ring_radius_mm": 0.5,
+    "tx_fan_half_deg": 35.0,
+    "max_depth": 3
+  }
+}

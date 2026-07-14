@@ -7,7 +7,9 @@ A high-performance GPU-accelerated ultrasound simulator using NVIDIA OptiX raytr
 - GPU acceleration with CUDA and NVIDIA OptiX
 - Python interface for ease of use
 - Real-time simulation capabilities
-- Support for curvilinear, linear, and phased array ultrasound probe simulation
+- Support for curvilinear, linear, phased array, and IVUS (intravascular) probe simulation
+- Channel capture: raw per-element RF acquisition (full-matrix capture) for offline
+  beamforming, for phased-array and synthetic-aperture IVUS probes
 
 ## Benchmark Results
 To reproduce these results, run `python examples/benchmark.py`.
@@ -119,6 +121,28 @@ Instructions to build and run the examples in a docker environment can be found 
    ./build-release/examples/cpp/ray_sim_example
    ```
 
+
+## Channel Capture (per-element RF)
+
+Besides the B-mode `simulate(...)` path, the simulator can produce raw,
+unbeamformed per-element RF via `simulate_channel_capture(...)`: each element
+transmits in turn and every element receives, yielding an `(N_TX, N_RX,
+N_samples)` cube for offline beamforming (delay-and-sum, MV, learned
+reconstructors). Supported apertures:
+
+- **Phased array** (full-matrix capture): `examples/channel_capture_demo.py`
+- **IVUS synthetic aperture** (rotating element on a small ring):
+  `examples/ivus_channel_capture_demo.py` — captures a vessel phantom, applies
+  pulse modulation + TGC + IQ conversion, and reconstructs Cartesian and
+  unwrapped B-modes with a NumPy DAS beamformer, side-by-side with the legacy
+  scanline B-mode.
+- **IVUS throughput benchmark**: `examples/ivus_channel_capture_benchmark.py`
+  (100-frame pullback; writes `benchmark_throughput.json`).
+
+Design discussion and kernel/host details are in
+[`CHANNEL_CAPTURE.md`](../CHANNEL_CAPTURE.md) at the repository root. IVUS
+B-mode modeling background is in
+[`docs/ivus_implementation_writeup.md`](docs/ivus_implementation_writeup.md).
 
 ## Start Simulating
 

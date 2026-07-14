@@ -7,6 +7,10 @@ the new path produces a 3D tensor of raw RF signals, indexed by `(TX element, RX
 element, time sample)`, that downstream code can beamform offline (e.g. delay-and-sum,
 DMAS, MV, or learned reconstructors).
 
+Supported apertures: **phased array** (v1, §2–§6) and **synthetic-aperture IVUS**
+(added later, §10 — including the offline pulse/TGC/IQ chain and DAS
+reconstruction that reproduce the legacy IVUS B-mode from the raw cube).
+
 The goal is *understanding by developing*: by reading this document and the diff that
 implements it, a contributor should walk away with a clear mental model of how a ray
 tracer generates per-element RF and how that compares to classical SIR-based
@@ -173,7 +177,7 @@ read.
 
 | Aspect | v1 choice | Rationale |
 |---|---|---|
-| Probe | Phased array | Already supported, simple linear element layout, easy to compare against the [`phasedArray_psf.ipynb`](ultrasound-raytracing/phasedArray_psf.ipynb) Field II notebook |
+| Probe | Phased array; **IVUS synthetic aperture added later (see §10)** | Phased array is easy to compare against the [`phasedArray_psf.ipynb`](ultrasound-raytracing/phasedArray_psf.ipynb) Field II notebook |
 | TX scheme | Single-element FMC (each element TX once, all RX) | Most general capture; mirrors `calc_scat_multi` / `calc_scat_all` from FieldGPU |
 | RX response | Point-element delta (1 sample bin per echo) | No SIR, no transducer impulse response; downstream code can convolve with a pulse |
 | Output | `float[N_TX, N_RX, N_samples]` returned to Python | Straight `numpy` array, easy to beamform in NumPy/CuPy |
@@ -184,7 +188,8 @@ What is **deliberately deferred** to v2 (see §7):
 - Far-field rectangular SIR (Jensen/Svendsen trapezoid `h(t)`)
 - Plane-wave / diverging-wave TX with delays
 - TX/RX apodization windows
-- Built-in pulse modulation on the channel cube
+- Built-in pulse modulation on the channel cube (the IVUS demo applies it
+  offline in NumPy; see §10)
 - True specular visibility via OptiX shadow rays (instead of a cos directivity proxy)
 
 ## 3. Mapping the OptiX kernel onto channel capture
@@ -344,10 +349,10 @@ The natural extensions, in order of effort vs payoff:
 5. **True specular visibility.** From every ray-hit point `p`, fire OptiX shadow
    rays toward each receive element to gate the specular contribution by
    geometric visibility instead of a cos directivity proxy.
-6. **Other probes.** Extend element layout for curvilinear and IVUS arrays. The
-   IVUS rotating single-element case is degenerate (one RX per firing) but
-   becomes a useful synthetic-aperture FMC if the rotation is treated as
-   sequential TX events.
+6. **Other probes.** ~~Extend element layout for curvilinear and IVUS arrays.~~
+   **Done for IVUS** — the rotating single element is treated as sequential TX
+   events on a small ring (synthetic-aperture FMC); see §10. Curvilinear is
+   still open.
 
 ## 8. File-by-file change map
 
@@ -360,6 +365,8 @@ The natural extensions, in order of effort vs payoff:
 | [`ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp`](ultrasound-raytracing/csrc/core/raytracing_ultrasound_simulator.cpp) | Implement `simulate_channel_capture`: upload RX geometry, allocate `channel_rf`, loop `tx_index`, launch OptiX |
 | [`ultrasound-raytracing/csrc/python/raysim_bindings.cpp`](ultrasound-raytracing/csrc/python/raysim_bindings.cpp) | Bind `simulate_channel_capture` returning a `numpy` array of shape `(N_TX, N_RX, buffer_size)` |
 | [`ultrasound-raytracing/examples/channel_capture_demo.py`](ultrasound-raytracing/examples/channel_capture_demo.py) | New demo: phased-array FMC capture on a point-reflector phantom; hyperbolic-moveout check; DAS B-mode comparison against legacy `simulate(...)` |
+| [`ultrasound-raytracing/examples/ivus_channel_capture_demo.py`](ultrasound-raytracing/examples/ivus_channel_capture_demo.py) | IVUS synthetic-aperture capture on a vessel phantom; pulse + TGC + IQ conditioning; coherent DAS reconstruction (Cartesian + unwrapped) vs legacy B-mode (§10) |
+| [`ultrasound-raytracing/examples/ivus_channel_capture_benchmark.py`](ultrasound-raytracing/examples/ivus_channel_capture_benchmark.py) | 100-frame pullback throughput benchmark for the IVUS capture path (§10.5) |
 
 ## 9. Reading order for newcomers
 
@@ -373,3 +380,86 @@ The natural extensions, in order of effort vs payoff:
 By the end you should be able to answer: *"why does the same OptiX scene produce
 either a B-mode image directly or an unbeamformed RF cube, and what does the cube
 contain that the scanline buffer threw away?"*
+
+## 10. IVUS synthetic-aperture channel capture
+
+`simulate_channel_capture` also supports `IVUSProbe`. This section documents the
+extension (added after v1) and the offline signal chain that turns the raw cube
+into a B-mode matching the legacy IVUS pipeline.
+
+### 10.1 Acquisition model
+
+A rotating IVUS transducer is a single element mounted a small radius off the
+catheter axis. `IVUSProbe` itself reports every element at the origin (a point
+source has no aperture), so the host path synthesises a **rotating-element
+ring**: `N` angular positions on a ring of radius `ivus_ring_radius_mm`
+(default 0.5 mm), each facing radially outward. Element `k` transmits a fan of
+rays of half-angle `ivus_tx_fan_half_deg` (default 25°) about its radial
+direction; **every** ring element receives, producing the same
+`rf[tx, rx, sample]` cube as the phased-array FMC.
+
+Implementation notes:
+
+- Kernel: the legacy IVUS raygen sweeps 360° per launch. In channel-capture
+  mode (`params.channel_rf != nullptr` **and** probe type IVUS) the raygen
+  instead rotates `RayGenData::tx_dir_local` about the elevation axis by
+  `d_x * 2 * tx_fan_half_deg` — one narrow transmit wedge per TX event.
+- Host: builds ring positions/normals from the probe pose, uploads them as the
+  RX aperture, and sets `tx_origin_local` / `tx_dir_local` per launch.
+- New `ChannelCaptureParams` fields: `ivus_ring_radius_mm`,
+  `ivus_tx_fan_half_deg`, and `scattering_resolution_mm` (0 = probe-appropriate
+  default: 10 mm for IVUS, 50 mm otherwise, matching legacy `simulate`).
+
+### 10.2 Why the cube needs a pulse before beamforming
+
+The ray tracer deposits **non-negative energy spikes**. Coherent DAS on
+non-negative data cannot form speckle (nothing interferes destructively) and
+collapses walls to single-bin rings. The demo therefore conditions the cube
+offline, in NumPy:
+
+1. **Pulse modulation** — convolve the time axis with a zero-mean
+   Gaussian-windowed cosine at the carrier (`lambda = c / f_c` in path-length
+   units), turning deposits into bipolar RF.
+2. **TGC** — depth-dependent gain (dB per mm of total path, capped).
+3. **IQ conversion** — Hilbert transform per channel; beamforming then sums
+   complex samples and envelope-detects after the sum, exactly like a real IQ
+   beamformer.
+
+With this chain the DAS output reproduces the legacy B-mode's structure: dark
+lumen, bright wall band at the true radii, speckled extravascular tissue.
+
+### 10.3 Reconstruction
+
+`examples/ivus_channel_capture_demo.py` reconstructs on two pixel grids with
+the same coherent DAS (transmit-wedge gate + receive-directivity gate):
+Cartesian (native cross-section) and unwrapped depth × angle (for direct
+comparison with the legacy scan-converted image). Display normalizes to a high
+percentile rather than the specular peak so tissue speckle survives log
+compression.
+
+### 10.4 Outputs
+
+Running the demo writes `ivus_channel_capture_output/`:
+
+- `channel_rf.npz` — raw cube + ring geometry + metadata
+- `01_rf_slice.png` — pulsed RF slice with predicted wall moveout
+- `02_das_reconstruction.png` — Cartesian DAS with true wall radii overlaid
+- `03_das_vs_legacy.png` — unwrapped DAS vs legacy `simulate()` B-mode
+
+### 10.5 Throughput
+
+`examples/ivus_channel_capture_benchmark.py` runs a pullback (probe advances
+along the vessel axis between frames) and reports steady-state statistics to
+`benchmark_throughput.json`. Reference numbers (RTX 5070 Ti Laptop, 128 TX ×
+256 rays, 128 RX, buffer 4096, max_depth 3, download included): **~6.2 s per
+frame (0.16 fps)**, ~21 TX events/s, ~11 M RF samples/s. Frame time scales
+roughly linearly with `buffer_size` (dense scatter integration steps once per
+depth bin) and with `num_rx` (atomic adds per scatter sample); capture at
+buffer 1024 runs ~4x faster.
+
+### 10.6 Known gaps (vs channel-level RF accuracy)
+
+Same as v1 elsewhere: point-element delta deposits (no circular-element SIR),
+pulse applied offline rather than physically at TX/RX, no transmit directivity
+weighting inside the wedge, cos-gate receive directivity, no catheter
+ring-down / dead zone. See §7 for the roadmap.
