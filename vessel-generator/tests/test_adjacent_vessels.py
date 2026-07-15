@@ -443,6 +443,120 @@ def test_neighbor_bias_picks_either_neighbor_when_two_present():
     assert counts[1] > 0
 
 
+# ---------------------------------------------------------------------------
+# Per-object mesh decomposition for the renderer (merged surfaces are kept for
+# geometry/GT; each vessel is *also* written separately so raysim can load it
+# as a distinct nested object).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("n_neighbors", [1, 2])
+def test_per_object_meshes_and_manifest(tmp_path, n_neighbors):
+    import json
+
+    from vesselgen.io import save_vessel
+
+    cfg = _adjacent_config(11, n_neighbors=n_neighbors)
+    vessel = Vessel.from_config(cfg)
+    vdir = save_vessel(vessel, tmp_path / "adj")
+
+    with (vdir / "vessel.json").open() as f:
+        manifest = json.load(f)
+
+    assert manifest.get("surfaces_are_merged") is True
+    objects = manifest["objects"]
+    assert len(objects) == 1 + n_neighbors
+
+    parent_obj = objects[0]
+    assert parent_obj["role"] == "parent"
+    assert parent_obj["probe_inside"] is True
+    parent_materials = [s["material"] for s in parent_obj["surfaces"]]
+    assert len(parent_obj["surfaces"]) >= 1
+    assert parent_obj["interior_material"] == vessel.world_background_material
+    assert parent_obj["surrounding_material"] == parent_materials[-1]
+
+    for obj in objects[1:]:
+        assert obj["role"] == "adjacent"
+        assert obj["probe_inside"] is False
+        # Neighbors share the parent's material chain by construction.
+        assert [s["material"] for s in obj["surfaces"]] == parent_materials
+        assert obj["interior_material"] == vessel.world_background_material
+        assert obj["surrounding_material"] == parent_materials[-1]
+        # Placement metadata the renderer needs to seat the neighbor.
+        assert "center_offset_mm" in obj and "azimuth_deg" in obj
+        assert "centerline" in obj and "origin" in obj["centerline"]
+
+    # Every referenced per-object mesh file exists on disk, and they live
+    # under objects/ (separate from the merged top-level surfaces).
+    for obj in objects:
+        for s in obj["surfaces"]:
+            assert s["obj"].startswith("objects/")
+            assert (vdir / s["obj"]).is_file()
+
+    # The merged top-level surfaces are still written unchanged.
+    for s in manifest["surfaces"]:
+        assert not s["obj"].startswith("objects/")
+        assert (vdir / s["obj"]).is_file()
+
+
+@pytest.mark.parametrize("n_neighbors", [1, 2])
+def test_merged_surfaces_equal_concat_of_object_meshes(n_neighbors):
+    """The merged top-level surfaces must be exactly the concatenation of the
+    per-object meshes, so the two on-disk representations can never silently
+    diverge (no geometry is lost or altered by the split)."""
+    cfg = _adjacent_config(7, n_neighbors=n_neighbors)
+    vessel = Vessel.from_config(cfg)
+
+    per_object = [vessel.parent_object_surfaces] + [art.surfaces for art in vessel.adjacent_vessels]
+    assert len(vessel.surfaces) == len(vessel.parent_object_surfaces)
+
+    for layer_idx, merged in enumerate(vessel.surfaces):
+        exp_v = sum(len(obj[layer_idx].mesh.vertices) for obj in per_object)
+        exp_f = sum(len(obj[layer_idx].mesh.faces) for obj in per_object)
+        assert len(merged.mesh.vertices) == exp_v
+        assert len(merged.mesh.faces) == exp_f
+        assert merged.material_name == vessel.parent_object_surfaces[layer_idx].material_name
+
+
+def test_no_objects_section_without_neighbors(tmp_path):
+    """A vessel with no neighbors is unchanged: no objects/ tree, no objects
+    section (the top-level surfaces already are the parent alone)."""
+    import json
+
+    from vesselgen.io import save_vessel
+
+    cfg = GenerationConfig(
+        adjacent_vessel_probability=0.0,
+        calcification_probability=0.0,
+        guidewire_probability=0.0,
+    )
+    rng = np.random.default_rng(0)
+    vessel = Vessel.from_config(cfg.sample(rng, seed=0))
+    assert not vessel.adjacent_vessels
+    assert vessel.parent_object_surfaces == []
+
+    vdir = save_vessel(vessel, tmp_path / "plain")
+    with (vdir / "vessel.json").open() as f:
+        manifest = json.load(f)
+    assert "objects" not in manifest
+    assert "surfaces_are_merged" not in manifest
+    assert not (vdir / "objects").exists()
+
+
+def test_vessel_with_neighbors_roundtrips_through_load(tmp_path):
+    """Saving then loading a neighbor vessel must not error, and the config's
+    adjacent-vessel entries survive the round trip."""
+    from vesselgen.io import save_vessel
+
+    cfg = _adjacent_config(5, n_neighbors=2)
+    vessel = Vessel.from_config(cfg)
+    vdir = save_vessel(vessel, tmp_path / "adj")
+
+    loaded = Vessel.load(vdir)
+    assert loaded.outer_mesh.is_watertight
+    assert len(loaded.config.adjacent_vessels) == 2
+
+
 def test_neighbor_bias_is_noop_without_neighbors():
     """A vessel with no parallel neighbors must ignore ``neighbor_bias_prob``
     and still return valid poses (the knob is adjacency-only)."""

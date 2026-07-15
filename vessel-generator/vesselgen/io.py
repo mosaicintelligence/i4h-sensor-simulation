@@ -10,6 +10,19 @@ Layout of one vessel folder (3-layer trilaminar wall)::
       vessel.json               # generation parameters + manifest
       branches/
         branch_<id>.json        # per-branch centerline + lumen/wall fields
+      objects/                  # only when adjacent neighbors are present
+        parent/                 # parent's own nested shells (lumen + surfaces/)
+        neighbor_00/            # each neighbor's own nested shells
+        neighbor_01/
+
+When a vessel has adjacent parallel neighbors, their per-layer meshes are
+concatenated into the top-level ``lumen.obj`` / ``surfaces/`` above so the
+geometry / ground-truth / preview stack sees a single watertight mesh per
+shell. That merged mesh is not enough for raysim, which needs each vessel as
+its own closed nested object. We therefore *also* write every object's own
+shells under ``objects/`` and describe them in the manifest ``objects``
+section (with ``surfaces_are_merged: true``). The two are redundant views of
+the same geometry -- a renderer loads one or the other, not both.
 
 The 3 emitted surfaces let raysim reproduce the canonical
 bright-dark-bright IVUS wall appearance. Beyond ``interface_02`` rays
@@ -91,6 +104,23 @@ def save_vessel(vessel: Vessel, out_dir: str | Path) -> Path:
         surfaces_dir.mkdir(exist_ok=True)
     for s in vessel.surfaces:
         _save_inward_obj(s.mesh, out_dir / s.obj_filename)
+
+    # Adjacent vessels: the top-level ``surfaces`` above are the merged
+    # parent+neighbor meshes (one watertight mesh per shell) that the
+    # geometry / ground-truth / preview stack consumes. For the renderer we
+    # *also* write each vessel as its own nested object under ``objects/`` so
+    # raysim can load them as distinct closed meshes. This duplicates the
+    # geometry on disk on purpose -- see ``Vessel.manifest_dict`` (the
+    # ``objects`` section) for the contract.
+    if vessel.adjacent_vessels:
+        object_surface_lists = [vessel.parent_object_surfaces] + [
+            art.surfaces for art in vessel.adjacent_vessels
+        ]
+        for obj_surfaces in object_surface_lists:
+            for s in obj_surfaces:
+                obj_path = out_dir / s.obj_filename
+                obj_path.parent.mkdir(parents=True, exist_ok=True)
+                _save_inward_obj(s.mesh, obj_path)
 
     if vessel.lesions:
         lesions_dir.mkdir(exist_ok=True)

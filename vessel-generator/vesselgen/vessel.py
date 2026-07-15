@@ -93,6 +93,12 @@ class AdjacentVesselArtifact:
     outer_radius_bound_mm: float
     centerline: Centerline
     lumen_field: CrossSectionField
+    surfaces: list["SurfaceEntry"] = field(default_factory=list)
+    """This neighbor's own emitted surfaces (its own nested lumen ->
+    interface shells), carrying the same material chain as the parent.
+    These are written to disk *in addition to* the merged parent+neighbor
+    surfaces so a future renderer can load each vessel as a distinct
+    raysim object; see :meth:`Vessel.manifest_dict`."""
 
 
 @dataclass
@@ -154,6 +160,14 @@ class Vessel:
     adjacent_vessels: list = field(default_factory=list)
     """List of :class:`AdjacentVesselArtifact`. Neighbors are merged into
     the parent's surface meshes; this is placement metadata only."""
+
+    parent_object_surfaces: list = field(default_factory=list)
+    """Parent-only emitted surfaces (before adjacent neighbors are merged
+    in). Populated only when the vessel has adjacent neighbors; empty
+    otherwise (when the top-level :attr:`surfaces` already are the parent
+    alone). Written to disk under ``objects/parent/`` so a future renderer
+    can load the parent as a distinct nested object alongside each
+    neighbor."""
 
     world_background_material: str = "lumen"
     """Material the simulator should use for rays outside any mesh
@@ -290,8 +304,14 @@ class Vessel:
         # parent's per-layer materials/labels by construction. Neighbors
         # are deliberately NOT added to ``branches`` so the pose sampler
         # only ever places the probe in the parent lumen.
+        #
+        # We snapshot the parent's shells before merging, and keep each
+        # neighbor's shells, so save_vessel can also emit each vessel as its
+        # own object under ``objects/`` for the renderer (see manifest_dict).
+        parent_layer_meshes_pre_merge = list(cur_layer_meshes)
+
         adjacent_artifacts: list[AdjacentVesselArtifact] = []
-        for adj in cfg.adjacent_vessels:
+        for neighbor_idx, adj in enumerate(cfg.adjacent_vessels):
             neighbor_meshes, neighbor_centerline, neighbor_lumen = build_adjacent_neighbor(
                 adj, parent_centerline
             )
@@ -320,10 +340,24 @@ class Vessel:
                     outer_radius_bound_mm=measured_outer_radius_mm(adj.branch),
                     centerline=neighbor_centerline,
                     lumen_field=neighbor_lumen,
+                    # Neighbor shares the parent's wall config, so its emitted
+                    # surfaces carry the identical material chain.
+                    surfaces=_build_emitted_surface_list(
+                        neighbor_meshes,
+                        cfg.parent.wall,
+                        obj_dir=f"objects/neighbor_{neighbor_idx:02d}",
+                    ),
                 )
             )
 
         surfaces = _build_emitted_surface_list(cur_layer_meshes, cfg.parent.wall)
+        parent_object_surfaces: list[SurfaceEntry] = (
+            _build_emitted_surface_list(
+                parent_layer_meshes_pre_merge, cfg.parent.wall, obj_dir="objects/parent"
+            )
+            if adjacent_artifacts
+            else []
+        )
 
         guidewire = None
         if cfg.guidewire is not None:
@@ -341,6 +375,7 @@ class Vessel:
             lesions=lesions,
             guidewire=guidewire,
             adjacent_vessels=adjacent_artifacts,
+            parent_object_surfaces=parent_object_surfaces,
         )
 
     # -----------------------------------------------------------------
@@ -570,7 +605,37 @@ class Vessel:
                 "wall": wall_cfg_to_dict(b.wall),
             }
 
-        return {
+        def object_entry(
+            name: str,
+            role: str,
+            probe_inside: bool,
+            obj_surfaces: list[SurfaceEntry],
+            centerline,
+            *,
+            placement: Optional[dict] = None,
+        ) -> dict:
+            entry: dict = {
+                "name": name,
+                "role": role,
+                "probe_inside": probe_inside,
+                # Blood pool inside the innermost (lumen) shell -- the world
+                # background material; a ray inside any lumen sits here.
+                "interior_material": self.world_background_material,
+                # Material a ray sits in just outside the outermost emitted
+                # surface (it stays here until the FOV). For a trilaminar
+                # wall this is "adventitia".
+                "surrounding_material": (obj_surfaces[-1].material_name if obj_surfaces else None),
+                "centerline": centerline.to_dict(),
+                "surfaces": [
+                    {"name": s.name, "material": s.material_name, "obj": s.obj_filename}
+                    for s in obj_surfaces
+                ],
+            }
+            if placement is not None:
+                entry.update(placement)
+            return entry
+
+        manifest: dict = {
             "name": cfg.name,
             "seed": cfg.seed,
             "axis_convention": {"vessel_axis": "Y", "cross_section_plane": "xz", "units": "mm"},
@@ -667,6 +732,49 @@ class Vessel:
             ),
         }
 
+        # Per-object mesh decomposition for the renderer. Neighbors are
+        # concatenated into the top-level (merged) ``surfaces`` for the
+        # geometry / ground-truth / preview stack, which relies on a single
+        # watertight mesh. raysim, however, needs each vessel as its own
+        # nested closed object (one Mesh per shell, traversed inside->out
+        # from the probe for the parent and outside->in for a neighbor).
+        # When neighbors are present we therefore *also* write each object's
+        # own shells separately and describe them here; ``surfaces_are_merged``
+        # flags that the top-level ``surfaces`` and this ``objects`` list are
+        # two views of the same geometry (render one or the other, not both).
+        if self.adjacent_vessels:
+            parent_cl = self.branches[self.parent_branch_id].centerline
+            objects = [
+                object_entry(
+                    "parent",
+                    "parent",
+                    True,
+                    self.parent_object_surfaces,
+                    parent_cl,
+                )
+            ]
+            for art in self.adjacent_vessels:
+                objects.append(
+                    object_entry(
+                        art.name,
+                        "adjacent",
+                        False,
+                        art.surfaces,
+                        art.centerline,
+                        placement={
+                            "azimuth_deg": art.azimuth_deg,
+                            "center_offset_mm": art.center_offset_mm,
+                            "center_xy_mm": list(art.center_xy_mm),
+                            "mean_radius_mm": art.mean_radius_mm,
+                            "outer_radius_bound_mm": art.outer_radius_bound_mm,
+                        },
+                    )
+                )
+            manifest["surfaces_are_merged"] = True
+            manifest["objects"] = objects
+
+        return manifest
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers for Vessel.from_config
@@ -696,7 +804,7 @@ def _emitted_material_chain(wall_cfg) -> list[str]:
 
 
 def _build_emitted_surface_list(
-    layer_meshes: list[trimesh.Trimesh], wall_cfg
+    layer_meshes: list[trimesh.Trimesh], wall_cfg, *, obj_dir: str = ""
 ) -> list[SurfaceEntry]:
     """Build the simulator-facing :class:`SurfaceEntry` list.
 
@@ -710,6 +818,11 @@ def _build_emitted_surface_list(
 
     Legacy single-slab walls keep both meshes (``[lumen, outer]``) so
     raysim still sees the historical extravascular back-boundary.
+
+    ``obj_dir`` prefixes every ``obj_filename`` (e.g. ``objects/parent``)
+    so a single object's shells can be written under their own
+    subdirectory. It defaults to empty, giving the canonical top-level
+    ``lumen.obj`` / ``surfaces/`` paths.
     """
 
     chain = _emitted_material_chain(wall_cfg)
@@ -721,6 +834,7 @@ def _build_emitted_surface_list(
         )
     emit_meshes = layer_meshes[:n_emit]
     is_layered = isinstance(wall_cfg, LayeredWallConfig)
+    prefix = f"{obj_dir}/" if obj_dir else ""
 
     entries: list[SurfaceEntry] = []
     for i, (mesh, material) in enumerate(zip(emit_meshes, chain)):
@@ -738,7 +852,7 @@ def _build_emitted_surface_list(
                 name=name,
                 material_name=material,
                 mesh=mesh,
-                obj_filename=obj_filename,
+                obj_filename=f"{prefix}{obj_filename}",
             )
         )
     return entries

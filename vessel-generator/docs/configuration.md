@@ -114,6 +114,12 @@ on the same `VesselConfig` (raises `ValueError`), and the batch sampler
 never draws both. `adjacent_vessel_probability + aortic_scale_probability`
 must be `<= 1`.
 
+**On-disk meshes (for rendering):** neighbor meshes are concatenated into the
+merged top-level surfaces for the geometry stack, and *also* written per-object
+under `objects/` with a manifest `objects` section (`surfaces_are_merged: true`)
+so raysim can render each vessel as a distinct nested object. See
+[simulator-integration.md](simulator-integration.md#adjacent-vessels-merged-vs-per-object-meshes).
+
 **Neighbor-directed pose bias:** `adjacent_vessel_pose_bias_prob` (default
 0.8) controls the fraction of poses drawn eccentric toward a neighbor (when
 several neighbors are present, one is chosen at random for that pose), which
