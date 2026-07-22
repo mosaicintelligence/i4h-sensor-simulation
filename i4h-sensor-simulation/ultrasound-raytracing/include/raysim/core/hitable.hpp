@@ -22,6 +22,7 @@
 #include <vector_types.h>
 
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "raysim/cuda/cuda_helper.hpp"
@@ -42,6 +43,21 @@ class Hitable {
 
   virtual void build(OptixBuildInput* optix_build_input, HitGroupData* hit_group_data,
                      cudaStream_t stream) = 0;
+
+  /// Rest-pose vertices in this object's build (assimp) order, packed as [x0,y0,z0,x1,...].
+  /// Consumers (e.g. the kinematic dilation field) key their per-vertex data on this order.
+  /// Default: not supported (only meshes override it).
+  virtual std::vector<float3> get_vertices() const {
+    throw std::runtime_error("get_vertices() is only supported for Mesh objects");
+  }
+
+  /// Overwrite the device vertex buffer in place from another device buffer (num_vertices
+  /// float3), then the owning World can refit the GAS. Requires build() to have run.
+  /// Default: not supported (only meshes override it).
+  virtual void update_vertices(CUdeviceptr /*device_ptr*/, size_t /*num_vertices*/,
+                               cudaStream_t /*stream*/) {
+    throw std::runtime_error("update_vertices() is only supported for Mesh objects");
+  }
 
   float3 get_aabb_min() const { return aabb_min_; }
   float3 get_aabb_max() const { return aabb_max_; }
@@ -83,6 +99,11 @@ class Mesh : public Hitable {
   void build(OptixBuildInput* optix_build_input, HitGroupData* hit_group_data,
              cudaStream_t stream) override;
 
+  std::vector<float3> get_vertices() const override;
+
+  void update_vertices(CUdeviceptr device_ptr, size_t num_vertices,
+                       cudaStream_t stream) override;
+
  private:
   std::shared_ptr<Assimp::Importer> importer_;
 
@@ -92,6 +113,9 @@ class Mesh : public Hitable {
 
   std::vector<CUdeviceptr> vertex_buffers_;
   std::vector<CUdeviceptr> normal_buffers_;
+
+  /// Vertex count captured at load; used to validate/size in-place vertex updates.
+  uint32_t num_vertices_ = 0;
 };
 
 }  // namespace raysim

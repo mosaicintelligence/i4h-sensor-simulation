@@ -47,8 +47,24 @@ class World {
    *
    * @param context
    * @param stream
+   * @param allow_update build a refit-able (non-compacted) GAS so update_object_vertices +
+   *   refit can update geometry in place per frame (dynamic / deforming meshes).
    */
-  void build(OptixDeviceContext context, cudaStream_t stream);
+  void build(OptixDeviceContext context, cudaStream_t stream, bool allow_update = false);
+
+  /**
+   * Overwrite object @p index's vertex buffer in place from a device buffer of
+   * @p num_vertices float3 (assimp order). Call refit() afterwards to update the GAS.
+   * Requires the world to have been built with allow_update == true.
+   */
+  void update_object_vertices(size_t index, CUdeviceptr device_ptr, size_t num_vertices,
+                              cudaStream_t stream);
+
+  /**
+   * Refit the GAS in place after one or more update_object_vertices() calls. Much cheaper
+   * than a rebuild. Requires allow_update == true at build time.
+   */
+  void refit(OptixDeviceContext context, cudaStream_t stream);
 
   OptixTraversableHandle get_gas_handle() const;
 
@@ -63,12 +79,19 @@ class World {
   const std::string background_material_;
 
   std::list<std::unique_ptr<Hitable>> objects_;
+  /// Raw pointers into objects_ for O(1) index access (update_object_vertices); objects_ owns.
+  std::vector<Hitable*> object_ptrs_;
 
   std::shared_ptr<CudaArray> scattering_array_;
   std::unique_ptr<CudaTexture> scattering_texture_;
 
   OptixTraversableHandle gas_handle_;
   std::unique_ptr<CudaMemory> d_gas_output_buffer_;
+
+  // Refit-able GAS state (only populated when built with allow_update == true).
+  bool allow_update_ = false;
+  std::unique_ptr<CudaMemory> gas_update_temp_buffer_;
+  size_t gas_output_size_ = 0;
 
   std::vector<OptixBuildInput> build_input_;
   std::vector<HitGroupData> hit_group_data_;

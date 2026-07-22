@@ -20,6 +20,7 @@
 #include <optix_function_table_definition.h>
 
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 #include <spdlog/spdlog.h>
@@ -64,10 +65,12 @@ void World::add(std::unique_ptr<Hitable> hitable) {
   aabb_max_.x = std::max(aabb_max_.x, obj_aabb_max.x);
   aabb_max_.y = std::max(aabb_max_.y, obj_aabb_max.y);
   aabb_max_.z = std::max(aabb_max_.z, obj_aabb_max.z);
+  object_ptrs_.push_back(hitable.get());
   objects_.emplace_back(std::move(hitable));
 }
 
-void World::build(OptixDeviceContext context, cudaStream_t stream) {
+void World::build(OptixDeviceContext context, cudaStream_t stream, bool allow_update) {
+  allow_update_ = allow_update;
   build_input_.resize(objects_.size());
   hit_group_data_.resize(objects_.size());
 
@@ -77,7 +80,41 @@ void World::build(OptixDeviceContext context, cudaStream_t stream) {
     ++index;
   }
 
-  optix_build_gas(context, build_input_, &gas_handle_, &d_gas_output_buffer_, stream);
+  optix_build_gas(context,
+                  build_input_,
+                  &gas_handle_,
+                  &d_gas_output_buffer_,
+                  stream,
+                  allow_update_,
+                  &gas_update_temp_buffer_,
+                  &gas_output_size_);
+}
+
+void World::update_object_vertices(size_t index, CUdeviceptr device_ptr, size_t num_vertices,
+                                   cudaStream_t stream) {
+  if (!allow_update_) {
+    throw std::runtime_error(
+        "update_object_vertices() requires the world to be built with allow_update=true");
+  }
+  if (index >= object_ptrs_.size()) {
+    throw std::runtime_error("update_object_vertices(): object index out of range");
+  }
+  object_ptrs_[index]->update_vertices(device_ptr, num_vertices, stream);
+}
+
+void World::refit(OptixDeviceContext context, cudaStream_t stream) {
+  if (!allow_update_) {
+    throw std::runtime_error("refit() requires the world to be built with allow_update=true");
+  }
+  // build_input_ still references the (in-place updated) vertex buffers, so an UPDATE re-fits
+  // the existing GAS without a full rebuild.
+  optix_refit_gas(context,
+                  build_input_,
+                  &gas_handle_,
+                  &d_gas_output_buffer_,
+                  &gas_update_temp_buffer_,
+                  gas_output_size_,
+                  stream);
 }
 
 OptixTraversableHandle World::get_gas_handle() const {

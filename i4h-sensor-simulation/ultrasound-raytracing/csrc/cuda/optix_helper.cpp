@@ -17,6 +17,7 @@
 
 #include "raysim/cuda/optix_helper.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 
@@ -260,14 +261,23 @@ T roundUp(T x, T y) {
   return ((x + y - 1) / y) * y;
 }
 
+// Build flags for a refit-able GAS. ALLOW_UPDATE lets optixAccelBuild do an in-place UPDATE
+// operation after the vertex contents change; compaction is deliberately omitted (a compacted
+// GAS is immutable and cannot be updated). Refit and the original build MUST share these flags.
+static OptixAccelBuildOptions make_accel_options(bool allow_update) {
+  OptixAccelBuildOptions accel_options{};
+  accel_options.buildFlags =
+      OPTIX_BUILD_FLAG_PREFER_FAST_TRACE | OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS |
+      (allow_update ? OPTIX_BUILD_FLAG_ALLOW_UPDATE : OPTIX_BUILD_FLAG_ALLOW_COMPACTION);
+  accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
+  return accel_options;
+}
+
 void optix_build_gas(OptixDeviceContext context, const std::vector<OptixBuildInput>& build_input,
                      OptixTraversableHandle* gas_handle, std::unique_ptr<CudaMemory>* gas_buffer,
-                     cudaStream_t stream) {
-  OptixAccelBuildOptions accel_options{};
-  accel_options.buildFlags = OPTIX_BUILD_FLAG_ALLOW_COMPACTION |
-                             OPTIX_BUILD_FLAG_PREFER_FAST_TRACE |
-                             OPTIX_BUILD_FLAG_ALLOW_RANDOM_VERTEX_ACCESS;
-  accel_options.operation = OPTIX_BUILD_OPERATION_BUILD;
+                     cudaStream_t stream, bool allow_update,
+                     std::unique_ptr<CudaMemory>* update_temp_buffer, size_t* gas_output_size) {
+  OptixAccelBuildOptions accel_options = make_accel_options(allow_update);
 
   OptixAccelBufferSizes gas_buffer_sizes;
   OPTIX_CHECK(optixAccelComputeMemoryUsage(
@@ -278,6 +288,9 @@ void optix_build_gas(OptixDeviceContext context, const std::vector<OptixBuildInp
   auto d_buffer_temp_output_gas_and_compacted_size =
       std::make_unique<CudaMemory>(compacted_size_offset + 8, stream);
 
+  // Only query the compacted size when compaction is actually enabled. In allow_update mode
+  // ALLOW_COMPACTION is not set (a compacted GAS cannot be refit), so requesting the compacted
+  // size is an OptiX error - skip the emitted-property list entirely.
   OptixAccelEmitDesc emit_property{};
   emit_property.type = OPTIX_PROPERTY_TYPE_COMPACTED_SIZE;
   emit_property.result =
@@ -296,9 +309,21 @@ void optix_build_gas(OptixDeviceContext context, const std::vector<OptixBuildInp
                                 d_buffer_temp_output_gas_and_compacted_size->get_device_ptr(stream),
                                 gas_buffer_sizes.outputSizeInBytes,
                                 gas_handle,
-                                &emit_property,  // emitted property list
-                                1                // num emitted properties
+                                allow_update ? nullptr : &emit_property,  // emitted property list
+                                allow_update ? 0 : 1                      // num emitted properties
                                 ));
+  }
+
+  if (allow_update) {
+    // Keep the non-compacted output buffer so refit can update it in place, and hand back a
+    // persistent scratch buffer sized for the (cheaper) update operation.
+    if (gas_output_size) { *gas_output_size = gas_buffer_sizes.outputSizeInBytes; }
+    if (update_temp_buffer) {
+      *update_temp_buffer = std::make_unique<CudaMemory>(
+          std::max<size_t>(gas_buffer_sizes.tempUpdateSizeInBytes, 1), stream);
+    }
+    *gas_buffer = std::move(d_buffer_temp_output_gas_and_compacted_size);
+    return;
   }
 
   size_t compacted_gas_size = 0;
@@ -320,6 +345,37 @@ void optix_build_gas(OptixDeviceContext context, const std::vector<OptixBuildInp
   } else {
     *gas_buffer = std::move(d_buffer_temp_output_gas_and_compacted_size);
   }
+}
+
+void optix_refit_gas(OptixDeviceContext context, const std::vector<OptixBuildInput>& build_input,
+                     OptixTraversableHandle* gas_handle, std::unique_ptr<CudaMemory>* gas_buffer,
+                     std::unique_ptr<CudaMemory>* update_temp_buffer, size_t gas_output_size,
+                     cudaStream_t stream) {
+  OptixAccelBuildOptions accel_options = make_accel_options(/*allow_update=*/true);
+  accel_options.operation = OPTIX_BUILD_OPERATION_UPDATE;
+
+  // Grow the update scratch buffer if the topology needs more than we currently hold.
+  OptixAccelBufferSizes gas_buffer_sizes;
+  OPTIX_CHECK(optixAccelComputeMemoryUsage(
+      context, &accel_options, build_input.data(), build_input.size(), &gas_buffer_sizes));
+  if (!*update_temp_buffer || (*update_temp_buffer)->get_size() < gas_buffer_sizes.tempUpdateSizeInBytes) {
+    *update_temp_buffer =
+        std::make_unique<CudaMemory>(gas_buffer_sizes.tempUpdateSizeInBytes, stream);
+  }
+
+  // In-place update: input handle == output handle, reusing the original (non-compacted) buffer.
+  OPTIX_CHECK(optixAccelBuild(context,
+                              stream,
+                              &accel_options,
+                              build_input.data(),
+                              build_input.size(),
+                              (*update_temp_buffer)->get_device_ptr(stream),
+                              (*update_temp_buffer)->get_size(),
+                              (*gas_buffer)->get_device_ptr(stream),
+                              gas_output_size,
+                              gas_handle,
+                              nullptr,
+                              0));
 }
 
 }  // namespace raysim

@@ -280,7 +280,8 @@ static std::unique_ptr<CudaMemory> create_piece_wise_tgc(
 }
 
 RaytracingUltrasoundSimulator::RaytracingUltrasoundSimulator(World* world,
-                                                             const Materials* materials)
+                                                             const Materials* materials,
+                                                             bool allow_update)
     : world_(world), materials_(materials) {
   // Initialize OptiX
   context_ = optix_init();
@@ -295,8 +296,8 @@ RaytracingUltrasoundSimulator::RaytracingUltrasoundSimulator(World* world,
 
   const cudaStream_t stream = cudaStreamPerThread;
 
-  // Build the acceleration structure
-  world_->build(context_.get(), stream);
+  // Build the acceleration structure (refit-able when allow_update, for dynamic geometry)
+  world_->build(context_.get(), stream, allow_update);
 
   // Set up the shader binding table
   const size_t raygen_record_size = sizeof(RayGenSbtRecord);
@@ -337,6 +338,15 @@ RaytracingUltrasoundSimulator::RaytracingUltrasoundSimulator(World* world,
   pipeline_params_.resize(sizeof(Params));
 
   cuda_algorithms_ = std::make_shared<CUDAAlgorithms>();
+}
+
+void RaytracingUltrasoundSimulator::update_vertices(size_t obj_index, CUdeviceptr device_ptr,
+                                                    size_t num_vertices) {
+  world_->update_object_vertices(obj_index, device_ptr, num_vertices, cudaStreamPerThread);
+}
+
+void RaytracingUltrasoundSimulator::refit() {
+  world_->refit(context_.get(), cudaStreamPerThread);
 }
 
 void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStream_t stream,

@@ -70,8 +70,34 @@ void optix_create_pipeline(OptixDeviceContext context, std::shared_ptr<OptixPipe
                            std::shared_ptr<OptixProgramGroup_t>& hitgroup_prog_group_sphere,
                            std::shared_ptr<OptixProgramGroup_t>& hitgroup_prog_group_triangle);
 
+/**
+ * Build the geometry acceleration structure (GAS).
+ *
+ * @param allow_update when true the GAS is built with OPTIX_BUILD_FLAG_ALLOW_UPDATE and is
+ *   NOT compacted (a compacted GAS cannot be refit), so it can later be updated in place by
+ *   optix_refit_gas after the input vertex buffers change (dynamic / deforming geometry).
+ * @param update_temp_buffer when allow_update is true, receives a persistent scratch buffer
+ *   sized for refits (tempUpdateSizeInBytes); pass it back to optix_refit_gas.
+ * @param gas_output_size when allow_update is true, receives the (non-compacted) output-buffer
+ *   size the refit must reuse.
+ */
 void optix_build_gas(OptixDeviceContext context, const std::vector<OptixBuildInput>& build_input,
                      OptixTraversableHandle* gas_handle, std::unique_ptr<CudaMemory>* gas_buffer,
+                     cudaStream_t stream, bool allow_update = false,
+                     std::unique_ptr<CudaMemory>* update_temp_buffer = nullptr,
+                     size_t* gas_output_size = nullptr);
+
+/**
+ * Refit (update in place) a GAS previously built with allow_update == true.
+ *
+ * Reuses the existing output buffer and does an OPTIX_BUILD_OPERATION_UPDATE, which is far
+ * cheaper than a full rebuild. The build inputs must have the same topology (vertex/index
+ * counts, buffer pointers) as the original build; only the vertex-buffer *contents* may have
+ * changed. @p gas_handle is updated in place.
+ */
+void optix_refit_gas(OptixDeviceContext context, const std::vector<OptixBuildInput>& build_input,
+                     OptixTraversableHandle* gas_handle, std::unique_ptr<CudaMemory>* gas_buffer,
+                     std::unique_ptr<CudaMemory>* update_temp_buffer, size_t gas_output_size,
                      cudaStream_t stream);
 
 }  // namespace raysim

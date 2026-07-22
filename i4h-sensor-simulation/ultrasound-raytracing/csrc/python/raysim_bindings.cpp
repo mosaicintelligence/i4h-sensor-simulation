@@ -763,11 +763,13 @@ rays emanate radially over 360° for a cross-sectional vessel image.
             2. Computing acoustic interactions
             3. Generating B-mode images
     )pbdoc")
-      .def(py::init([](raysim::World* world, const raysim::Materials* materials) {
+      .def(py::init([](raysim::World* world, const raysim::Materials* materials,
+                       bool allow_update) {
              try {
-               spdlog::info("Creating RaytracingUltrasoundSimulator");
-               auto simulator =
-                   std::make_unique<raysim::RaytracingUltrasoundSimulator>(world, materials);
+               spdlog::info("Creating RaytracingUltrasoundSimulator (allow_update={})",
+                            allow_update);
+               auto simulator = std::make_unique<raysim::RaytracingUltrasoundSimulator>(
+                   world, materials, allow_update);
                spdlog::info("RaytracingUltrasoundSimulator created successfully");
                return simulator;
              } catch (const std::exception& e) {
@@ -775,12 +777,46 @@ rays emanate radially over 360° for a cross-sectional vessel image.
                throw;
              }
            }),
+           py::arg("world"),
+           py::arg("materials"),
+           py::arg("allow_update") = false,
            R"pbdoc(
         Initialize a new simulator.
 
         Args:
             world: World instance containing the scene geometry
             materials: Materials instance with material definitions
+            allow_update: build a refit-able GAS so update_vertices()/refit() can drive
+                dynamic (deforming) geometry, e.g. pulsatile lumen dilation. Default False
+                keeps the original compacted (immutable) build and behaviour.
+      )pbdoc")
+      .def(
+          "update_vertices",
+          [](raysim::RaytracingUltrasoundSimulator& self, size_t obj_index, uintptr_t device_ptr,
+             size_t num_vertices) {
+            self.update_vertices(
+                obj_index, static_cast<CUdeviceptr>(device_ptr), num_vertices);
+          },
+          py::arg("obj_index"),
+          py::arg("device_ptr"),
+          py::arg("num_vertices"),
+          R"pbdoc(
+        Overwrite object `obj_index`'s vertices in place from a CUDA device pointer.
+
+        Args:
+            obj_index: index of the object in World add() order.
+            device_ptr: CUDA device address (int) of `num_vertices` packed float3 in the
+                mesh's build (assimp) vertex order - e.g. `int(warp_array.ptr)`.
+            num_vertices: vertex count (must equal the mesh's vertex count).
+
+        Requires the simulator to have been created with allow_update=True. Call refit()
+        afterwards before the next simulate().
+      )pbdoc")
+      .def("refit",
+           &raysim::RaytracingUltrasoundSimulator::refit,
+           R"pbdoc(
+        Refit the acceleration structure in place after update_vertices() calls. Much cheaper
+        than a rebuild; requires allow_update=True at construction.
       )pbdoc")
       .def("get_min_x",
            &raysim::RaytracingUltrasoundSimulator::get_min_x,
@@ -875,6 +911,26 @@ rays emanate radially over 360° for a cross-sectional vessel image.
         Args:
             file_name (str): Path to OBJ file
             material_id (int): Material index from Materials.get_index()
+      )pbdoc")
+      .def(
+          "get_vertices",
+          [](const raysim::Mesh& self) {
+            std::vector<float3> verts = self.get_vertices();
+            std::vector<ssize_t> shape = {static_cast<ssize_t>(verts.size()), 3};
+            auto array = py::array_t<float>(shape);
+            auto buf = array.request();
+            float* ptr = static_cast<float*>(buf.ptr);
+            for (size_t i = 0; i < verts.size(); ++i) {
+              ptr[i * 3 + 0] = verts[i].x;
+              ptr[i * 3 + 1] = verts[i].y;
+              ptr[i * 3 + 2] = verts[i].z;
+            }
+            return array;
+          },
+          R"pbdoc(
+        Rest-pose vertices as an (N, 3) float32 numpy array in the mesh's build (assimp)
+        vertex order. Use to build a per-vertex deformation field that stays aligned with
+        the buffer update_vertices() writes to.
       )pbdoc");
 
   // Bind Sphere class
