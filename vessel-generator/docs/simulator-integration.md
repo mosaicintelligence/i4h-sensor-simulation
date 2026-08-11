@@ -85,10 +85,21 @@ drift.
     "azimuth_deg": …, "center_offset_mm": …, "center_xy_mm": […],
     "mean_radius_mm": …, "outer_radius_bound_mm": …,
     "centerline": { …resolved (laterally offset) origin… },
-    "surfaces": [ …objects/neighbor_00/… ]   // same material chain as the parent
+    "surfaces": [ …objects/neighbor_00/… ]   // parent's chain + a closing `outer` shell
   }
 ]
 ```
+
+A neighbor emits **one more shell than the parent**: the adventitia back
+boundary (`outer.obj`), carrying a duplicate of the outermost material. The
+parent drops that shell because rays exit it into adventitia and stay there
+until the FOV, which is already the truth. A ray passes *clean through* a
+neighbor, though, and raysim tracks only a single "material outside" slot
+(`Payload.outter_material_id`), so with no final surface to cross the ray would
+keep the neighbor's innermost wall material all the way out — a wedge of
+phantom wall behind every neighbor. The closing shell has the same material on
+both sides, so it is acoustically invisible (R = 0); it exists purely to
+restore the material state machine.
 
 The top-level `surfaces` list and its OBJ files are unchanged, so the current
 renderer keeps working (it renders the parent correctly and ignores `objects`).

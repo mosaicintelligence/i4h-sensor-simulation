@@ -478,8 +478,12 @@ def test_per_object_meshes_and_manifest(tmp_path, n_neighbors):
     for obj in objects[1:]:
         assert obj["role"] == "adjacent"
         assert obj["probe_inside"] is False
-        # Neighbors share the parent's material chain by construction.
-        assert [s["material"] for s in obj["surfaces"]] == parent_materials
+        # Neighbors share the parent's material chain by construction, plus a
+        # closing outer shell that repeats the outermost material so the ray
+        # is handed back to adventitia when it leaves the neighbor.
+        assert [s["material"] for s in obj["surfaces"]] == parent_materials + [
+            parent_materials[-1]
+        ]
         assert obj["interior_material"] == vessel.world_background_material
         assert obj["surrounding_material"] == parent_materials[-1]
         # Placement metadata the renderer needs to seat the neighbor.
@@ -497,6 +501,45 @@ def test_per_object_meshes_and_manifest(tmp_path, n_neighbors):
     for s in manifest["surfaces"]:
         assert not s["obj"].startswith("objects/")
         assert (vdir / s["obj"]).is_file()
+
+
+@pytest.mark.parametrize("n_neighbors", [1, 2])
+def test_neighbor_emits_closing_outer_shell(tmp_path, n_neighbors):
+    """A neighbor carries one more shell than the parent: the adventitia back
+    boundary. The parent drops it (rays exit into adventitia and stay there),
+    but a ray passes clean through a neighbor, and raysim tracks only a single
+    "material outside" slot -- with no final surface to cross, the ray would
+    keep the neighbor's innermost wall material all the way to the FOV. The
+    shell has the same material on both sides, so it is acoustically invisible
+    (R = 0) and exists purely to restore the material state machine."""
+    import json
+
+    from vesselgen.io import save_vessel
+
+    cfg = _adjacent_config(11, n_neighbors=n_neighbors)
+    vessel = Vessel.from_config(cfg)
+
+    for art in vessel.adjacent_vessels:
+        assert len(art.surfaces) == len(vessel.parent_object_surfaces) + 1
+        closing = art.surfaces[-1]
+        assert closing.name == "outer"
+        assert closing.material_name == vessel.parent_object_surfaces[-1].material_name
+        # It is the adventitia back boundary, so it strictly encloses the
+        # media/adventitia interface it follows.
+        assert closing.mesh.volume > art.surfaces[-2].mesh.volume
+
+    # The parent is unchanged -- no closing shell, no extra OBJ.
+    assert [s.name for s in vessel.parent_object_surfaces] == [s.name for s in vessel.surfaces]
+
+    vdir = save_vessel(vessel, tmp_path / "adj")
+    with (vdir / "vessel.json").open() as f:
+        manifest = json.load(f)
+    for obj in manifest["objects"][1:]:
+        outer = obj["surfaces"][-1]
+        assert outer["name"] == "outer"
+        assert outer["obj"].endswith("/outer.obj")
+        assert (vdir / outer["obj"]).is_file()
+    assert manifest["objects"][0]["surfaces"][-1]["name"] != "outer"
 
 
 @pytest.mark.parametrize("n_neighbors", [1, 2])

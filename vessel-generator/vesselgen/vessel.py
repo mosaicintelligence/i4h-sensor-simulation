@@ -341,11 +341,16 @@ class Vessel:
                     centerline=neighbor_centerline,
                     lumen_field=neighbor_lumen,
                     # Neighbor shares the parent's wall config, so its emitted
-                    # surfaces carry the identical material chain.
+                    # surfaces carry the identical material chain -- plus the
+                    # outer adventitia shell, which a neighbor needs and the
+                    # parent does not (see ``include_outer``): a ray passes
+                    # clean through a neighbor and has to be handed back to
+                    # adventitia on the way out.
                     surfaces=_build_emitted_surface_list(
                         neighbor_meshes,
                         cfg.parent.wall,
                         obj_dir=f"objects/neighbor_{neighbor_idx:02d}",
+                        include_outer=True,
                     ),
                 )
             )
@@ -804,7 +809,11 @@ def _emitted_material_chain(wall_cfg) -> list[str]:
 
 
 def _build_emitted_surface_list(
-    layer_meshes: list[trimesh.Trimesh], wall_cfg, *, obj_dir: str = ""
+    layer_meshes: list[trimesh.Trimesh],
+    wall_cfg,
+    *,
+    obj_dir: str = "",
+    include_outer: bool = False,
 ) -> list[SurfaceEntry]:
     """Build the simulator-facing :class:`SurfaceEntry` list.
 
@@ -823,6 +832,17 @@ def _build_emitted_surface_list(
     so a single object's shells can be written under their own
     subdirectory. It defaults to empty, giving the canonical top-level
     ``lumen.obj`` / ``surfaces/`` paths.
+
+    ``include_outer`` re-appends the outermost (adventitia back-boundary)
+    mesh that a layered wall otherwise drops, carrying a duplicate of the
+    last chain entry so it is acoustically invisible (identical material
+    on both sides, R = 0). It exists purely to close the material state
+    machine for an object a ray traverses *all the way through* -- i.e. a
+    neighbor, which the probe is outside of. ``Payload.outter_material_id``
+    is a single slot, so without a final surface to cross the ray would
+    keep the innermost wall material out to the FOV, leaving a wedge of
+    phantom wall behind every neighbor. The parent never needs it: rays
+    start inside it and exit into adventitia, which is already correct.
     """
 
     chain = _emitted_material_chain(wall_cfg)
@@ -853,6 +873,16 @@ def _build_emitted_surface_list(
                 material_name=material,
                 mesh=mesh,
                 obj_filename=f"{prefix}{obj_filename}",
+            )
+        )
+
+    if include_outer and is_layered and len(layer_meshes) > n_emit:
+        entries.append(
+            SurfaceEntry(
+                name="outer",
+                material_name=chain[-1],
+                mesh=layer_meshes[n_emit],
+                obj_filename=f"{prefix}outer.obj",
             )
         )
     return entries
