@@ -481,9 +481,7 @@ def test_per_object_meshes_and_manifest(tmp_path, n_neighbors):
         # Neighbors share the parent's material chain by construction, plus a
         # closing outer shell that repeats the outermost material so the ray
         # is handed back to adventitia when it leaves the neighbor.
-        assert [s["material"] for s in obj["surfaces"]] == parent_materials + [
-            parent_materials[-1]
-        ]
+        assert [s["material"] for s in obj["surfaces"]] == parent_materials + [parent_materials[-1]]
         assert obj["interior_material"] == vessel.world_background_material
         assert obj["surrounding_material"] == parent_materials[-1]
         # Placement metadata the renderer needs to seat the neighbor.
@@ -615,3 +613,97 @@ def test_neighbor_bias_is_noop_without_neighbors():
     for _ in range(10):
         pose = vessel.sample_pose(prng, max_tilt_deg=6.0, neighbor_bias_prob=1.0)
         assert pose.branch_name
+
+
+# ---------------------------------------------------------------------------
+# Render path: the world raysim is handed for a vessel with neighbors.
+# ---------------------------------------------------------------------------
+
+
+def _load_render_module():
+    """Import ``examples/render_paired_dataset.py`` by path.
+
+    It is a script, not a package module, so there is nothing to import
+    normally. It pulls in the calibration package at import time; skip
+    rather than fail when that is not on this host.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "examples" / "render_paired_dataset.py"
+    spec = importlib.util.spec_from_file_location("_render_paired_dataset", path)
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:  # pragma: no cover - host-dependent
+        pytest.skip(f"render_paired_dataset not importable here: {exc}")
+    return module
+
+
+@pytest.mark.parametrize("n_neighbors", [1, 2])
+def test_render_world_loads_objects_not_merged_surfaces(tmp_path, n_neighbors):
+    """With neighbors present the renderer must load the per-object shells,
+    each neighbor's material chain shifted one shell inward, and must not also
+    load the merged top-level meshes (that would double the geometry)."""
+    import json
+
+    from vesselgen.io import save_vessel
+
+    rpd = _load_render_module()
+
+    cfg = _adjacent_config(11, n_neighbors=n_neighbors)
+    vessel = Vessel.from_config(cfg)
+    vdir = save_vessel(vessel, tmp_path / "adj")
+    with (vdir / "vessel.json").open() as f:
+        manifest = json.load(f)
+
+    entries = rpd._meshes_from_manifest(manifest, vdir)
+    paths = [str(p.relative_to(vdir)) for p, _ in entries]
+
+    # Nothing merged: every wall shell comes from objects/.
+    merged = {s["obj"] for s in manifest["surfaces"]}
+    assert not merged.intersection(paths)
+    assert all(p.startswith("objects/") for p in paths)
+    assert len(paths) == len(set(paths))
+
+    parent_chain = [s["material"] for s in manifest["objects"][0]["surfaces"]]
+    by_path = dict(zip(paths, [m for _, m in entries]))
+
+    # Parent: declared chain, unchanged (probe is inside it).
+    for s, material in zip(manifest["objects"][0]["surfaces"], parent_chain):
+        assert by_path[s["obj"]] == material
+
+    # Neighbors: shifted inward, innermost shell handing back the blood pool.
+    interior = vessel.world_background_material
+    for obj in manifest["objects"][1:]:
+        surfaces = obj["surfaces"]
+        expected = [interior] + parent_chain
+        assert [by_path[s["obj"]] for s in surfaces] == expected
+        # The closing shell has the same material declared on both sides,
+        # which is what makes it acoustically invisible.
+        assert by_path[surfaces[-1]["obj"]] == obj["surrounding_material"]
+
+
+def test_render_world_unchanged_without_neighbors(tmp_path):
+    """A vessel with no neighbors keeps the existing top-level surface path."""
+    import json
+
+    from vesselgen.io import save_vessel
+
+    rpd = _load_render_module()
+
+    cfg = GenerationConfig(
+        adjacent_vessel_probability=0.0,
+        calcification_probability=0.0,
+        guidewire_probability=0.0,
+    )
+    rng = np.random.default_rng(0)
+    vessel = Vessel.from_config(cfg.sample(rng, seed=0))
+    vdir = save_vessel(vessel, tmp_path / "plain")
+    with (vdir / "vessel.json").open() as f:
+        manifest = json.load(f)
+
+    entries = rpd._meshes_from_manifest(manifest, vdir)
+    assert [(str(p.relative_to(vdir)), m) for p, m in entries] == [
+        (s["obj"], s["material"]) for s in manifest["surfaces"]
+    ]

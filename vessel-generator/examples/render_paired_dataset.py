@@ -94,15 +94,66 @@ PoseSlot = Literal["random", "side_branch", "parent_ostium"]
 # ---------------------------------------------------------------------------
 
 
-def _meshes_from_manifest(manifest: dict, vessel_dir: Path) -> list[tuple[Path, str]]:
-    """Return ``[(obj_path, material_name)]`` for every mesh the simulator
-    should load, in the order ``surfaces, lesions, guidewire``.
+def _inward_shifted_chain(obj: dict) -> list[str]:
+    """Material chain to declare for an object the probe sits **outside** of.
+
+    raysim decides enter-vs-exit by object identity, and a mesh's declared
+    material is the one a ray adopts on *entering* that mesh. The parent is
+    traversed inside->out (the probe is in its lumen), so the manifest's
+    "material just outside this surface" chain is already what a ray adopts
+    as it crosses each shell outward. A neighbour is reached from outside, so
+    the same crossings happen in the opposite order and every shell must
+    declare the material *inside* it instead -- the chain shifted one shell
+    inward, with the innermost (lumen) shell handing the ray the blood pool::
+
+        lumen.obj      intima      -> lumen        (interior_material)
+        interface_01   media       -> intima
+        interface_02   adventitia  -> media
+        outer          adventitia  -> adventitia   (closing shell, R = 0)
+    """
+    declared = [str(s["material"]) for s in obj.get("surfaces", [])]
+    interior = str(obj.get("interior_material", "lumen"))
+    return [interior if i == 0 else declared[i - 1] for i in range(len(declared))]
+
+
+def _surface_meshes_from_manifest(manifest: dict, vessel_dir: Path) -> list[tuple[Path, str]]:
+    """Return ``[(obj_path, material_name)]`` for the wall shells.
+
+    With no adjacent neighbours this is just the top-level ``surfaces`` list.
+    When ``surfaces_are_merged`` is set those top-level meshes fuse every
+    vessel into one mesh per shell -- correct for the geometry stack, wrong
+    for raysim, whose per-mesh crossing bookkeeping needs one mesh per closed
+    shell. In that case we load the ``objects`` decomposition instead (never
+    both: they are two views of the same geometry), each neighbour with its
+    chain shifted inward.
     """
     entries: list[tuple[Path, str]] = []
+    objects = manifest.get("objects") if manifest.get("surfaces_are_merged") else None
+    if objects:
+        for obj in objects:
+            surfaces = obj.get("surfaces", [])
+            materials = (
+                [str(s["material"]) for s in surfaces]
+                if obj.get("probe_inside", False)
+                else _inward_shifted_chain(obj)
+            )
+            for s, material in zip(surfaces, materials):
+                p = vessel_dir / s["obj"]
+                if p.exists():
+                    entries.append((p, material))
+        return entries
     for s in manifest.get("surfaces", []):
         p = vessel_dir / s["obj"]
         if p.exists():
             entries.append((p, str(s["material"])))
+    return entries
+
+
+def _meshes_from_manifest(manifest: dict, vessel_dir: Path) -> list[tuple[Path, str]]:
+    """Return ``[(obj_path, material_name)]`` for every mesh the simulator
+    should load, in the order ``surfaces, lesions, guidewire``.
+    """
+    entries: list[tuple[Path, str]] = list(_surface_meshes_from_manifest(manifest, vessel_dir))
     for lesion in manifest.get("lesions", []):
         p = vessel_dir / lesion["obj"]
         if p.exists():
@@ -125,6 +176,11 @@ def build_vessel_world(vessel_dir: Path, materials):
     the material a ray enters when it crosses the surface outward;
     nothing is loaded past the outermost emitted surface (rays stay in
     the outer-most material until the FOV).
+
+    When the manifest sets ``surfaces_are_merged`` (adjacent neighbours),
+    the per-object shells under ``objects/`` are loaded in place of the
+    merged top-level ones, with each neighbour's chain shifted one shell
+    inward -- see :func:`_surface_meshes_from_manifest`.
 
     Falls back to the pre-manifest two-file layout
     (``lumen.obj`` + ``outer.obj``) only if no ``vessel.json`` is
