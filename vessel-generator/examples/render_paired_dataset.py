@@ -785,7 +785,7 @@ def generate_paired_dataset(
     edge_margin_mm: float = 0.15,
     frames_per_vessel: int = 12,
     max_pose_attempts: int = 48,
-    min_finite_fraction: float = 0.85,
+    max_reflection_depth: int | None = None,
     rand_cfg: SimRandomizationConfig | None = None,
     gen_cfg: GenerationConfig | None = None,
     max_gain_resamples: int = 8,
@@ -821,6 +821,14 @@ def generate_paired_dataset(
 
     rand_cfg = rand_cfg or SimRandomizationConfig()
     cfg, materials, _base_sim_params = load_calibrated_config()
+    if max_reflection_depth is not None:
+        # The calibrated default (15) is sized for a single vessel: the probe
+        # crosses 3 shells outward and that is the whole budget a ray needs.
+        # A scene with neighbours costs 8 crossings per neighbour a ray passes
+        # through (4 shells in, 4 out), so a two-neighbour vessel can exhaust
+        # 15 before the ray reaches the FOV and the tail of the A-line is
+        # silently dropped.
+        cfg.sim.max_reflection_depth = int(max_reflection_depth)
     base_gain_db = float(cfg.processing.gain_db)
     base_ring_down_amplitude = float(cfg.processing.ring_down.amplitude)
     base_t_far_mm = float(cfg.sim.t_far_mm)
@@ -940,9 +948,7 @@ def generate_paired_dataset(
             # rejected, and the segmentation mask costs ~5x the cheap
             # geometric validity check. Reject early on the cheap check,
             # then compute seg only when needed.
-            if not ground_truth_is_valid_pose(
-                vessel, pose, gt, min_finite_fraction=min_finite_fraction
-            ):
+            if not ground_truth_is_valid_pose(vessel, pose, gt):
                 continue
             seg: np.ndarray | None = None
             # The "side-branch sector missing wall" check rejects poses
@@ -1053,6 +1059,7 @@ def generate_paired_dataset(
         "acoustic_boundary_offset_mm": acoustic_offset,
         "boundary_type": "acoustic",
         "sim_config": str(VISIONS_DIR / "volcano_s5i.yaml"),
+        "max_reflection_depth": int(cfg.sim.max_reflection_depth),
         "randomization": {
             "gain_slider_range": list(rand_cfg.gain_slider_range),
             "ar_on_probability": rand_cfg.ar_on_probability,
@@ -1061,7 +1068,6 @@ def generate_paired_dataset(
             "min_side_branch_frames_per_vessel": min_side_branch_frames,
             "min_parent_ostium_frames_per_vessel": min_parent_ostium_frames,
             "max_saturation_fraction": rand_cfg.max_saturation_fraction,
-            "min_finite_fraction": min_finite_fraction,
             "tier2_enabled": rand_cfg.enable_tier2,
             "tgc_deep_gain_scale_range": list(rand_cfg.tgc_deep_gain_scale_range),
             "ring_down_amplitude_scale_range": list(rand_cfg.ring_down_amplitude_scale_range),
@@ -1151,16 +1157,14 @@ def main() -> None:
     p.add_argument("--edge-margin-mm", type=float, default=0.15)
     p.add_argument("--frames-per-vessel", type=int, default=12)
     p.add_argument(
-        "--min-finite-fraction",
-        type=float,
-        default=0.85,
+        "--max-reflection-depth",
+        type=int,
+        default=None,
         help=(
-            "Minimum fraction of A-lines whose lumen AND outer wall both fall "
-            "inside the FOV for a pose to be accepted. The 0.85 default rejects "
-            "beyond-FOV anatomy by construction: a large vessel whose far wall "
-            "runs past t_far has no outer hit on those sectors, which is the "
-            "case we want to render, not discard. Lower it (e.g. 0.50) when "
-            "generating a beyond-FOV shard."
+            "Override the calibrated ray reflection-depth budget (15). A scene "
+            "with adjacent neighbours spends ~8 crossings per neighbour a ray "
+            "passes through, so raise it (e.g. 24) or the far end of those "
+            "A-lines is dropped."
         ),
     )
     p.add_argument(
@@ -1230,10 +1234,10 @@ def main() -> None:
         max_tilt_deg=args.max_tilt_deg,
         edge_margin_mm=args.edge_margin_mm,
         frames_per_vessel=args.frames_per_vessel,
-        min_finite_fraction=args.min_finite_fraction,
         require_side_branch=bool(args.require_side_branch),
         min_side_branch_frames=args.min_side_branch_frames,
         min_parent_ostium_frames=args.min_parent_ostium_frames,
+        max_reflection_depth=args.max_reflection_depth,
         skip_overlay=args.skip_overlay,
         resume=args.resume,
     )
