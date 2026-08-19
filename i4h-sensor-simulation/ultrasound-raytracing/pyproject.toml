@@ -30,6 +30,7 @@ all = [
 ]
 dev = [
     "pre-commit>=3.5.0",
+    "pytest>=7.4",
 ]
 
 [tool.scikit-build]
@@ -41,3 +42,9 @@ build-dir = "build-release"
 [tool.scikit-build.cmake.define]
 BUILD_PYTHON_BINDINGS = "ON"
 BUILD_EXAMPLES = "OFF"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "cuda: requires NVIDIA GPU and a CUDA-built raysim extension",
+]
