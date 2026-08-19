@@ -789,7 +789,10 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   // Launchers are 2D; with num_el_samples > 1 the RF stack is still 3D
   // here (collapse happens after PSF). Apply the same depth profile to
   // every elevational plane with a per-plane seed mix so the mean is not
-  // dominated by a single noised plane.
+  // dominated by a single noised plane. Scatter amplitude is boosted by
+  // sqrt(N) before the mean; RF noise is not. If noise.sigma is re-enabled
+  // with N>1, post-mean noise RMS drops by ~sqrt(N) relative to 2D. YAML
+  // noise.sigma is 0, so Test F is unaffected.
   if (sim_params.noise_sigma > 0.f) {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Additive RF noise", sim_params.stream);
     const uint32_t base_seed =
@@ -836,10 +839,6 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
             &psf_tmp_, size, d_scanlines.get(), psf_lat_.get(), sim_params.stream);
       }
     }
-
-    if (sim_params.write_debug_images) {
-      write_image(d_scanlines.get(), plane_size, "debug_images/1_psf.png");
-    }
   }
 
   // Elevational contract: when num_el_samples > 1 the OptiX buffer is a
@@ -856,6 +855,10 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     cuda_algorithms_->mean_planes(d_scanlines.get(), size, d_plane.get(), sim_params.stream);
     d_scanlines = std::move(d_plane);
     size.z = 1u;
+  }
+
+  if (sim_params.write_debug_images && sim_params.conv_psf) {
+    write_image(d_scanlines.get(), plane_size, "debug_images/1_psf.png");
   }
 
   // 1.5 Time-Gain-Compensation
