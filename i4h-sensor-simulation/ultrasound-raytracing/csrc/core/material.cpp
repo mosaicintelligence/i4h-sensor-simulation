@@ -142,7 +142,36 @@ Materials::Materials() {
                  *     sigma=..)`) over editing this list, which requires a
                  *     C++ rebuild.
                  */
-                {"milk", Material(1.58f, 0.5f, 1530.f, 0.5f, 0.4f, 0.1f)}};  // specularity defaulted to 1.0 (was 0.0 -- bug, see note above; latent because milk is used as uniform background)
+                {"milk", Material(1.58f, 0.5f, 1530.f, 0.5f, 0.4f, 0.1f)},  // specularity defaulted to 1.0 (was 0.0 -- bug, see note above; latent because milk is used as uniform background)
+                /*
+                 * Trilaminar wall + plaque (vessel-generator REQUIRED_MATERIAL_NAMES).
+                 *
+                 * DESIGN: wall contrast is mostly BACKSCATTER (mu0 / sigma).
+                 * Interlayer Z steps stay small so intima/media and media/
+                 * adventitia Fresnel stay quiet; the lumen border is the one
+                 * interface we deliberately lift. `specularity` is the
+                 * Mattausch n exponent -- MUST stay >= 1 (see note above).
+                 *
+                 * intima: Z 1.87 vs lumen 1.68 → ~0.28% intensity reflection
+                 *   (was 1.811 / ~0.14%; PR20 is 1.92 / ~0.44%).
+                 * media: dark stripe -- low mu0 / sigma (unchanged).
+                 * adventitia: outer bright band; mu0/sigma nudged up vs the
+                 *   first reconstruction.
+                 *
+                 * Plaque (PR20 / 2026-06-10 visual recal):
+                 *   fibrous / lipid / thrombus -- table as documented.
+                 *   calcified_plaque -- BETWEEN fibrous and full calc for
+                 *   now (full calc is Z=2.23, α=20, σ=16). α≈12 is the
+                 *   documented "back specular still visible" stop; σ≈6 is
+                 *   bright without the full 46× vessel-wall saturate.
+                 */
+                {"intima", Material(1.87f, 0.93f, 1600.f, 0.55f, 0.6f, 0.49f, 1.f)},
+                {"media", Material(1.83f, 0.80f, 1570.f, 0.12f, 0.15f, 0.10f, 1.f)},
+                {"adventitia", Material(1.86f, 1.10f, 1610.f, 0.95f, 0.75f, 0.85f, 1.f)},
+                {"calcified_plaque", Material(2.12f, 12.0f, 2000.f, 1.25f, 1.25f, 6.0f, 1.f)},
+                {"lipid_pool", Material(1.70f, 0.4f, 1480.f, 0.12f, 0.08f, 0.05f, 1.f)},
+                {"fibrous_plaque", Material(2.02f, 1.4f, 1620.f, 1.5f, 1.0f, 0.8f, 1.f)},
+                {"thrombus", Material(1.70f, 0.4f, 1560.f, 0.55f, 0.40f, 0.30f, 1.f)}};
 
   // Upload materials to device
   std::vector<Material> material_data;
