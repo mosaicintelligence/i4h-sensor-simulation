@@ -5,7 +5,7 @@ elevational_height_mm > 0 and num_elevational_samples > 1, because
 post-Hilbert kernels still launched with size.z = N over a 1-plane
 buffer. Collapse now runs even when conv_psf is false.
 
-Skipped on hosts without a CUDA-built raysim / device (typical CI).
+Skipped only when raysim was not built with the CUDA extension.
 """
 
 from __future__ import annotations
@@ -18,9 +18,20 @@ def _cuda_rs():
     pytest.importorskip("raysim", reason="raysim package required")
     try:
         import raysim.cuda as rs
-    except Exception as exc:  # noqa: BLE001 — skip if extension missing
-        pytest.skip(f"raysim.cuda unavailable: {exc}")
+    except ImportError as exc:
+        pytest.skip(f"raysim CUDA extension not built: {exc}")
     return rs
+
+
+def _require_cuda(exc: BaseException) -> None:
+    msg = str(exc)
+    if "cudaErrorNoDevice" in msg or "no CUDA-capable device" in msg:
+        pytest.fail(
+            "raysim is built but CUDA sees no device. Run `nvidia-smi` in this "
+            "shell without sudo; if that fails, `newgrp vglusers` then "
+            f"`conda activate ultrasound`. Original error: {exc}"
+        )
+    raise exc
 
 
 @pytest.mark.parametrize("conv_psf", [True, False])
@@ -29,9 +40,18 @@ def test_elevational_samples_simulate_without_illegal_address(conv_psf: bool) ->
     try:
         materials = rs.Materials()
         world = rs.World("water")
+        # OptiX GAS build requires at least one primitive; an empty world
+        # fails with OPTIX_ERROR_INVALID_VALUE / "buildInputs is null".
+        world.add(
+            rs.Sphere(
+                np.array([2.0, 0.0, 0.0], dtype=np.float32),
+                0.4,
+                materials.get_index("vessel_wall"),
+            )
+        )
         sim = rs.RaytracingUltrasoundSimulator(world, materials)
     except RuntimeError as exc:
-        pytest.skip(f"no CUDA device?: {exc}")
+        _require_cuda(exc)
 
     probe = rs.IVUSProbe(
         rs.Pose(position=[0.0, 0.0, 0.0], rotation=[0.0, 0.0, 0.0]),
@@ -45,7 +65,8 @@ def test_elevational_samples_simulate_without_illegal_address(conv_psf: bool) ->
     )
     p = rs.SimParams()
     p.conv_psf = conv_psf
-    p.buffer_size = 512
+    # Hilbert FFT size is a compile-time constant (4096 samples).
+    p.buffer_size = 4096
     p.t_far = 8.0
     p.b_mode_size = (64, 64)
     p.noise_sigma = 0.0
