@@ -476,8 +476,13 @@ extern "C" __global__ void __raygen__rg() {
       }
     }
 
-    // Add elevation in probe's local coordinate system (common for all probes)
-    const float d_y = (static_cast<float>(idx.y) / static_cast<float>(dim.y)) - 0.5f;
+    // Add elevation in probe's local coordinate system (common for all probes).
+    // Sample the full elevational aperture [-H/2, H/2]. Using idx.y/N - 0.5
+    // left the last bin of the aperture unsampled (span (N-1)/N * H).
+    // N=1 stays on the imaging plane (d_y = 0).
+    const float d_y = (dim.y <= 1u)
+                          ? 0.f
+                          : (static_cast<float>(idx.y) / static_cast<float>(dim.y - 1u)) - 0.5f;
     const float elevation = ray_gen_data->elevational_height * d_y;
     origin.y = elevation;
 

@@ -362,11 +362,6 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
     psf_lat_.reset();
   }
 
-  if (probe_elevational_height_ != probe->get_elevational_height()) {
-    probe_elevational_height_ = probe->get_elevational_height();
-    psf_elev_.reset();
-  }
-
   const float el_radius = probe->get_element_radius_mm();
   const float focal_mm = probe->get_focal_length_mm();
   if (pt == ProbeType::PROBE_TYPE_IVUS && el_radius > 0.f && focal_mm > 0.f) {
@@ -636,17 +631,6 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
     }
     psf_lat_ = create_gaussian_psf(stream, lat_width, inv_spacing);
   }
-
-  // Note: psf_elev_ is no longer built. The elevational integration is now
-  // a uniform top-hat mean over the sampled ray planes (see mean_planes
-  // in simulate(), which runs whenever num_el_samples > 1). Pending E3
-  // there is no calibrated Gaussian elevational beam profile. The
-  // historical hard-coded `(width = 2 mm, k = freq/c)` gave a ~91-tap
-  // kernel that was wrongly scaled and far too wide, silently dimming
-  // images when num_el_samples > 1. The psf_elev_ member is left in
-  // place for a follow-up that either deletes it or rebuilds a
-  // pitch-correct kernel from E3.
-  if (psf_elev_) { psf_elev_.reset(); }
 }
 
 RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate(
@@ -802,27 +786,30 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   // Default (`noise_sigma == 0.f`) is a no-op; both wrappers short-circuit
   // on `sigma <= 0` so existing callers pay no overhead.
   //
-  // The noise launchers are 2D (`uint2 plane_size`) and therefore only
-  // write plane 0 of a still-3D elevational stack. Harmless while
-  // `noise_sigma == 0` (the YAML default). A 3D / per-plane launcher is
-  // follow-up if pre-PSF RF noise is re-enabled with num_el_samples > 1.
+  // Launchers are 2D; with num_el_samples > 1 the RF stack is still 3D
+  // here (collapse happens after PSF). Apply the same depth profile to
+  // every elevational plane with a per-plane seed mix so the mean is not
+  // dominated by a single noised plane.
   if (sim_params.noise_sigma > 0.f) {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Additive RF noise", sim_params.stream);
-    // noise_seed is decoupled from frame_seed.  When noise_seed is 0 we
-    // fall back to frame_seed so the noise tracks the scatter realization.
-    // When set
-    // non-zero by the caller, the noise realization is decoupled from
-    // scatterer seeding entirely.
     const uint32_t base_seed =
         (sim_params.noise_seed != 0u) ? sim_params.noise_seed : sim_params.frame_seed;
     const uint32_t noise_seed = base_seed * 2246822519u + 1u;
-    if (noise_depth_weight_ && noise_depth_weight_size_ == sim_params.buffer_size) {
-      cuda_algorithms_->add_gaussian_noise_depth_weighted(
-          d_scanlines.get(), plane_size, sim_params.noise_sigma,
-          noise_depth_weight_.get(), noise_seed, sim_params.stream);
-    } else {
-      cuda_algorithms_->add_gaussian_noise(d_scanlines.get(), plane_size, sim_params.noise_sigma,
-                                           noise_seed, sim_params.stream);
+    float* rf = reinterpret_cast<float*>(d_scanlines->get_ptr(sim_params.stream));
+    const uint32_t plane_elems = plane_size.x * plane_size.y;
+    const bool depth_weighted =
+        noise_depth_weight_ && noise_depth_weight_size_ == sim_params.buffer_size;
+    for (uint32_t z = 0; z < size.z; ++z) {
+      const uint32_t plane_seed = noise_seed ^ (z * 2654435761u);
+      float* plane = rf + static_cast<size_t>(z) * plane_elems;
+      if (depth_weighted) {
+        cuda_algorithms_->add_gaussian_noise_depth_weighted(
+            plane, plane_size, sim_params.noise_sigma, noise_depth_weight_.get(), plane_seed,
+            sim_params.stream);
+      } else {
+        cuda_algorithms_->add_gaussian_noise(plane, plane_size, sim_params.noise_sigma, plane_seed,
+                                             sim_params.stream);
+      }
     }
     if (sim_params.write_debug_images) {
       write_image(d_scanlines.get(), plane_size, "debug_images/0a_additive_noise_pre_psf.png");

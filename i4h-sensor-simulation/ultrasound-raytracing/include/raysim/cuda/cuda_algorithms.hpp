@@ -198,6 +198,8 @@ class CUDAAlgorithms {
    */
   void add_gaussian_noise(CudaMemory* buffer, uint2 size, float sigma, uint32_t seed,
                           cudaStream_t stream);
+  void add_gaussian_noise(float* buffer, uint2 size, float sigma, uint32_t seed,
+                          cudaStream_t stream);
 
   /**
    * @brief Depth-weighted variant of `add_gaussian_noise`.
@@ -223,6 +225,9 @@ class CUDAAlgorithms {
    * @param stream [in] CUDA stream.
    */
   void add_gaussian_noise_depth_weighted(CudaMemory* buffer, uint2 size, float sigma_base,
+                                          CudaMemory* depth_weight, uint32_t seed,
+                                          cudaStream_t stream);
+  void add_gaussian_noise_depth_weighted(float* buffer, uint2 size, float sigma_base,
                                           CudaMemory* depth_weight, uint32_t seed,
                                           cudaStream_t stream);
 

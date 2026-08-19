@@ -522,8 +522,6 @@ class RaytracingUltrasoundSimulator {
   float psf_env_lp_freq_cached_ = 0.f;
   float probe_element_spacing_ = 0.f;
   std::unique_ptr<CudaMemory> psf_lat_;
-  float probe_elevational_height_ = 0.f;
-  std::unique_ptr<CudaMemory> psf_elev_;
   CudaMemory psf_tmp_;
 
   /// Depth-dependent lateral PSF for IVUS (focused element): one kernel per depth bin

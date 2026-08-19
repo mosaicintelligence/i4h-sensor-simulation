@@ -989,36 +989,37 @@ void CUDAAlgorithms::scale_buffer(CudaMemory* buffer, uint2 size, float scale,
                                 scale);
 }
 
+void CUDAAlgorithms::add_gaussian_noise(float* buffer, uint2 size, float sigma, uint32_t seed,
+                                        cudaStream_t stream) {
+  if (!(sigma > 0.f) || buffer == nullptr) { return; }
+
+  add_gaussian_noise_launcher_.launch(size, stream, buffer, size, sigma, seed);
+}
+
 void CUDAAlgorithms::add_gaussian_noise(CudaMemory* buffer, uint2 size, float sigma,
                                         uint32_t seed, cudaStream_t stream) {
-  // Disabled (skipped) when sigma <= 0; default callers (which leave
-  // SimParams::noise_sigma == 0.f) pay no kernel-launch cost.
-  if (!(sigma > 0.f)) { return; }
+  if (buffer == nullptr) { return; }
+  add_gaussian_noise(reinterpret_cast<float*>(buffer->get_ptr(stream)), size, sigma, seed, stream);
+}
 
-  add_gaussian_noise_launcher_.launch(size,
-                                      stream,
-                                      reinterpret_cast<float*>(buffer->get_ptr(stream)),
-                                      size,
-                                      sigma,
-                                      seed);
+void CUDAAlgorithms::add_gaussian_noise_depth_weighted(float* buffer, uint2 size,
+                                                        float sigma_base,
+                                                        CudaMemory* depth_weight, uint32_t seed,
+                                                        cudaStream_t stream) {
+  if (!(sigma_base > 0.f) || buffer == nullptr || depth_weight == nullptr) { return; }
+
+  add_gaussian_noise_depth_weighted_launcher_.launch(
+      size, stream, buffer, size, sigma_base,
+      reinterpret_cast<const float*>(depth_weight->get_ptr(stream)), seed);
 }
 
 void CUDAAlgorithms::add_gaussian_noise_depth_weighted(CudaMemory* buffer, uint2 size,
                                                         float sigma_base,
                                                         CudaMemory* depth_weight, uint32_t seed,
                                                         cudaStream_t stream) {
-  // Same short-circuit as the unweighted variant. Also no-op if no weight
-  // buffer is supplied (caller falls back to add_gaussian_noise in that case).
-  if (!(sigma_base > 0.f) || depth_weight == nullptr) { return; }
-
-  add_gaussian_noise_depth_weighted_launcher_.launch(
-      size,
-      stream,
-      reinterpret_cast<float*>(buffer->get_ptr(stream)),
-      size,
-      sigma_base,
-      reinterpret_cast<const float*>(depth_weight->get_ptr(stream)),
-      seed);
+  if (buffer == nullptr) { return; }
+  add_gaussian_noise_depth_weighted(reinterpret_cast<float*>(buffer->get_ptr(stream)), size,
+                                    sigma_base, depth_weight, seed, stream);
 }
 
 void CUDAAlgorithms::add_gaussian_noise_offset(CudaMemory* buffer, uint2 size, float mean,
