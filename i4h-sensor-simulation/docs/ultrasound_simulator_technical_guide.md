@@ -180,17 +180,19 @@ In addition to the primary lateral scanning plane, our simulator models the elev
   - For all probe types, elevational sampling is handled in a common code path: [`csrc/cuda/optix_trace.cu` – see `__raygen__rg()`]
   - The position along the elevational axis is calculated as:
     ```cpp
-    const float d_y = (static_cast<float>(idx.y) / static_cast<float>(dim.y)) - 0.5f;
+    // N=1: mid-plane (d_y = 0). N>1: full aperture [-H/2, H/2].
+    const float d_y = (dim.y <= 1u)
+                          ? 0.f
+                          : (static_cast<float>(idx.y) / static_cast<float>(dim.y - 1u)) - 0.5f;
     const float elevation = ray_gen_data->elevational_height * d_y;
     origin.y = elevation;
     ```
-  - This distributes rays evenly across the elevational height of the transducer
+  - This distributes rays evenly across the elevational height of the transducer. For a single elevational sample this is the geometric mid-plane (`d_y = 0`), not `-H/2` (the previous `idx.y/dim.y - 0.5` formula).
 
 - **Post-Processing of Elevational Data**:
   - When `num_el_samples > 1`, the resulting data from multiple elevational planes is:
-    1. Convolved with an elevational PSF: [`csrc/core/raytracing_ultrasound_simulator.cpp` – PSF convolution step in `RaytracingUltrasoundSimulator::simulate()`] following [1].
-    2. Averaged across all elevational planes to produce a 2D image: [`csrc/core/raytracing_ultrasound_simulator.cpp` – plane-averaging step in `RaytracingUltrasoundSimulator::simulate()`]
-  - This models the elevation extent of 2D ultrasound transducer
+    1. Optionally convolved with the *in-plane* axial/lateral PSF (each elevational plane independently). The old elevational Gaussian PSF is not used.
+    2. Averaged across all elevational planes (`mean_planes`) to produce a 2D image: [`csrc/core/raytracing_ultrasound_simulator.cpp` – plane-averaging step in `RaytracingUltrasoundSimulator::simulate()`]. This collapse runs even when in-plane PSF convolution is off.
 
 ### 3.2 Ray-Object Interaction
 

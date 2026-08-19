@@ -417,9 +417,13 @@ In priority order:
    is also the only way to refit `tgc_control_points` for tissue
    imaging (the current values are in-water only). Highest ROI of any
    future bench session.
+4. **E3 slice-thickness sweep.** The sim now defaults to
+   `elevational_height_mm = 1.5` with 8 elevational samples (uniform
+   top-hat mean). That is an uncalibrated placeholder, not a measured
+   FWHM / elevational PSF. E3 is what replaces the estimate.
 
 For this dataset's calibration we proceed with (1) and document (2)
-+ (3) as future improvements.
++ (3) + (4) as future improvements.
 
 ### AR template (E6) -- delivered
 
@@ -710,9 +714,6 @@ Without RF data, two YAML fields cannot be improved:
 
 ## What we DON'T need from the bench session
 
-- **E3 (slice thickness)** -- the simulator's
-  `elevational_height_mm = 0.0` configures it as 2D; until that
-  changes there's no point measuring elevational PSF.
 - **E4 in tissue** -- the in-water TGC we have is correct for the
   P_035 dataset; tissue TGC is a separate question for a separate
   phantom.
