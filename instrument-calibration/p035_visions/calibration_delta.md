@@ -710,9 +710,10 @@ Without RF data, two YAML fields cannot be improved:
 
 ## What we DON'T need from the bench session
 
-- **E3 (slice thickness)** -- the simulator's
-  `elevational_height_mm = 0.0` configures it as 2D; until that
-  changes there's no point measuring elevational PSF.
+- **E3 (slice thickness)** -- the simulator now uses an estimated
+  `elevational_height_mm = 1.5` with 8 elevational samples (uniform
+  top-hat mean). E3 is still needed to replace that estimate with a
+  measured FWHM / elevational PSF.
 - **E4 in tissue** -- the in-water TGC we have is correct for the
   P_035 dataset; tissue TGC is a separate question for a separate
   phantom.
