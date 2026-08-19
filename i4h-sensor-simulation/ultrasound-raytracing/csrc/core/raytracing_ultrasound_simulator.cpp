@@ -639,12 +639,13 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
 
   // Note: psf_elev_ is no longer built. The elevational integration is now
   // a uniform top-hat mean over the sampled ray planes (see mean_planes
-  // call in simulate()). Pending E3 (slice-thickness sweep) bench data,
-  // there is no calibrated Gaussian elevational beam profile to convolve
-  // with anyway; the historical hard-coded `(width = 2 mm, k = freq/c)`
-  // gave a ~91-tap kernel that was both wrongly scaled (k confused 1/mm
-  // and 1/us) and far too wide for any reasonable elevational sample
-  // count, which produced silently dim images when num_el_samples > 1.
+  // in simulate(), which runs whenever num_el_samples > 1). Pending E3
+  // there is no calibrated Gaussian elevational beam profile. The
+  // historical hard-coded `(width = 2 mm, k = freq/c)` gave a ~91-tap
+  // kernel that was wrongly scaled and far too wide, silently dimming
+  // images when num_el_samples > 1. The psf_elev_ member is left in
+  // place for a follow-up that either deletes it or rebuilds a
+  // pitch-correct kernel from E3.
   if (psf_elev_) { psf_elev_.reset(); }
 }
 
@@ -709,27 +710,25 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     // Scale scatter integral so vascular/cystic phantoms have visible background; wire phantom
     // remains valid (reflections dominate). 0 = strict integral (dark); ~40 gives usable range.
     //
-    // Elevational compensation: when num_el_samples > 1, mean_planes averages
-    // N independent scatter realizations, which reduces the post-mean speckle
-    // RMS by sqrt(N) (each plane samples the scatter texture at a different
-    // y offset; angular_decorrelate makes the planes statistically
-    // independent). Coherent reflections (lumen / wall / lesion / wire
-    // Fresnel echoes) are NOT affected because every elevational ray plane
-    // hits the same boundary at the same depth and amplitude, so their
-    // post-mean value equals their per-plane value. Pre-multiplying the
-    // scatter integral by sqrt(N) restores the speckle amplitude to its
-    // 2D-calibrated value while leaving the coherent echo amplitudes
-    // alone -- matching the calibration intent (gain_db / noise_sigma /
-    // material sigmas were tuned in 2D mode against the bench's already-
-    // elevation-integrated speckle, so the pre-mean RF must arrive at the
-    // mean stage with sqrt(N) more speckle to come out of mean_planes at
-    // the calibrated level). This is per-launch only and does not modify
-    // sim_params.scatter_integral_scale.
+    // Elevational compensation is a 2D-calibration shim, not a physical
+    // aperture model. `mean_planes` always runs when num_el_samples > 1
+    // (after the optional in-plane PSF). If scatter_angular_decorrelate is
+    // on, OptiX hashes `ray_index = idx.y * dim.x + idx.x`, so elevational
+    // planes are independent speckle draws; averaging them would drop
+    // speckle RMS by ~sqrt(N) relative to the 2D-calibrated
+    // scatter_integral_scale. Pre-multiply by sqrt(N) so post-mean speckle
+    // matches that calibration. Do not apply the boost when decorrelate is
+    // off: world-y steps (~height/N) are much smaller than
+    // scattering_resolution_mm, so the planes are highly correlated and
+    // mean_planes barely reduces RMS. Coherent echoes from geometry that
+    // varies along y *are* changed by the mean; "Fresnel echoes unchanged"
+    // only holds for extruded (y-invariant) phantoms.
     {
       const uint32_t n_el = probe->get_num_el_samples();
-      const float n_el_speckle_compensation = (n_el > 1u)
-          ? std::sqrt(static_cast<float>(n_el))
-          : 1.f;
+      const bool compensate_speckle =
+          (n_el > 1u) && sim_params.scatter_angular_decorrelate;
+      const float n_el_speckle_compensation =
+          compensate_speckle ? std::sqrt(static_cast<float>(n_el)) : 1.f;
       params.scatter_integral_scale =
           sim_params.scatter_integral_scale * n_el_speckle_compensation;
     }
@@ -802,6 +801,11 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   // weight buffer is null and we fall back to the unweighted variant.
   // Default (`noise_sigma == 0.f`) is a no-op; both wrappers short-circuit
   // on `sigma <= 0` so existing callers pay no overhead.
+  //
+  // The noise launchers are 2D (`uint2 plane_size`) and therefore only
+  // write plane 0 of a still-3D elevational stack. Harmless while
+  // `noise_sigma == 0` (the YAML default). A 3D / per-plane launcher is
+  // follow-up if pre-PSF RF noise is re-enabled with num_el_samples > 1.
   if (sim_params.noise_sigma > 0.f) {
     CudaTiming cuda_timing(sim_params.enable_cuda_timing, "Additive RF noise", sim_params.stream);
     // noise_seed is decoupled from frame_seed.  When noise_seed is 0 we
@@ -844,47 +848,27 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
         cuda_algorithms_->convolve_columns(
             &psf_tmp_, size, d_scanlines.get(), psf_lat_.get(), sim_params.stream);
       }
-
-      if (probe->get_num_el_samples() > 1) {
-        // Collapse the elevational ray stack to a single 2D plane.
-        //
-        // The historical pipeline applied a separable Gaussian PSF along
-        // the elevational axis (`convolve_planes`) and THEN averaged the
-        // resulting planes (`mean_planes`). For a kernel that fits inside
-        // the sampled aperture this is approximately equivalent to a
-        // direct uniform mean (a unit-DC Gaussian convolution followed by
-        // a mean is just the mean), and for a kernel that does NOT fit
-        // (the historical default sized the kernel against `frequency /
-        // speed_of_sound` instead of the actual elevational sample pitch,
-        // producing a ~91-tap kernel for an 8-sample aperture) the
-        // truncated convolution loses energy and dims the entire image.
-        //
-        // Until E3 (slice-thickness sweep) calibrates an actual elevational
-        // beam profile, we model the aperture as a uniform top-hat and
-        // skip the PSF stage entirely. Every elevational ray plane
-        // contributes equally to the output frame, which is the behaviour
-        // a single-element transducer with no elevational focusing produces
-        // to first order in the near field. The mean preserves DC exactly.
-        auto d_plane = std::make_unique<CudaMemory>(
-            sim_params.buffer_size * probe->get_num_elements() * sizeof(float), sim_params.stream);
-        cuda_algorithms_->mean_planes(d_scanlines.get(), size, d_plane.get(), sim_params.stream);
-
-        d_scanlines = std::move(d_plane);
-        // After mean_planes collapses the elevational stack into a single
-        // plane, the buffer is 2D again. Update `size` so any downstream
-        // 3D-launcher call (currently the post-Hilbert axial envelope
-        // low-pass at the bottom of this function) does not run with a
-        // stale z = num_el_samples and walk off the end of d_scanlines /
-        // psf_tmp_ -- the historical "elevational_height_mm > 0 +
-        // num_elevational_samples > 1 triggers cudaErrorIllegalAddress"
-        // failure mode noted in volcano_s5i.yaml.
-        size.z = 1u;
-      }
     }
 
     if (sim_params.write_debug_images) {
       write_image(d_scanlines.get(), plane_size, "debug_images/1_psf.png");
     }
+  }
+
+  // Elevational contract: when num_el_samples > 1 the OptiX buffer is a
+  // stack of ray planes. Collapse it to 2D *unconditionally* (not only
+  // when conv_psf is on) so TGC / Hilbert / the post-Hilbert axial
+  // envelope low-pass always see size.z == 1. Leaving size.z == N after
+  // shrinking the buffer to one plane is the historical
+  // cudaErrorIllegalAddress. In-plane PSF above still runs on the 3D
+  // stack when conv_psf is true; the elevational "PSF" is a uniform
+  // top-hat mean until E3 provides a calibrated beam profile.
+  if (probe->get_num_el_samples() > 1 && size.z > 1u) {
+    auto d_plane = std::make_unique<CudaMemory>(
+        sim_params.buffer_size * probe->get_num_elements() * sizeof(float), sim_params.stream);
+    cuda_algorithms_->mean_planes(d_scanlines.get(), size, d_plane.get(), sim_params.stream);
+    d_scanlines = std::move(d_plane);
+    size.z = 1u;
   }
 
   // 1.5 Time-Gain-Compensation
