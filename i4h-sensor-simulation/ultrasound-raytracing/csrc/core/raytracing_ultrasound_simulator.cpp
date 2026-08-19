@@ -637,9 +637,15 @@ void RaytracingUltrasoundSimulator::update_psfs(const BaseProbe* probe, cudaStre
     psf_lat_ = create_gaussian_psf(stream, lat_width, inv_spacing);
   }
 
-  if ((probe->get_num_el_samples() > 1) && !psf_elev_) {
-    psf_elev_ = create_gaussian_psf(stream, 2.f, probe->get_elevational_spatial_frequency());
-  }
+  // Note: psf_elev_ is no longer built. The elevational integration is now
+  // a uniform top-hat mean over the sampled ray planes (see mean_planes
+  // call in simulate()). Pending E3 (slice-thickness sweep) bench data,
+  // there is no calibrated Gaussian elevational beam profile to convolve
+  // with anyway; the historical hard-coded `(width = 2 mm, k = freq/c)`
+  // gave a ~91-tap kernel that was both wrongly scaled (k confused 1/mm
+  // and 1/us) and far too wide for any reasonable elevational sample
+  // count, which produced silently dim images when num_el_samples > 1.
+  if (psf_elev_) { psf_elev_.reset(); }
 }
 
 RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate(
@@ -702,7 +708,31 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
     params.disable_scatter = sim_params.disable_scatter ? 1u : 0u;
     // Scale scatter integral so vascular/cystic phantoms have visible background; wire phantom
     // remains valid (reflections dominate). 0 = strict integral (dark); ~40 gives usable range.
-    params.scatter_integral_scale = sim_params.scatter_integral_scale;
+    //
+    // Elevational compensation: when num_el_samples > 1, mean_planes averages
+    // N independent scatter realizations, which reduces the post-mean speckle
+    // RMS by sqrt(N) (each plane samples the scatter texture at a different
+    // y offset; angular_decorrelate makes the planes statistically
+    // independent). Coherent reflections (lumen / wall / lesion / wire
+    // Fresnel echoes) are NOT affected because every elevational ray plane
+    // hits the same boundary at the same depth and amplitude, so their
+    // post-mean value equals their per-plane value. Pre-multiplying the
+    // scatter integral by sqrt(N) restores the speckle amplitude to its
+    // 2D-calibrated value while leaving the coherent echo amplitudes
+    // alone -- matching the calibration intent (gain_db / noise_sigma /
+    // material sigmas were tuned in 2D mode against the bench's already-
+    // elevation-integrated speckle, so the pre-mean RF must arrive at the
+    // mean stage with sqrt(N) more speckle to come out of mean_planes at
+    // the calibrated level). This is per-launch only and does not modify
+    // sim_params.scatter_integral_scale.
+    {
+      const uint32_t n_el = probe->get_num_el_samples();
+      const float n_el_speckle_compensation = (n_el > 1u)
+          ? std::sqrt(static_cast<float>(n_el))
+          : 1.f;
+      params.scatter_integral_scale =
+          sim_params.scatter_integral_scale * n_el_speckle_compensation;
+    }
     // Per-scanline scatter decorrelation (see SimParams).
     params.scatter_angular_decorrelate = sim_params.scatter_angular_decorrelate ? 1u : 0u;
     params.frame_seed = sim_params.frame_seed;
@@ -723,7 +753,10 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
   }
 
   const uint2 plane_size = make_uint2(sim_params.buffer_size, probe->get_num_elements());
-  const uint3 size = make_uint3(plane_size.x, plane_size.y, probe->get_num_el_samples());
+  // Mutable: drops to z = 1 once mean_planes collapses the elevational
+  // stack so subsequent 3D-launcher calls (post-Hilbert axial envelope
+  // low-pass) operate on the actual 2D buffer extent.
+  uint3 size = make_uint3(plane_size.x, plane_size.y, probe->get_num_el_samples());
 
   if (sim_params.write_debug_images) {
     std::filesystem::create_directory("debug_images");
@@ -813,14 +846,39 @@ RaytracingUltrasoundSimulator::SimResult RaytracingUltrasoundSimulator::simulate
       }
 
       if (probe->get_num_el_samples() > 1) {
-        cuda_algorithms_->convolve_planes(
-            d_scanlines.get(), size, &psf_tmp_, psf_elev_.get(), sim_params.stream);
-
+        // Collapse the elevational ray stack to a single 2D plane.
+        //
+        // The historical pipeline applied a separable Gaussian PSF along
+        // the elevational axis (`convolve_planes`) and THEN averaged the
+        // resulting planes (`mean_planes`). For a kernel that fits inside
+        // the sampled aperture this is approximately equivalent to a
+        // direct uniform mean (a unit-DC Gaussian convolution followed by
+        // a mean is just the mean), and for a kernel that does NOT fit
+        // (the historical default sized the kernel against `frequency /
+        // speed_of_sound` instead of the actual elevational sample pitch,
+        // producing a ~91-tap kernel for an 8-sample aperture) the
+        // truncated convolution loses energy and dims the entire image.
+        //
+        // Until E3 (slice-thickness sweep) calibrates an actual elevational
+        // beam profile, we model the aperture as a uniform top-hat and
+        // skip the PSF stage entirely. Every elevational ray plane
+        // contributes equally to the output frame, which is the behaviour
+        // a single-element transducer with no elevational focusing produces
+        // to first order in the near field. The mean preserves DC exactly.
         auto d_plane = std::make_unique<CudaMemory>(
             sim_params.buffer_size * probe->get_num_elements() * sizeof(float), sim_params.stream);
-        cuda_algorithms_->mean_planes(&psf_tmp_, size, d_plane.get(), sim_params.stream);
+        cuda_algorithms_->mean_planes(d_scanlines.get(), size, d_plane.get(), sim_params.stream);
 
         d_scanlines = std::move(d_plane);
+        // After mean_planes collapses the elevational stack into a single
+        // plane, the buffer is 2D again. Update `size` so any downstream
+        // 3D-launcher call (currently the post-Hilbert axial envelope
+        // low-pass at the bottom of this function) does not run with a
+        // stale z = num_el_samples and walk off the end of d_scanlines /
+        // psf_tmp_ -- the historical "elevational_height_mm > 0 +
+        // num_elevational_samples > 1 triggers cudaErrorIllegalAddress"
+        // failure mode noted in volcano_s5i.yaml.
+        size.z = 1u;
       }
     }
 

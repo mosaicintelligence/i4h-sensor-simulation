@@ -56,7 +56,7 @@ Three lessons came out of the PV .035 calibration:
 |---|---|---|
 | E1 — Flat-reflector pulse-echo | *Bonus path only* | Requires RF tap; never performed on PV .035; impulse_response_path remains `null`. Skipped unless the console exposes RF. |
 | **E2 — Spiral wire-phantom 2D PSF** | **O1 (mandatory)** | Workhorse. Drives `element_radius_mm`, `focal_length_mm`, `pulse_duration_cycles`, `lateral_psf_kernel`, `log_multiplier`, `gain_db`, slider→dB curve, dynamic range. |
-| E3 — Slice-thickness sweep | *Deferred* | Sim is 2D today (`elevational_height_mm = 0.0`); also blocked by a CUDA bug at elevational > 0. Run only when 2.5D rendering is needed. |
+| E3 — Slice-thickness sweep | *Deferred* | Sim now integrates a uniform elevational aperture (`elevational_height_mm = 1.5`, `num_elevational_samples = 8`); E3 is still needed to replace that estimate with a measured FWHM / beam profile. |
 | E4 — Uniform attenuation phantom | **O3 (mandatory)** | Drives `tgc_control_points`, `noise.sigma` / `envelope_noise.sigma`, speckle correlation length, milk-material scattering parameters. Doubles as the E5 replacement (see below). |
 | E5 — Cyst phantom | *Dropped on onboarding* | Three takes were performed (`ivus_test_0515/raw/e5_milk_cyst_take*/`) but later marked `WAVE0_SPECKLE_PATHS_E5_LEGACY` in `tier1_evaluation.py`: a uniform phantom is a strictly better speckle anchor and is also a strictly better anechoic-tail anchor once the slider crosses the LUT-floored regime. Keep the cyst hardware for clinical-image dynamic-range demonstrations, not for parameter fitting. |
 | **E6 — Ring-down (anechoic water)** | **O2 (mandatory) — expanded** | Drives `ring_down.amplitude` / `extent_mm` / `decay` / `waveform_path` / `subtract_reference`, `catheter.dead_zone_mm`. **Onboarding upgrade: capture a full slider sweep (not just 2–3 anchors) AR-OFF + matched AR-ON at each slider, at the smallest available diameter.** Gives the slider→dB curve from ring-down peak directly, independent of O1, and a multi-gain AR-residual template. |
@@ -557,7 +557,7 @@ For traceability, here is the field-by-field map from the canonical
 | `probe.pulse_duration_cycles` | E1 + E2 axial PSF | **O1** axial PSF |
 | `probe.element_radius_mm` | E2 Gaussian-beam fit | **O1** |
 | `probe.focal_length_mm` | E2 depth-of-minimum-lateral-FWHM | **O1** |
-| `probe.elevational_height_mm` | E3 | *Deferred* (sim is 2D) |
+| `probe.elevational_height_mm` | E3 | Estimated 1.5 mm pending E3 |
 | `probe.speed_of_sound_mm_per_us` | E4 (TOF refinement) | **O3-B** wire-in-medium |
 | `probe.impulse_response_path` | E1 | *Bonus path* (E1 if RF available) |
 | `processing.tgc_control_points` | E4 | **O3-A** |
