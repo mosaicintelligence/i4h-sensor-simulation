@@ -74,7 +74,8 @@ vesselgen-frames --vessel VESSEL_DIR --out OUT_DIR [options]
 | `--n` | `200` | Number of pose samples |
 | `--max-tilt-deg` | `15.0` | Maximum probe-axis tilt |
 | `--edge-margin-mm` | `0.2` | Minimum clearance from lumen wall |
-| `--write-previews` | off | Write per-frame contour PNGs |
+| `--max-distance-mm` | `30.0` | Imaging FOV radius; A-lines beyond it are `NaN`. Set to `17.5` to reproduce large-vessel open sectors |
+| `--write-previews` | off | Write per-frame contour PNGs (draws the FOV circle) |
 
 ## `render_paired_dataset.py` — paired IVUS dataset
 

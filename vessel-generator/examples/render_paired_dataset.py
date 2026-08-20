@@ -727,6 +727,7 @@ def generate_paired_dataset(
     edge_margin_mm: float = 0.15,
     frames_per_vessel: int = 12,
     max_pose_attempts: int = 48,
+    min_finite_fraction: float = 0.85,
     rand_cfg: SimRandomizationConfig | None = None,
     gen_cfg: GenerationConfig | None = None,
     max_gain_resamples: int = 8,
@@ -880,7 +881,9 @@ def generate_paired_dataset(
             # rejected, and the segmentation mask costs ~5x the cheap
             # geometric validity check. Reject early on the cheap check,
             # then compute seg only when needed.
-            if not ground_truth_is_valid_pose(vessel, pose, gt):
+            if not ground_truth_is_valid_pose(
+                vessel, pose, gt, min_finite_fraction=min_finite_fraction
+            ):
                 continue
             seg: np.ndarray | None = None
             # The "side-branch sector missing wall" check rejects poses
@@ -999,6 +1002,7 @@ def generate_paired_dataset(
             "min_side_branch_frames_per_vessel": min_side_branch_frames,
             "min_parent_ostium_frames_per_vessel": min_parent_ostium_frames,
             "max_saturation_fraction": rand_cfg.max_saturation_fraction,
+            "min_finite_fraction": min_finite_fraction,
             "tier2_enabled": rand_cfg.enable_tier2,
             "tgc_deep_gain_scale_range": list(rand_cfg.tgc_deep_gain_scale_range),
             "ring_down_amplitude_scale_range": list(rand_cfg.ring_down_amplitude_scale_range),
@@ -1088,6 +1092,19 @@ def main() -> None:
     p.add_argument("--edge-margin-mm", type=float, default=0.15)
     p.add_argument("--frames-per-vessel", type=int, default=12)
     p.add_argument(
+        "--min-finite-fraction",
+        type=float,
+        default=0.85,
+        help=(
+            "Minimum fraction of A-lines whose lumen AND outer wall both fall "
+            "inside the FOV for a pose to be accepted. The 0.85 default rejects "
+            "beyond-FOV anatomy by construction: a large vessel whose far wall "
+            "runs past t_far has no outer hit on those sectors, which is the "
+            "case we want to render, not discard. Lower it (e.g. 0.50) when "
+            "generating a beyond-FOV shard."
+        ),
+    )
+    p.add_argument(
         "--no-require-side-branch",
         action="store_true",
         default=True,
@@ -1154,6 +1171,7 @@ def main() -> None:
         max_tilt_deg=args.max_tilt_deg,
         edge_margin_mm=args.edge_margin_mm,
         frames_per_vessel=args.frames_per_vessel,
+        min_finite_fraction=args.min_finite_fraction,
         require_side_branch=bool(args.require_side_branch),
         min_side_branch_frames=args.min_side_branch_frames,
         min_parent_ostium_frames=args.min_parent_ostium_frames,
