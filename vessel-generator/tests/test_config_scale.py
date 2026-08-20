@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from vesselgen.config import GenerationConfig, clamp_default_aortic_scale_probability
 
@@ -84,3 +85,32 @@ def test_force_all_small_vessel_probability_with_clamped_default_aortic():
     cfg = GenerationConfig(small_vessel_probability=1.0, aortic_scale_probability=aortic_p)
     assert cfg.small_vessel_probability == 1.0
     assert cfg.aortic_scale_probability == 0.0
+
+
+def test_force_large_scale_probability_overrides_default_small_share():
+    cfg = GenerationConfig(large_vessel_beyond_fov_probability=1.0, aortic_scale_probability=0.0)
+    rng = np.random.default_rng(11)
+
+    radius_lo_mm, radius_hi_mm = cfg.large_vessel_radius_mm_range
+    for i in range(200):
+        radius_mm = cfg.sample(rng, seed=i).parent.cross_section.mean_radius_mm
+        assert radius_lo_mm <= radius_mm <= radius_hi_mm
+
+
+def test_force_aortic_scale_probability_overrides_other_default_shares():
+    cfg = GenerationConfig(aortic_scale_probability=1.0)
+    rng = np.random.default_rng(12)
+
+    radius_lo_mm, radius_hi_mm = cfg.aortic_radius_mm_range
+    for i in range(200):
+        radius_mm = cfg.sample(rng, seed=i).parent.cross_section.mean_radius_mm
+        assert radius_lo_mm <= radius_mm <= radius_hi_mm
+
+
+def test_invalid_three_way_scale_partition_raises():
+    with pytest.raises(ValueError):
+        GenerationConfig(
+            small_vessel_probability=0.45,
+            aortic_scale_probability=0.45,
+            large_vessel_beyond_fov_probability=0.20,
+        )

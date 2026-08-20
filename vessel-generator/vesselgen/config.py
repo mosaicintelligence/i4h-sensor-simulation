@@ -716,8 +716,13 @@ class GenerationConfig:
     * **typical peripheral** (the remaining probability mass): 4-6.5 mm radii,
       placing the wall clearly outside the ring-down disc.
 
-    ``small_vessel_probability + aortic_scale_probability`` must not exceed 1.0
-    (validated in ``__post_init__``); the remainder is the typical-scale mass.
+    ``small_vessel_probability + aortic_scale_probability +
+    large_vessel_beyond_fov_probability`` must not exceed 1.0 (validated in
+    ``__post_init__``); the remainder is the typical-scale mass.
+
+    Setting any one of those three probabilities to 1.0 is treated as an
+    explicit "force this scale bucket" request, so that legacy force-* configs
+    continue to work even if the other two probabilities keep non-zero defaults.
     """
 
     length_mm_range: tuple[float, float] = (45.0, 75.0)
@@ -828,16 +833,37 @@ class GenerationConfig:
             raise ValueError("small_vessel_probability must be in [0, 1]")
         if not 0.0 <= self.aortic_scale_probability <= 1.0:
             raise ValueError("aortic_scale_probability must be in [0, 1]")
-        # The scale draw partitions a single uniform variate into small /
-        # aortic / typical branches, so these mutually-exclusive buckets
-        # cannot sum to more than 1.0 or the typical branch becomes
-        # unreachable and the aortic band is silently truncated.
-        if self.small_vessel_probability + self.aortic_scale_probability > 1.0 + 1e-9:
+        if not 0.0 <= self.large_vessel_beyond_fov_probability <= 1.0:
+            raise ValueError("large_vessel_beyond_fov_probability must be in [0, 1]")
+
+        scale_probabilities = {
+            "small_vessel_probability": self.small_vessel_probability,
+            "aortic_scale_probability": self.aortic_scale_probability,
+            "large_vessel_beyond_fov_probability": self.large_vessel_beyond_fov_probability,
+        }
+        forced_scales = [name for name, p in scale_probabilities.items() if p >= 1.0 - 1e-9]
+        if len(forced_scales) > 1:
             raise ValueError(
-                "small_vessel_probability + aortic_scale_probability must be "
-                f"<= 1.0 (got {self.small_vessel_probability} + "
-                f"{self.aortic_scale_probability}); the two are mutually-exclusive "
-                "buckets of the scale partition carved out of the typical share"
+                "At most one of "
+                "small_vessel_probability, aortic_scale_probability, and "
+                "large_vessel_beyond_fov_probability may be 1.0; got forced "
+                f"buckets {forced_scales}"
+            )
+        if forced_scales:
+            return
+
+        # The scale draw partitions a single uniform variate into small /
+        # aortic / large / typical branches, so these mutually-exclusive
+        # buckets cannot sum to more than 1.0 or the later branches become
+        # unreachable due to threshold truncation.
+        total_scale_probability = sum(scale_probabilities.values())
+        if total_scale_probability > 1.0 + 1e-9:
+            raise ValueError(
+                "small_vessel_probability + aortic_scale_probability + "
+                "large_vessel_beyond_fov_probability must be <= 1.0 unless a "
+                "single branch is explicitly forced with probability 1.0 "
+                f"(got {self.small_vessel_probability} + {self.aortic_scale_probability} + "
+                f"{self.large_vessel_beyond_fov_probability} = {total_scale_probability})"
             )
 
     def sample(
@@ -850,23 +876,33 @@ class GenerationConfig:
     ) -> VesselConfig:
         """Draw one VesselConfig from the configured distributions."""
         length = _UniformRange(*self.length_mm_range).sample(rng)
-        u_scale = rng.random()
-        if u_scale < self.small_vessel_probability:
+        if self.small_vessel_probability >= 1.0 - 1e-9:
             r_proximal = _UniformRange(*self.small_vessel_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.small_vessel_wall_thickness_mm_range
-        elif u_scale < self.small_vessel_probability + self.aortic_scale_probability:
+        elif self.aortic_scale_probability >= 1.0 - 1e-9:
             r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
-        elif u_scale < (
-            self.small_vessel_probability
-            + self.aortic_scale_probability
-            + self.large_vessel_beyond_fov_probability
-        ):
+        elif self.large_vessel_beyond_fov_probability >= 1.0 - 1e-9:
             r_proximal = _UniformRange(*self.large_vessel_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.large_vessel_wall_thickness_mm_range
         else:
-            r_proximal = _UniformRange(*self.parent_radius_mm_range).sample(rng)
-            wall_lo, wall_hi = self.parent_wall_thickness_mm_range
+            u_scale = rng.random()
+            if u_scale < self.small_vessel_probability:
+                r_proximal = _UniformRange(*self.small_vessel_radius_mm_range).sample(rng)
+                wall_lo, wall_hi = self.small_vessel_wall_thickness_mm_range
+            elif u_scale < self.small_vessel_probability + self.aortic_scale_probability:
+                r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
+                wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
+            elif u_scale < (
+                self.small_vessel_probability
+                + self.aortic_scale_probability
+                + self.large_vessel_beyond_fov_probability
+            ):
+                r_proximal = _UniformRange(*self.large_vessel_radius_mm_range).sample(rng)
+                wall_lo, wall_hi = self.large_vessel_wall_thickness_mm_range
+            else:
+                r_proximal = _UniformRange(*self.parent_radius_mm_range).sample(rng)
+                wall_lo, wall_hi = self.parent_wall_thickness_mm_range
         taper = _UniformRange(*self.parent_radius_taper_frac_range).sample(rng)
         r_distal = r_proximal * taper
 
