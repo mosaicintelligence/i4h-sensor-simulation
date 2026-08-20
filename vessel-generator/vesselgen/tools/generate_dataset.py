@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from vesselgen.config import GenerationConfig
+from vesselgen.config import GenerationConfig, clamp_default_aortic_scale_probability
 from vesselgen.library import generate_dataset
 
 
@@ -33,11 +33,30 @@ def main() -> None:
             "GenerationConfig defaults; set them via the config class for finer control."
         ),
     )
+    p.add_argument(
+        "--aortic-scale-probability",
+        type=float,
+        default=None,
+        help=(
+            "Optional explicit aortic-scale fraction. If omitted, the default "
+            "aortic fraction is used and clamped only when needed so "
+            "small-vessel + aortic-scale does not exceed 1.0."
+        ),
+    )
 
     args = p.parse_args()
+    aortic_scale_probability = (
+        args.aortic_scale_probability
+        if args.aortic_scale_probability is not None
+        else clamp_default_aortic_scale_probability(
+            small_vessel_probability=args.small_vessel_probability,
+            default_aortic_scale_probability=default_cfg.aortic_scale_probability,
+        )
+    )
     cfg = GenerationConfig(
         side_branch_probability=args.side_branch_probability,
         small_vessel_probability=args.small_vessel_probability,
+        aortic_scale_probability=aortic_scale_probability,
     )
     written = generate_dataset(
         n=args.n,
