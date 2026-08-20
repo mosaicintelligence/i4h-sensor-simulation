@@ -27,6 +27,21 @@ from typing import Literal, Optional, Union
 
 import numpy as np
 
+
+def clamp_default_aortic_scale_probability(
+    small_vessel_probability: float, default_aortic_scale_probability: float
+) -> float:
+    """Return a safe default aortic share for a requested small-vessel share.
+
+    The small-vessel and aortic draws partition one uniform variate with the
+    typical-scale branch. When callers set only ``small_vessel_probability``,
+    keep the configured default aortic share when possible, but clamp it to the
+    remaining probability mass so ``small + aortic <= 1``.
+    """
+    remaining_probability = max(0.0, 1.0 - small_vessel_probability)
+    return min(default_aortic_scale_probability, remaining_probability)
+
+
 LesionKind = Literal["hard", "soft_lipid", "fibrous", "thrombus"]
 """Single-material lesion kinds. Maps 1:1 onto a simulator material:
 
@@ -688,9 +703,26 @@ class _UniformRange:
 class GenerationConfig:
     """Distributions over vessel parameters for batch generation.
 
-      Defaults target large peripheral arteries and veins (femoral, iliac, renal,
-    EVAR-scale aorta) for the PV .035 ICE catheter. Lumen radii place the wall
-    outside the ring-down zone (r >~ 4 mm). ~18% of draws use aortic-scale lumina.
+    Defaults target large peripheral arteries and veins (femoral, iliac, renal,
+    EVAR-scale aorta) for the PV .035 ICE catheter. Each vessel's scale is drawn
+    from a single uniform variate that partitions into three mutually exclusive
+    branches:
+
+    * **small vessel** (``small_vessel_probability``, default 10%): lumen radii
+      of ~1.8-3.5 mm so the wall sits at or inside the catheter ring-down disc
+      (~2-3.6 mm), intentionally reproducing the obscured-wall case;
+    * **aortic scale** (``aortic_scale_probability``, default 18%): 8-11.5 mm
+      radii for EVAR-scale segments;
+    * **typical peripheral** (the remaining probability mass): 4-6.5 mm radii,
+      placing the wall clearly outside the ring-down disc.
+
+    ``small_vessel_probability + aortic_scale_probability +
+    large_vessel_beyond_fov_probability`` must not exceed 1.0 (validated in
+    ``__post_init__``); the remainder is the typical-scale mass.
+
+    Setting any one of those three probabilities to 1.0 is treated as an
+    explicit "force this scale bucket" request, so that legacy force-* configs
+    continue to work even if the other two probabilities keep non-zero defaults.
     """
 
     length_mm_range: tuple[float, float] = (45.0, 75.0)
@@ -706,11 +738,15 @@ class GenerationConfig:
     aortic_radius_mm_range: tuple[float, float] = (8.0, 11.5)
     aortic_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
 
+    small_vessel_probability: float = 0.10
+    small_vessel_radius_mm_range: tuple[float, float] = (1.8, 3.5)
+    small_vessel_wall_thickness_mm_range: tuple[float, float] = (0.5, 0.9)
+
     # Large vessels whose wall runs past the imaging FOV on some angular
     # sectors for typical (naturally off-centre) poses, so those A-lines
     # have no wall echo. The lumen radius is drawn large enough that the
     # far wall exceeds the smaller ``t_far_mm`` FOVs (17.5 / 20 mm); at the
-    # 30 mm FOV these vessels mostly stay in view. aortic + large
+    # 30 mm FOV these vessels mostly stay in view. small + aortic + large
     # probabilities should sum to <= 1.0 (the remainder is the typical draw).
     large_vessel_beyond_fov_probability: float = 0.10
     large_vessel_radius_mm_range: tuple[float, float] = (12.0, 16.0)
@@ -792,6 +828,44 @@ class GenerationConfig:
     seen on real frames). Consumed by ``sampling.sample_pose`` when
     enabled via the per-vessel ``GenerationConfig`` knob."""
 
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.small_vessel_probability <= 1.0:
+            raise ValueError("small_vessel_probability must be in [0, 1]")
+        if not 0.0 <= self.aortic_scale_probability <= 1.0:
+            raise ValueError("aortic_scale_probability must be in [0, 1]")
+        if not 0.0 <= self.large_vessel_beyond_fov_probability <= 1.0:
+            raise ValueError("large_vessel_beyond_fov_probability must be in [0, 1]")
+
+        scale_probabilities = {
+            "small_vessel_probability": self.small_vessel_probability,
+            "aortic_scale_probability": self.aortic_scale_probability,
+            "large_vessel_beyond_fov_probability": self.large_vessel_beyond_fov_probability,
+        }
+        forced_scales = [name for name, p in scale_probabilities.items() if p >= 1.0 - 1e-9]
+        if len(forced_scales) > 1:
+            raise ValueError(
+                "At most one of "
+                "small_vessel_probability, aortic_scale_probability, and "
+                "large_vessel_beyond_fov_probability may be 1.0; got forced "
+                f"buckets {forced_scales}"
+            )
+        if forced_scales:
+            return
+
+        # The scale draw partitions a single uniform variate into small /
+        # aortic / large / typical branches, so these mutually-exclusive
+        # buckets cannot sum to more than 1.0 or the later branches become
+        # unreachable due to threshold truncation.
+        total_scale_probability = sum(scale_probabilities.values())
+        if total_scale_probability > 1.0 + 1e-9:
+            raise ValueError(
+                "small_vessel_probability + aortic_scale_probability + "
+                "large_vessel_beyond_fov_probability must be <= 1.0 unless a "
+                "single branch is explicitly forced with probability 1.0 "
+                f"(got {self.small_vessel_probability} + {self.aortic_scale_probability} + "
+                f"{self.large_vessel_beyond_fov_probability} = {total_scale_probability})"
+            )
+
     def sample(
         self,
         rng: np.random.Generator,
@@ -802,16 +876,33 @@ class GenerationConfig:
     ) -> VesselConfig:
         """Draw one VesselConfig from the configured distributions."""
         length = _UniformRange(*self.length_mm_range).sample(rng)
-        u_scale = rng.random()
-        if u_scale < self.aortic_scale_probability:
+        if self.small_vessel_probability >= 1.0 - 1e-9:
+            r_proximal = _UniformRange(*self.small_vessel_radius_mm_range).sample(rng)
+            wall_lo, wall_hi = self.small_vessel_wall_thickness_mm_range
+        elif self.aortic_scale_probability >= 1.0 - 1e-9:
             r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
-        elif u_scale < (self.aortic_scale_probability + self.large_vessel_beyond_fov_probability):
+        elif self.large_vessel_beyond_fov_probability >= 1.0 - 1e-9:
             r_proximal = _UniformRange(*self.large_vessel_radius_mm_range).sample(rng)
             wall_lo, wall_hi = self.large_vessel_wall_thickness_mm_range
         else:
-            r_proximal = _UniformRange(*self.parent_radius_mm_range).sample(rng)
-            wall_lo, wall_hi = self.parent_wall_thickness_mm_range
+            u_scale = rng.random()
+            if u_scale < self.small_vessel_probability:
+                r_proximal = _UniformRange(*self.small_vessel_radius_mm_range).sample(rng)
+                wall_lo, wall_hi = self.small_vessel_wall_thickness_mm_range
+            elif u_scale < self.small_vessel_probability + self.aortic_scale_probability:
+                r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
+                wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
+            elif u_scale < (
+                self.small_vessel_probability
+                + self.aortic_scale_probability
+                + self.large_vessel_beyond_fov_probability
+            ):
+                r_proximal = _UniformRange(*self.large_vessel_radius_mm_range).sample(rng)
+                wall_lo, wall_hi = self.large_vessel_wall_thickness_mm_range
+            else:
+                r_proximal = _UniformRange(*self.parent_radius_mm_range).sample(rng)
+                wall_lo, wall_hi = self.parent_wall_thickness_mm_range
         taper = _UniformRange(*self.parent_radius_taper_frac_range).sample(rng)
         r_distal = r_proximal * taper
 

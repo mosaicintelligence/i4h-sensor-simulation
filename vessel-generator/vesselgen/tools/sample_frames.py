@@ -30,6 +30,27 @@ def main() -> None:
     p.add_argument(
         "--write-previews", action="store_true", help="Write a per-sample PNG (slow if N is large)"
     )
+    p.add_argument(
+        "--fov-mm",
+        type=float,
+        default=None,
+        help="Draw the imaging FOV as a dashed circle in previews (mm).",
+    )
+    p.add_argument(
+        "--ring-down-mm",
+        type=float,
+        default=None,
+        help=(
+            "Outer radius (mm) of the catheter ring-down annulus to overlay on "
+            "previews for small-vessel QA (e.g. 2.8). Omit to disable the overlay."
+        ),
+    )
+    p.add_argument(
+        "--ring-down-inner-mm",
+        type=float,
+        default=1.0,
+        help="Inner radius (mm) of the ring-down dead zone (default 1.0). Used with --ring-down-mm.",
+    )
     args = p.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -79,7 +100,14 @@ def main() -> None:
 
         if args.write_previews:
             preview_ground_truth(
-                pose, gt, args.out / f"frame_{i:05d}.png", fov_radius_mm=args.max_distance_mm
+                pose,
+                gt,
+                args.out / f"frame_{i:05d}.png",
+                fov_radius_mm=(
+                    args.fov_mm if args.fov_mm is not None else args.max_distance_mm
+                ),
+                ring_down_outer_mm=args.ring_down_mm,
+                ring_down_inner_mm=args.ring_down_inner_mm,
             )
 
     with (args.out / "summary.json").open("w") as f:
