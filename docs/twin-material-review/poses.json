@@ -1,0 +1,296 @@
+{
+  "pathId": "centerline_L",
+  "note": "16 stations in the pat05 calc window. Same poses for stock and overlay.",
+  "stations_mm": [
+    50,
+    55,
+    60,
+    65,
+    70,
+    75,
+    80,
+    85,
+    90,
+    95,
+    100,
+    105,
+    110,
+    115,
+    120,
+    125
+  ],
+  "poses": [
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 50,
+      "i": 250,
+      "stationMm": 50.0,
+      "pullbackMm": 250.0,
+      "position_mm": [
+        248.96303,
+        238.298189,
+        1109.505396
+      ],
+      "rotation_rad_xyz": [
+        -1.57097282,
+        -0.4800528,
+        0.22638634
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 55,
+      "i": 245,
+      "stationMm": 55.0,
+      "pullbackMm": 245.0,
+      "position_mm": [
+        251.467535,
+        238.801175,
+        1105.211185
+      ],
+      "rotation_rad_xyz": [
+        -1.58682869,
+        -0.59368321,
+        0.22829194
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 60,
+      "i": 240,
+      "stationMm": 60.0,
+      "pullbackMm": 240.0,
+      "position_mm": [
+        254.387362,
+        239.483896,
+        1101.213298
+      ],
+      "rotation_rad_xyz": [
+        -1.55027878,
+        -0.68138555,
+        0.22843323
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 65,
+      "i": 235,
+      "stationMm": 65.0,
+      "pullbackMm": 235.0,
+      "position_mm": [
+        257.489405,
+        240.424339,
+        1097.408119
+      ],
+      "rotation_rad_xyz": [
+        -1.50216807,
+        -0.72221802,
+        0.22625491
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 70,
+      "i": 230,
+      "stationMm": 70.0,
+      "pullbackMm": 230.0,
+      "position_mm": [
+        260.606722,
+        241.638038,
+        1093.693534
+      ],
+      "rotation_rad_xyz": [
+        -1.44265344,
+        -0.72693019,
+        0.22590111
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 75,
+      "i": 225,
+      "stationMm": 75.0,
+      "pullbackMm": 225.0,
+      "position_mm": [
+        263.595776,
+        243.155633,
+        1089.985462
+      ],
+      "rotation_rad_xyz": [
+        -1.38164422,
+        -0.70683439,
+        0.23046649
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 80,
+      "i": 220,
+      "stationMm": 80.0,
+      "pullbackMm": 220.0,
+      "position_mm": [
+        266.396312,
+        244.846493,
+        1086.204723
+      ],
+      "rotation_rad_xyz": [
+        -1.37013542,
+        -0.66994793,
+        0.24011858
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 85,
+      "i": 215,
+      "stationMm": 85.0,
+      "pullbackMm": 215.0,
+      "position_mm": [
+        269.045653,
+        246.452611,
+        1082.282073
+      ],
+      "rotation_rad_xyz": [
+        -1.41421265,
+        -0.62363111,
+        0.25090359
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 90,
+      "i": 210,
+      "stationMm": 90.0,
+      "pullbackMm": 210.0,
+      "position_mm": [
+        271.596721,
+        247.680447,
+        1078.164974
+      ],
+      "rotation_rad_xyz": [
+        -1.52083986,
+        -0.5609719,
+        0.25901228
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 95,
+      "i": 205,
+      "stationMm": 95.0,
+      "pullbackMm": 205.0,
+      "position_mm": [
+        274.002885,
+        248.225037,
+        1073.823342
+      ],
+      "rotation_rad_xyz": [
+        -1.6420061,
+        -0.44428801,
+        0.25505402
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 100,
+      "i": 200,
+      "stationMm": 100.0,
+      "pullbackMm": 200.0,
+      "position_mm": [
+        275.648512,
+        248.164437,
+        1069.115253
+      ],
+      "rotation_rad_xyz": [
+        -1.68767374,
+        -0.23214516,
+        0.23484914
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 105,
+      "i": 195,
+      "stationMm": 105.0,
+      "pullbackMm": 195.0,
+      "position_mm": [
+        277.089439,
+        247.598495,
+        1064.370266
+      ],
+      "rotation_rad_xyz": [
+        -1.8407395,
+        -0.35578577,
+        0.26358333
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 110,
+      "i": 190,
+      "stationMm": 110.0,
+      "pullbackMm": 190.0,
+      "position_mm": [
+        279.524071,
+        246.518494,
+        1060.147629
+      ],
+      "rotation_rad_xyz": [
+        -1.98323615,
+        -0.48059151,
+        0.31013654
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 115,
+      "i": 185,
+      "stationMm": 115.0,
+      "pullbackMm": 185.0,
+      "position_mm": [
+        281.957118,
+        245.140391,
+        1056.006551
+      ],
+      "rotation_rad_xyz": [
+        -1.98053939,
+        -0.38479313,
+        0.26367157
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 120,
+      "i": 180,
+      "stationMm": 120.0,
+      "pullbackMm": 180.0,
+      "position_mm": [
+        283.915811,
+        243.59263,
+        1051.676771
+      ],
+      "rotation_rad_xyz": [
+        -1.97383165,
+        -0.30000479,
+        0.22494814
+      ]
+    },
+    {
+      "pathId": "centerline_L",
+      "targetStationMm": 125,
+      "i": 175,
+      "stationMm": 125.0,
+      "pullbackMm": 175.0,
+      "position_mm": [
+        285.523032,
+        241.950303,
+        1047.23719
+      ],
+      "rotation_rad_xyz": [
+        -1.96867002,
+        -0.24617124,
+        0.20132621
+      ]
+    }
+  ]
+}

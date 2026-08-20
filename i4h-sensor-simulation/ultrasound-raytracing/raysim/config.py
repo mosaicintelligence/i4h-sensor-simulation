@@ -312,6 +312,18 @@ class MaterialConfig:
     sigma: float = 0.0
     specularity: float = 0.0
 
+    def update_kwargs(self) -> dict[str, float]:
+        """Keyword arguments for ``Materials.update_material`` (C++ names)."""
+        return {
+            "impedance": float(self.impedance_mrayl),
+            "attenuation": float(self.attenuation_db_per_cm_mhz),
+            "speed_of_sound": float(self.speed_of_sound_m_per_s),
+            "mu0": float(self.mu0),
+            "mu1": float(self.mu1),
+            "sigma": float(self.sigma),
+            "specularity": float(self.specularity),
+        }
+
 
 # -----------------------------------------------------------------------------
 # Future-field registry: every entry is a path into IvusSimConfig that maps to a
@@ -704,6 +716,28 @@ class IvusSimConfig:
         )
 
         return params
+
+    def apply_materials(self, materials: Any) -> int:
+        """Overlay ``self.materials`` onto a live ``raysim.Materials`` table.
+
+        Does not add names. ``Materials.update_material`` only rewrites rows
+        that already exist in the compiled C++ table (PR #20 registered the
+        trilaminar / plaque names). Loading ``volcano_s5i.yaml`` does **not**
+        call this — that file's ``materials:`` block stays decorative so
+        Tier 1 milk / PSF keep the stock table. Twin / reveal-demo look is
+        opt-in via ``twin_demo.yaml``.
+        """
+        if not hasattr(materials, "update_material"):
+            raise TypeError(
+                "materials has no update_material; rebuild raysim from ivus-probe"
+            )
+        n = 0
+        for row in self.materials:
+            materials.update_material(row.name, **row.update_kwargs())
+            n += 1
+        if n:
+            logger.info("applied %d material overlay row(s) from %s", n, self.source_path)
+        return n
 
     # ---- Diagnostics -------------------------------------------------------
 

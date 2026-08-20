@@ -34,6 +34,7 @@ be tracked.
 | Calibrate / onboard a new catheter + console | [Probe onboarding protocol](instrument-calibration/docs/probe_onboarding_protocol.md) |
 | PV .035 shipping config and calibration status | [volcano_s5i.yaml](instrument-calibration/p035_visions/volcano_s5i.yaml) · [elevational waiver](instrument-calibration/p035_visions/tier1_elevational_waiver.md) · [Tier 1 results](instrument-calibration/p035_visions/tier1_results/tier1_results.md) |
 | Generate training vessels / paired B-mode | [vessel-generator quick start](vessel-generator/docs/quickstart.md) |
+| Twin HTTP demo-app (sidecar + overlay look) | [Twin-app note](docs/twin-app.md) · [twin_demo.yaml](instrument-calibration/p035_visions/twin_demo.yaml) |
 | Live UI / demo service | [IVUS_demo README](IVUS_demo/README.md) |
 | CTA pullback | [simulated_pullback_from_CT README](simulated_pullback_from_CT/README.md) |
 
