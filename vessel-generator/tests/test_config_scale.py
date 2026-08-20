@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from vesselgen.config import GenerationConfig
+from vesselgen.config import GenerationConfig, clamp_default_aortic_scale_probability
 
 
 def test_generation_config_peripheral_radii():
@@ -57,3 +57,19 @@ def test_generation_config_wall_and_length():
         assert v.parent.centerline.length_mm >= 45.0
         assert v.parent.wall.mean_thickness_mm >= min_expected_wall_thickness_mm
         assert v.parent.cross_section.mean_radius_mm >= 1.8
+
+
+def test_clamp_default_aortic_scale_probability_keeps_default_when_valid():
+    assert clamp_default_aortic_scale_probability(0.6, 0.18) == 0.18
+
+
+def test_clamp_default_aortic_scale_probability_caps_to_remaining_share():
+    assert np.isclose(clamp_default_aortic_scale_probability(0.9, 0.18), 0.1)
+    assert np.isclose(clamp_default_aortic_scale_probability(1.0, 0.18), 0.0)
+
+
+def test_force_all_small_vessel_probability_with_clamped_default_aortic():
+    aortic_p = clamp_default_aortic_scale_probability(1.0, 0.18)
+    cfg = GenerationConfig(small_vessel_probability=1.0, aortic_scale_probability=aortic_p)
+    assert cfg.small_vessel_probability == 1.0
+    assert cfg.aortic_scale_probability == 0.0
