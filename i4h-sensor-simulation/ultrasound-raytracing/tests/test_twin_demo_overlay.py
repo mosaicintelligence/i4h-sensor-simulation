@@ -2,23 +2,24 @@
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
-_RAYSIM_ROOT = Path(__file__).resolve().parents[1]
-sys.meta_path[:] = [
-    finder
-    for finder in sys.meta_path
-    if finder.__class__.__name__ != "ScikitBuildRedirectingFinder"
-]
-if str(_RAYSIM_ROOT) in sys.path:
-    sys.path.remove(str(_RAYSIM_ROOT))
-sys.path.insert(0, str(_RAYSIM_ROOT))
-
-from raysim.config import IvusSimConfig
+# Load the worktree config.py without importing the `raysim` package. A package
+# import here would bind sys.modules["raysim"] (and rewrite sys.meta_path) for
+# the rest of the pytest process, causing CUDA tests collected in the same run
+# to skip even when the extension is installed.
+_CONFIG_PATH = Path(__file__).resolve().parents[1] / "raysim" / "config.py"
+_spec = importlib.util.spec_from_file_location("_twin_demo_overlay_config", _CONFIG_PATH)
+assert _spec is not None and _spec.loader is not None
+_config = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = _config
+_spec.loader.exec_module(_config)
+IvusSimConfig = _config.IvusSimConfig
 
 REPO = Path(__file__).resolve().parents[3]
 TWIN_DEMO = REPO / "instrument-calibration" / "p035_visions" / "twin_demo.yaml"
