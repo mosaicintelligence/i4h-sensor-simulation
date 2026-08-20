@@ -557,7 +557,7 @@ For traceability, here is the field-by-field map from the canonical
 | `probe.pulse_duration_cycles` | E1 + E2 axial PSF | **O1** axial PSF |
 | `probe.element_radius_mm` | E2 Gaussian-beam fit | **O1** |
 | `probe.focal_length_mm` | E2 depth-of-minimum-lateral-FWHM | **O1** |
-| `probe.elevational_height_mm` | E3 | Estimated 1.5 mm in YAML; E3 still required before treating as calibrated |
+| `probe.elevational_height_mm` | E3 | Estimated 1.5 mm / `num_elevational_samples = 8` in YAML (uncalibrated 2.5D placeholder); E3 still required before treating height as calibrated |
 | `probe.speed_of_sound_mm_per_us` | E4 (TOF refinement) | **O3-B** wire-in-medium |
 | `probe.impulse_response_path` | E1 | *Bonus path* (E1 if RF available) |
 | `processing.tgc_control_points` | E4 | **O3-A** |

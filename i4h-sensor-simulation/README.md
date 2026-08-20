@@ -6,8 +6,10 @@ vessel-generator, demos), start at the [root README](../README.md).
 
 A high-performance GPU-accelerated ultrasound simulator using NVIDIA OptiX
 raytracing with Python bindings. Supports curvilinear, linear-array,
-phased-array, and IVUS probes; ships with a calibrated PV .035 / Volcano s5i
-configuration for IVUS.
+phased-array, and IVUS probes; ships with the PV .035 / Volcano s5i YAML
+(bench-derived processing params; elevational aperture is still an
+uncalibrated 2.5D product default — see
+[`tier1_elevational_waiver.md`](../instrument-calibration/p035_visions/tier1_elevational_waiver.md)).
 
 ## Components in this tree
 

@@ -5,10 +5,18 @@ calibration, procedural vessel generation, and demo / CTA-pullback helpers.
 Active IVUS work lives on the `ivus-probe` branch; GitHub `main` may still
 look like upstream NVIDIA i4h until that branch is merged.
 
+The GitHub clone directory is typically `i4h-sensor-simulation/`; a local
+checkout may be renamed (e.g. `ivus-sim/`). Paths below are relative to the
+monorepo root either way.
+
+Raw bench DICOMs under `ivus_test_*` are intentionally **not** in git (out of
+band). Small manifests, `derived/` summaries, YAML, and templates may still
+be tracked.
+
 ## Layout
 
 ```
-ivus-sim/
+.
 ├── i4h-sensor-simulation/ultrasound-raytracing/  # OptiX IVUS simulator (raysim)
 ├── i4h-sensor-simulation/docs/                   # Physics primer, technical guide, tutorial
 ├── instrument-calibration/                       # Probe YAML fitting + Tier 1 gates

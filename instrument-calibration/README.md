@@ -25,10 +25,12 @@ instrument-calibration/
 ├── pyproject.toml           ← dependencies for the fitting code
 └── <instrument-id>/         ← one subfolder per device under calibration
     ├── README.md
+    ├── <yaml-output>.yaml   ← the canonical OUTPUT of the calibration —
+    │                          consumed by the simulator (prefer for live values)
+    ├── tier1_elevational_waiver.md  ← 2.5D product default vs last 2D Tier 1 (when applicable)
+    ├── tier1_results/       ← Tier 1 physical-fidelity gate report
     ├── calibration_delta.md ← lab notebook / historical follow-ups
     ├── parameter_sheet.csv  ← working notes / param-tracking spreadsheet
-    ├── <yaml-output>.yaml   ← the canonical OUTPUT of the calibration —
-    │                          consumed by the simulator
     ├── extract_*.py         ← per-stage fitting scripts (E2 / E4 / E5 / E6 / E7 / …)
     ├── derive_*.py          ← re-derive individual YAML fields from staged outputs
     ├── fit_alignment.py     ← upstream alignment of the catheter to the data

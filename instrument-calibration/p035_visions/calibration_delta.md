@@ -1,4 +1,4 @@
-# P_035_PointScatter calibration — current state and follow-up bench needs
+# P_035 calibration — lab notebook & historical follow-ups
 
 > **Current status (as of PR #21, 2026-08-19).** Live shipping values are in
 > [`volcano_s5i.yaml`](volcano_s5i.yaml) comments, not in the historical

@@ -3,7 +3,8 @@
 Fits the simulator parameters for the **Visions PV .035 (10 MHz peripheral
 IVUS catheter)** running on a **Volcano s5 / s5i console**.
 
-Primary bench anchors (raw DICOMs out of band; not committed to git):
+Primary bench anchors (raw DICOMs gitignored / out of band; small
+manifests and `derived/` summaries may still be tracked):
 
 - `ivus_test_0508/` — E2 gain sweeps + E6 AR-on/off water captures
 - `ivus_test_0515/` — Wave-0 B2 tungsten wire PSF, E4a/E4c milk TGC/speckle/noise
@@ -38,7 +39,7 @@ Treat [`calibration_delta.md`](calibration_delta.md) as a lab notebook / history
 
 ### Fitting scripts
 
-Run from the workspace root (`ivus-sim/`). Order matters — later stages
+Run from the monorepo root. Order matters — later stages
 depend on earlier ones.
 
 | # | Script | Stage | What it produces |
