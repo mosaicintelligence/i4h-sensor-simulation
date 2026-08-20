@@ -27,7 +27,6 @@ import numpy as np
 
 from vesselgen.vessel import BranchHandle, Vessel
 
-
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -304,6 +303,7 @@ def sample_pose(
     wall_contact_probability: float = 0.0,
     wall_contact_margin_mm: float = 0.05,
     guidewire_clearance_mm: float = 0.15,
+    neighbor_bias_prob: float = 0.0,
 ) -> PoseSample:
     """Sample a random catheter pose inside the vessel lumen.
 
@@ -337,6 +337,17 @@ def sample_pose(
     guidewire_clearance_mm:
         Minimum in-plane clearance the probe centre must maintain from
         the guidewire surface. Ignored when the vessel has no wire.
+    neighbor_bias_prob:
+        Probability of drawing an eccentric position pushed toward a
+        parallel neighbor vessel instead of a uniform in-lumen point.
+        Only active for vessels that have parallel neighbors and only in
+        the parent lumen. When several neighbors are present, one is
+        chosen uniformly at random for that pose. From an eccentric probe
+        on the neighbor side the near wall of the neighbor sits close to
+        the probe, so the vessel-vessel boundary falls inside the catheter
+        ring-down zone and is obscured on the rendered B-mode -- the
+        appearance this case exists to teach. Default 0 reproduces uniform
+        sampling exactly, so vessels without neighbors are unaffected.
     """
     branch = _pick_branch(vessel, rng)
     s = _sample_branch_arclength(
@@ -351,8 +362,21 @@ def sample_pose(
     bbox_max = contour_local.max(axis=0)
     margin = max(edge_margin_mm, 0.0)
 
+    # Bias toward a parallel neighbor (obscured vessel-vessel boundary) takes
+    # priority over the wall-contact mode; both only apply in the parent lumen.
+    neighbor_bias = (
+        neighbor_bias_prob > 0.0
+        and branch.is_parent
+        and bool(vessel.adjacent_vessels)
+        and rng.random() < neighbor_bias_prob
+    )
+    neighbor_az_rad: float | None = None
+    if neighbor_bias:
+        adj = vessel.adjacent_vessels[int(rng.integers(len(vessel.adjacent_vessels)))]
+        neighbor_az_rad = np.radians(adj.azimuth_deg)
     wall_contact = (
-        wall_contact_probability > 0.0
+        not neighbor_bias
+        and wall_contact_probability > 0.0
         and branch.is_parent
         and rng.random() < wall_contact_probability
     )
@@ -361,7 +385,20 @@ def sample_pose(
     chosen_local = None
     eccentricity = 0.0
     for _ in range(max_attempts):
-        if wall_contact:
+        if neighbor_bias:
+            candidate = _sample_neighbor_biased_point(contour_local, neighbor_az_rad, rng, margin)
+            if candidate is None:
+                # Neighbor direction too tight this attempt; fall back to a
+                # uniform in-lumen draw so the pose still succeeds.
+                candidate = rng.uniform(bbox_min, bbox_max)
+                if not _point_in_polygon(candidate, contour_local):
+                    continue
+                if (
+                    margin > 0.0
+                    and _min_distance_to_polygon_edge(candidate, contour_local) < margin
+                ):
+                    continue
+        elif wall_contact:
             candidate = _sample_wall_contact_point(contour_local, rng, wall_contact_margin_mm)
         else:
             candidate = rng.uniform(bbox_min, bbox_max)
@@ -599,6 +636,75 @@ def _sample_wall_contact_point(
     if np.dot(polygon_centroid - edge_pt, inward) < 0:
         inward = -inward
     return edge_pt + max(inset_mm, 0.0) * inward
+
+
+def _ray_boundary_distance(
+    origin: np.ndarray, direction: np.ndarray, polygon: np.ndarray
+) -> Optional[float]:
+    """Distance from ``origin`` to the polygon boundary along ``+direction``.
+
+    Casts a ray and returns the nearest positive intersection distance, or
+    ``None`` when the ray does not cross any edge (degenerate). ``direction``
+    need not be normalized; the returned value is in the same units as the
+    polygon coordinates.
+    """
+    d = np.asarray(direction, dtype=float)
+    n = float(np.linalg.norm(d))
+    if n < 1e-12:
+        return None
+    d = d / n
+    K = len(polygon)
+    best: Optional[float] = None
+    for i in range(K):
+        a = polygon[i]
+        b = polygon[(i + 1) % K]
+        e = b - a
+        denom = d[0] * (-e[1]) + d[1] * e[0]  # cross(d, e)
+        if abs(denom) < 1e-12:
+            continue
+        ao = a - origin
+        t = (ao[0] * (-e[1]) + ao[1] * e[0]) / denom  # cross(a-o, e) / cross(d, e)
+        seg = (ao[0] * (-d[1]) + ao[1] * d[0]) / denom  # cross(a-o, d) / cross(d, e)
+        if t > 1e-9 and -1e-9 <= seg <= 1.0 + 1e-9:
+            if best is None or t < best:
+                best = t
+    return best
+
+
+def _sample_neighbor_biased_point(
+    polygon: np.ndarray,
+    azimuth_rad: float,
+    rng: np.random.Generator,
+    margin_mm: float,
+    *,
+    eccentricity_range: tuple[float, float] = (0.55, 0.9),
+) -> Optional[np.ndarray]:
+    """Sample an in-lumen point pushed toward ``azimuth_rad`` (the neighbor).
+
+    Casts a ray from the centerline (local origin) toward the neighbor,
+    then places the probe a fraction ``eccentricity_range`` of the way to
+    that wall so it sits eccentric on the neighbor side. Returns ``None``
+    when a valid point (inside the contour with at least ``margin_mm``
+    clearance) could not be found, so the caller can fall back to uniform
+    sampling.
+    """
+    u = np.array([np.cos(azimuth_rad), np.sin(azimuth_rad)])
+    origin = np.zeros(2)
+    d_wall = _ray_boundary_distance(origin, u, polygon)
+    if d_wall is None or d_wall <= margin_mm:
+        return None
+    t = float(rng.uniform(*eccentricity_range))
+    r = min(t * d_wall, d_wall - margin_mm)
+    for _ in range(5):
+        if r <= 0.0:
+            return None
+        candidate = r * u
+        inside = _point_in_polygon(candidate, polygon)
+        clear = margin_mm <= 0.0 or _min_distance_to_polygon_edge(candidate, polygon) >= margin_mm
+        if inside and clear:
+            return candidate
+        r *= 0.8
+    return None
 
 
 def _min_distance_to_polygon_edge(point: np.ndarray, polygon: np.ndarray) -> float:

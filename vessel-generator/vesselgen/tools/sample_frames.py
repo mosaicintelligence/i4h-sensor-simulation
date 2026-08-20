@@ -42,7 +42,7 @@ def main() -> None:
         default=None,
         help=(
             "Outer radius (mm) of the catheter ring-down annulus to overlay on "
-            "previews for small-vessel QA (e.g. 2.8). Omit to disable the overlay."
+            "previews (e.g. 2.8). Omit to disable the overlay."
         ),
     )
     p.add_argument(
@@ -103,9 +103,7 @@ def main() -> None:
                 pose,
                 gt,
                 args.out / f"frame_{i:05d}.png",
-                fov_radius_mm=(
-                    args.fov_mm if args.fov_mm is not None else args.max_distance_mm
-                ),
+                fov_radius_mm=args.fov_mm,
                 ring_down_outer_mm=args.ring_down_mm,
                 ring_down_inner_mm=args.ring_down_inner_mm,
             )

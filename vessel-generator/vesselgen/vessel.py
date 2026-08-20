@@ -23,6 +23,10 @@ from typing import Optional
 import numpy as np
 import trimesh
 
+from vesselgen.adjacent import (
+    build_adjacent_neighbor,
+    measured_outer_radius_mm,
+)
 from vesselgen.bifurcation import (
     BifurcationError,
     DaughterArtifacts,
@@ -33,17 +37,13 @@ from vesselgen.config import (
     BranchConfig,
     LayeredWallConfig,
     VesselConfig,
-    WallConfig,
-    branch_wall_to_layered,
 )
-from vesselgen.cross_section import CrossSectionField, build_cross_sections
-from vesselgen.sweep import sweep_branch, sweep_layered_branch
+from vesselgen.cross_section import CrossSectionField
+from vesselgen.sweep import sweep_layered_branch
 from vesselgen.wall import (
     LayeredWallField,
     WallField,
-    build_layered_wall,
-    build_wall,
-    layered_wall_from_wall_field,
+    build_branch_fields,
     push_layered_interfaces_around_lesions,
 )
 
@@ -69,6 +69,36 @@ class BranchHandle:
     """Populated when the branch's wall is described by a
     :class:`LayeredWallConfig`. Lets the lesion builder query interior
     interface radii."""
+
+
+@dataclass
+class AdjacentVesselArtifact:
+    """Lightweight record of one parallel neighbor vessel.
+
+    Neighbors are merged into the parent's surface meshes (they share the
+    parent's materials/labels), so they are not separate branches and the
+    pose sampler never places the probe inside them. This record keeps the
+    placement metadata handy for the manifest and for non-overlap checks.
+
+    ``center_xy_mm`` is the neighbor centerline position in the parent's
+    cross-section plane (parent normal, binormal); ``outer_radius_bound_mm``
+    is the measured maximum outer-wall radius used to size clearances.
+    """
+
+    name: str
+    azimuth_deg: float
+    center_offset_mm: float
+    center_xy_mm: tuple[float, float]
+    mean_radius_mm: float
+    outer_radius_bound_mm: float
+    centerline: Centerline
+    lumen_field: CrossSectionField
+    surfaces: list["SurfaceEntry"] = field(default_factory=list)
+    """This neighbor's own emitted surfaces (its own nested lumen ->
+    interface shells), carrying the same material chain as the parent.
+    These are written to disk *in addition to* the merged parent+neighbor
+    surfaces so a future renderer can load each vessel as a distinct
+    raysim object; see :meth:`Vessel.manifest_dict`."""
 
 
 @dataclass
@@ -127,6 +157,18 @@ class Vessel:
     guidewire: Optional[object] = None
     """Optional :class:`vesselgen.guidewire.GuidewireArtifacts`."""
 
+    adjacent_vessels: list = field(default_factory=list)
+    """List of :class:`AdjacentVesselArtifact`. Neighbors are merged into
+    the parent's surface meshes; this is placement metadata only."""
+
+    parent_object_surfaces: list = field(default_factory=list)
+    """Parent-only emitted surfaces (before adjacent neighbors are merged
+    in). Populated only when the vessel has adjacent neighbors; empty
+    otherwise (when the top-level :attr:`surfaces` already are the parent
+    alone). Written to disk under ``objects/parent/`` so a future renderer
+    can load the parent as a distinct nested object alongside each
+    neighbor."""
+
     world_background_material: str = "lumen"
     """Material the simulator should use for rays outside any mesh
     (the lumen blood pool, since the probe sits inside the lumen)."""
@@ -158,15 +200,9 @@ class Vessel:
         parent_rng = np.random.default_rng(
             cfg.parent.seed if cfg.parent.seed is not None else cfg.seed
         )
-        parent_lumen_field = build_cross_sections(
-            cfg.parent.cross_section,
-            parent_centerline.length_mm,
-            cfg.parent.centerline.n_stations,
-            parent_rng,
-        )
-
-        parent_layered_field, parent_layer_meshes = _build_parent_wall_meshes(
-            cfg.parent.wall, parent_lumen_field, parent_centerline, parent_rng
+        parent_lumen_field, parent_layered_field = build_branch_fields(cfg.parent, parent_rng)
+        parent_layer_meshes = sweep_layered_branch(
+            parent_centerline, parent_lumen_field, parent_layered_field
         )
         parent_wall_field = parent_layered_field.to_outer_wall_field()
 
@@ -259,7 +295,74 @@ class Vessel:
                 layered_wall_field=parent_layered_field,
             )
 
+        # Adjacent parallel neighbors: build each as its own nested tube
+        # and concatenate it layer-by-layer into the parent's surface
+        # meshes. A trimesh built from two disjoint closed shells is still
+        # watertight and ``contains``-correct, so the merged meshes flow
+        # through ground-truth slicing, the segmentation rasterizer,
+        # previews and raysim unchanged -- and each neighbor inherits the
+        # parent's per-layer materials/labels by construction. Neighbors
+        # are deliberately NOT added to ``branches`` so the pose sampler
+        # only ever places the probe in the parent lumen.
+        #
+        # We snapshot the parent's shells before merging, and keep each
+        # neighbor's shells, so save_vessel can also emit each vessel as its
+        # own object under ``objects/`` for the renderer (see manifest_dict).
+        parent_layer_meshes_pre_merge = list(cur_layer_meshes)
+
+        adjacent_artifacts: list[AdjacentVesselArtifact] = []
+        for neighbor_idx, adj in enumerate(cfg.adjacent_vessels):
+            neighbor_meshes, neighbor_centerline, neighbor_lumen = build_adjacent_neighbor(
+                adj, parent_centerline
+            )
+            if len(neighbor_meshes) != len(cur_layer_meshes):
+                raise BifurcationError(
+                    f"adjacent vessel '{adj.branch.name}': neighbor has "
+                    f"{len(neighbor_meshes)} layer meshes but parent has "
+                    f"{len(cur_layer_meshes)}; wall layer counts must match"
+                )
+            cur_layer_meshes = [
+                trimesh.util.concatenate([parent_mesh, neighbor_mesh])
+                for parent_mesh, neighbor_mesh in zip(cur_layer_meshes, neighbor_meshes)
+            ]
+            az = np.radians(adj.azimuth_deg)
+            center_xy = (
+                adj.center_offset_mm * float(np.cos(az)),
+                adj.center_offset_mm * float(np.sin(az)),
+            )
+            adjacent_artifacts.append(
+                AdjacentVesselArtifact(
+                    name=adj.branch.name,
+                    azimuth_deg=adj.azimuth_deg,
+                    center_offset_mm=adj.center_offset_mm,
+                    center_xy_mm=center_xy,
+                    mean_radius_mm=float(adj.branch.cross_section.mean_radius_mm),
+                    outer_radius_bound_mm=measured_outer_radius_mm(adj.branch),
+                    centerline=neighbor_centerline,
+                    lumen_field=neighbor_lumen,
+                    # Neighbor shares the parent's wall config, so its emitted
+                    # surfaces carry the identical material chain -- plus the
+                    # outer adventitia shell, which a neighbor needs and the
+                    # parent does not (see ``include_outer``): a ray passes
+                    # clean through a neighbor and has to be handed back to
+                    # adventitia on the way out.
+                    surfaces=_build_emitted_surface_list(
+                        neighbor_meshes,
+                        cfg.parent.wall,
+                        obj_dir=f"objects/neighbor_{neighbor_idx:02d}",
+                        include_outer=True,
+                    ),
+                )
+            )
+
         surfaces = _build_emitted_surface_list(cur_layer_meshes, cfg.parent.wall)
+        parent_object_surfaces: list[SurfaceEntry] = (
+            _build_emitted_surface_list(
+                parent_layer_meshes_pre_merge, cfg.parent.wall, obj_dir="objects/parent"
+            )
+            if adjacent_artifacts
+            else []
+        )
 
         guidewire = None
         if cfg.guidewire is not None:
@@ -276,6 +379,8 @@ class Vessel:
             surfaces=surfaces,
             lesions=lesions,
             guidewire=guidewire,
+            adjacent_vessels=adjacent_artifacts,
+            parent_object_surfaces=parent_object_surfaces,
         )
 
     # -----------------------------------------------------------------
@@ -307,6 +412,7 @@ class Vessel:
         max_attempts: int = 64,
         side_branch_ostium_bias_prob: float = 0.0,
         side_branch_ostium_arclength_frac: float = 0.25,
+        neighbor_bias_prob: float = 0.0,
     ):
         """Draw a fresh random pose anywhere inside the vessel lumen.
 
@@ -315,6 +421,10 @@ class Vessel:
         sampled weighted by arclength, then arclength uniformly along that
         branch, then a 2D in-lumen position rejection-sampled, then a
         small probe-axis tilt.
+
+        ``neighbor_bias_prob`` biases a fraction of poses toward one of the
+        parallel adjacent vessels (see :func:`vesselgen.sampling.sample_pose`);
+        it is a no-op for vessels without neighbors.
         """
         from vesselgen.sampling import sample_pose
 
@@ -326,6 +436,7 @@ class Vessel:
             max_attempts=max_attempts,
             side_branch_ostium_bias_prob=side_branch_ostium_bias_prob,
             side_branch_ostium_arclength_frac=side_branch_ostium_arclength_frac,
+            neighbor_bias_prob=neighbor_bias_prob,
         )
 
     def sample_pose_in_branch(
@@ -499,7 +610,37 @@ class Vessel:
                 "wall": wall_cfg_to_dict(b.wall),
             }
 
-        return {
+        def object_entry(
+            name: str,
+            role: str,
+            probe_inside: bool,
+            obj_surfaces: list[SurfaceEntry],
+            centerline,
+            *,
+            placement: Optional[dict] = None,
+        ) -> dict:
+            entry: dict = {
+                "name": name,
+                "role": role,
+                "probe_inside": probe_inside,
+                # Blood pool inside the innermost (lumen) shell -- the world
+                # background material; a ray inside any lumen sits here.
+                "interior_material": self.world_background_material,
+                # Material a ray sits in just outside the outermost emitted
+                # surface (it stays here until the FOV). For a trilaminar
+                # wall this is "adventitia".
+                "surrounding_material": (obj_surfaces[-1].material_name if obj_surfaces else None),
+                "centerline": centerline.to_dict(),
+                "surfaces": [
+                    {"name": s.name, "material": s.material_name, "obj": s.obj_filename}
+                    for s in obj_surfaces
+                ],
+            }
+            if placement is not None:
+                entry.update(placement)
+            return entry
+
+        manifest: dict = {
             "name": cfg.name,
             "seed": cfg.seed,
             "axis_convention": {"vessel_axis": "Y", "cross_section_plane": "xz", "units": "mm"},
@@ -512,6 +653,18 @@ class Vessel:
                     "branch": branch_cfg_to_dict(sb.branch),
                 }
                 for sb in cfg.side_branches
+            ],
+            # Adjacent neighbors are merged into the parent surface meshes
+            # (they share the parent's materials/labels), so this section is
+            # informational: it records each neighbor's placement + geometry
+            # rather than pointing at separate OBJ files.
+            "adjacent_vessels": [
+                {
+                    "azimuth_deg": adj.azimuth_deg,
+                    "center_offset_mm": adj.center_offset_mm,
+                    "branch": branch_cfg_to_dict(adj.branch),
+                }
+                for adj in cfg.adjacent_vessels
             ],
             "branches": [
                 {
@@ -584,44 +737,53 @@ class Vessel:
             ),
         }
 
+        # Per-object mesh decomposition for the renderer. Neighbors are
+        # concatenated into the top-level (merged) ``surfaces`` for the
+        # geometry / ground-truth / preview stack, which relies on a single
+        # watertight mesh. raysim, however, needs each vessel as its own
+        # nested closed object (one Mesh per shell, traversed inside->out
+        # from the probe for the parent and outside->in for a neighbor).
+        # When neighbors are present we therefore *also* write each object's
+        # own shells separately and describe them here; ``surfaces_are_merged``
+        # flags that the top-level ``surfaces`` and this ``objects`` list are
+        # two views of the same geometry (render one or the other, not both).
+        if self.adjacent_vessels:
+            parent_cl = self.branches[self.parent_branch_id].centerline
+            objects = [
+                object_entry(
+                    "parent",
+                    "parent",
+                    True,
+                    self.parent_object_surfaces,
+                    parent_cl,
+                )
+            ]
+            for art in self.adjacent_vessels:
+                objects.append(
+                    object_entry(
+                        art.name,
+                        "adjacent",
+                        False,
+                        art.surfaces,
+                        art.centerline,
+                        placement={
+                            "azimuth_deg": art.azimuth_deg,
+                            "center_offset_mm": art.center_offset_mm,
+                            "center_xy_mm": list(art.center_xy_mm),
+                            "mean_radius_mm": art.mean_radius_mm,
+                            "outer_radius_bound_mm": art.outer_radius_bound_mm,
+                        },
+                    )
+                )
+            manifest["surfaces_are_merged"] = True
+            manifest["objects"] = objects
+
+        return manifest
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers for Vessel.from_config
 # ---------------------------------------------------------------------------
-
-
-def _build_parent_wall_meshes(
-    wall_cfg,
-    lumen: CrossSectionField,
-    centerline: Centerline,
-    rng: np.random.Generator,
-) -> tuple[LayeredWallField, list[trimesh.Trimesh]]:
-    """Build the layered-wall field + its closed surface meshes.
-
-    Returns the field and ``[lumen_surface, interior_interface_0, ...,
-    outer_surface]`` meshes (``n_layers + 1`` entries). The outermost
-    mesh is kept here because the bifurcation pipeline still needs
-    something to union daughters against, but it gets dropped before
-    being exported in :func:`_build_emitted_surface_list`. Legacy
-    single-layer :class:`WallConfig` is wrapped as a one-layer layered
-    field so the rest of the pipeline always sees the same shape.
-    """
-
-    if isinstance(wall_cfg, LayeredWallConfig):
-        field = build_layered_wall(wall_cfg, lumen, centerline.length_mm, rng)
-        meshes = sweep_layered_branch(centerline, lumen, field)
-        return field, meshes
-
-    wall_field = build_wall(wall_cfg, lumen, centerline.length_mm, rng)
-    field = layered_wall_from_wall_field(
-        wall_field,
-        lumen,
-        material_name="vessel_wall",
-        total_thickness_mm=wall_cfg.mean_thickness_mm,
-        min_thickness_mm=wall_cfg.min_thickness_mm,
-    )
-    lumen_mesh, outer_mesh = sweep_branch(centerline, lumen, wall_field)
-    return field, [lumen_mesh, outer_mesh]
 
 
 def _emitted_material_chain(wall_cfg) -> list[str]:
@@ -647,19 +809,40 @@ def _emitted_material_chain(wall_cfg) -> list[str]:
 
 
 def _build_emitted_surface_list(
-    layer_meshes: list[trimesh.Trimesh], wall_cfg
+    layer_meshes: list[trimesh.Trimesh],
+    wall_cfg,
+    *,
+    obj_dir: str = "",
+    include_outer: bool = False,
 ) -> list[SurfaceEntry]:
     """Build the simulator-facing :class:`SurfaceEntry` list.
 
-    ``layer_meshes`` is the full ``n_layers + 1`` list returned by
-    :func:`_build_parent_wall_meshes` (or the analogous bifurcation
-    output): innermost lumen mesh, each interior interface, and the
-    outer adventitia boundary. For a layered wall we drop the
+    ``layer_meshes`` is the full ``n_layers + 1`` list produced by
+    sweeping the fields from :func:`vesselgen.wall.build_branch_fields`
+    (or the analogous bifurcation output): innermost lumen mesh, each
+    interior interface, and the outer adventitia boundary. For a layered
+    wall we drop the
     outermost mesh -- nothing transitions a ray's material there
     anymore -- and emit ``n_layers`` surfaces.
 
     Legacy single-slab walls keep both meshes (``[lumen, outer]``) so
     raysim still sees the historical extravascular back-boundary.
+
+    ``obj_dir`` prefixes every ``obj_filename`` (e.g. ``objects/parent``)
+    so a single object's shells can be written under their own
+    subdirectory. It defaults to empty, giving the canonical top-level
+    ``lumen.obj`` / ``surfaces/`` paths.
+
+    ``include_outer`` re-appends the outermost (adventitia back-boundary)
+    mesh that a layered wall otherwise drops, carrying a duplicate of the
+    last chain entry so it is acoustically invisible (identical material
+    on both sides, R = 0). It exists purely to close the material state
+    machine for an object a ray traverses *all the way through* -- i.e. a
+    neighbor, which the probe is outside of. ``Payload.outter_material_id``
+    is a single slot, so without a final surface to cross the ray would
+    keep the innermost wall material out to the FOV, leaving a wedge of
+    phantom wall behind every neighbor. The parent never needs it: rays
+    start inside it and exit into adventitia, which is already correct.
     """
 
     chain = _emitted_material_chain(wall_cfg)
@@ -671,6 +854,7 @@ def _build_emitted_surface_list(
         )
     emit_meshes = layer_meshes[:n_emit]
     is_layered = isinstance(wall_cfg, LayeredWallConfig)
+    prefix = f"{obj_dir}/" if obj_dir else ""
 
     entries: list[SurfaceEntry] = []
     for i, (mesh, material) in enumerate(zip(emit_meshes, chain)):
@@ -688,7 +872,17 @@ def _build_emitted_surface_list(
                 name=name,
                 material_name=material,
                 mesh=mesh,
-                obj_filename=obj_filename,
+                obj_filename=f"{prefix}{obj_filename}",
+            )
+        )
+
+    if include_outer and is_layered and len(layer_meshes) > n_emit:
+        entries.append(
+            SurfaceEntry(
+                name="outer",
+                material_name=chain[-1],
+                mesh=layer_meshes[n_emit],
+                obj_filename=f"{prefix}outer.obj",
             )
         )
     return entries

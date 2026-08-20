@@ -209,8 +209,6 @@ def _draw_ring_down_annulus(
     """
     from matplotlib.patches import Circle
 
-    # Bright ring-down band: filled outer disc minus the dead-zone disc,
-    # both translucent so the lumen/outer contours remain readable.
     ax.add_patch(
         Circle(
             (0.0, 0.0),
@@ -253,8 +251,6 @@ def preview_ground_truth(
 
     When ``fov_radius_mm`` is given, the imaging field of view is drawn as a
     dashed circle (left panel) and a dashed reference line (right panel).
-    Angles whose wall lies beyond this radius appear as gaps ("open sectors")
-    in the per-angle distance curves, matching the ``NaN`` A-lines in ``gt``.
     """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)

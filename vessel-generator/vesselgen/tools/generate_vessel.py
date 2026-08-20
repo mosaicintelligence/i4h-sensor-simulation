@@ -10,6 +10,12 @@ A straight peripheral vessel with no bifurcation::
 A peripheral vessel with one side branch::
 
     python -m vesselgen.tools.generate_vessel --out out/vessel_side --seed 7 --side-branch
+
+An adjacent-case primary with two parallel neighbor vessels (ring-down-scale gap)::
+
+    python -m vesselgen.tools.generate_vessel --out out/vessel_adj --seed 7 \\
+        --radius-mm 2.5 --wall-mm 0.6 --layers 3 \\
+        --adjacent-vessel --n-adjacent 2
 """
 
 from __future__ import annotations
@@ -19,7 +25,9 @@ from pathlib import Path
 
 import numpy as np
 
+from vesselgen.adjacent import place_adjacent_vessels, rescale_wall_to_thickness
 from vesselgen.config import (
+    AdjacentVesselConfig,
     BranchConfig,
     CalcificationLesionConfig,
     CenterlineConfig,
@@ -128,6 +136,38 @@ def _make_config(args: argparse.Namespace) -> VesselConfig:
             sector_extent_deg=120.0,
         )
 
+    adjacent_vessels: list[AdjacentVesselConfig] = []
+    if args.adjacent_vessel:
+        nb_radius = args.radius_mm * args.adjacent_radius_frac
+        nb_wall_thickness = args.wall_mm * args.adjacent_radius_frac
+        neighbor_branches = [
+            BranchConfig(
+                centerline=CenterlineConfig(
+                    length_mm=args.length_mm,
+                    origin=(0.0, -args.length_mm / 2.0, 0.0),
+                    direction=(0.0, 1.0, 0.0),
+                    n_stations=args.n_stations,
+                ),
+                cross_section=CrossSectionConfig(
+                    mean_radius_mm=nb_radius,
+                    distal_radius_mm=nb_radius * args.taper,
+                    max_perturbation_frac=args.lumen_perturbation,
+                ),
+                wall=rescale_wall_to_thickness(parent.wall, nb_wall_thickness),
+                name=f"adjacent_{j}",
+                seed=args.seed + 200 + j,
+            )
+            for j in range(args.n_adjacent)
+        ]
+        gaps_mm = [float(args.adjacent_gap_mm)] * args.n_adjacent
+        adjacent_vessels = place_adjacent_vessels(
+            parent,
+            neighbor_branches,
+            gaps_mm,
+            np.random.default_rng(args.seed + 900),
+            first_azimuth_deg=float(args.adjacent_azimuth_deg),
+        )
+
     return VesselConfig(
         parent=parent,
         side_branches=side_branches,
@@ -136,6 +176,7 @@ def _make_config(args: argparse.Namespace) -> VesselConfig:
         lesions=lesions,
         diseased_sector=diseased_sector,
         guidewire=guidewire,
+        adjacent_vessels=adjacent_vessels,
     )
 
 
@@ -166,6 +207,36 @@ def main() -> None:
     p.add_argument("--side-polar-deg", type=float, default=60.0)
     p.add_argument("--side-length-mm", type=float, default=45.0)
     p.add_argument("--side-radius-mm", type=float, default=3.5)
+
+    p.add_argument(
+        "--adjacent-vessel",
+        action="store_true",
+        help="Add 1-2 parallel non-touching neighbor vessels "
+        "(mutually exclusive with --side-branch).",
+    )
+    p.add_argument("--n-adjacent", type=int, choices=(1, 2), default=1)
+    p.add_argument(
+        "--adjacent-gap-mm",
+        type=float,
+        default=0.1,
+        help="Edge-to-edge gap from the parent outer wall to a neighbor "
+        "outer wall (mm). Default matches the batch sampler mid-range "
+        "(GenerationConfig uses 0.02–0.15); small values place the "
+        "vessel-vessel boundary in the catheter ring-down zone.",
+    )
+    p.add_argument(
+        "--adjacent-radius-frac",
+        type=float,
+        default=1.0,
+        help="Neighbor mean radius as a fraction of the parent radius.",
+    )
+    p.add_argument(
+        "--adjacent-azimuth-deg",
+        type=float,
+        default=0.0,
+        help="In-plane direction to the first neighbor; a 2nd neighbor is "
+        "packed right next to it (same sector) at the closest clearance-safe angle.",
+    )
 
     p.add_argument(
         "--layers",
@@ -215,6 +286,12 @@ def main() -> None:
     p.add_argument("--no-preview", action="store_true")
 
     args = p.parse_args()
+    if args.side_branch and args.adjacent_vessel:
+        p.error(
+            "--side-branch and --adjacent-vessel are mutually exclusive: side "
+            "branches fuse into the parent wall, adjacent vessels are separate "
+            "parallel neighbors. Choose one."
+        )
     cfg = _make_config(args)
     vessel = Vessel.from_config(cfg)
     out = save_vessel(vessel, args.out)
