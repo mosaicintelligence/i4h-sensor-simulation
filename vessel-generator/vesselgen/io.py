@@ -169,11 +169,12 @@ def save_vessel(vessel: Vessel, out_dir: str | Path) -> Path:
 def load_vessel(in_dir: str | Path) -> Vessel:
     import trimesh
 
+    from vesselgen.adjacent import build_adjacent_neighbor, measured_outer_radius_mm
     from vesselgen.centerline import Centerline
     from vesselgen.cross_section import CrossSectionField
     from vesselgen.guidewire import GuidewireArtifacts, _local_offset
     from vesselgen.inclusions import LesionMesh
-    from vesselgen.vessel import BranchHandle, SurfaceEntry
+    from vesselgen.vessel import AdjacentVesselArtifact, BranchHandle, SurfaceEntry
     from vesselgen.wall import WallField
 
     in_dir = Path(in_dir)
@@ -234,6 +235,29 @@ def load_vessel(in_dir: str | Path) -> Vessel:
                 obj_filename=entry["obj"],
             )
         )
+
+    def _load_surface_entries(surface_entries: list[dict]) -> list[SurfaceEntry]:
+        loaded: list[SurfaceEntry] = []
+        for surface_entry in surface_entries:
+            obj_rel = surface_entry.get("obj")
+            if not obj_rel:
+                continue
+            obj_path = in_dir / obj_rel
+            if not obj_path.exists():
+                continue
+            mesh = trimesh.load(obj_path, force="mesh", process=True)
+            # Object-shell OBJs use inward normals on disk for raysim, same as
+            # top-level surfaces. Flip back to outward for in-memory trimesh ops.
+            mesh.invert()
+            loaded.append(
+                SurfaceEntry(
+                    name=surface_entry["name"],
+                    material_name=surface_entry["material"],
+                    mesh=mesh,
+                    obj_filename=obj_rel,
+                )
+            )
+        return loaded
 
     if not surfaces:
         # Pre-manifest legacy layout: load lumen.obj + outer.obj directly.
@@ -320,6 +344,85 @@ def load_vessel(in_dir: str | Path) -> Vessel:
 
     world_bg = manifest.get("world", {}).get("background_material", "lumen")
 
+    parent_object_surfaces: list[SurfaceEntry] = []
+    adjacent_artifacts: list[AdjacentVesselArtifact] = []
+    objects = manifest.get("objects", [])
+
+    if cfg.adjacent_vessels and branches:
+        parent_branch = next((b for b in branches if b.is_parent), branches[0])
+
+        parent_obj_entry = next((obj for obj in objects if obj.get("role") == "parent"), None)
+        if parent_obj_entry is not None:
+            parent_object_surfaces = _load_surface_entries(parent_obj_entry.get("surfaces", []))
+
+        adjacent_obj_entries = [obj for obj in objects if obj.get("role") == "adjacent"]
+        used_entry_idxs: set[int] = set()
+
+        for adj_cfg in cfg.adjacent_vessels:
+            matched_idx = next(
+                (
+                    i
+                    for i, obj in enumerate(adjacent_obj_entries)
+                    if i not in used_entry_idxs and obj.get("name") == adj_cfg.branch.name
+                ),
+                None,
+            )
+            if matched_idx is None:
+                matched_idx = next(
+                    (i for i in range(len(adjacent_obj_entries)) if i not in used_entry_idxs), None
+                )
+            if matched_idx is not None:
+                used_entry_idxs.add(matched_idx)
+                obj_entry = adjacent_obj_entries[matched_idx]
+            else:
+                obj_entry = {}
+
+            # Reconstruct runtime centerline/lumen fields from config so
+            # sampling/pose-bias behavior matches freshly-generated vessels.
+            _, neighbor_centerline, neighbor_lumen = build_adjacent_neighbor(
+                adj_cfg, parent_branch.centerline
+            )
+            cl_dict = obj_entry.get("centerline")
+            if isinstance(cl_dict, dict):
+                neighbor_centerline = Centerline(
+                    CenterlineConfig(
+                        length_mm=cl_dict["length_mm"],
+                        origin=tuple(cl_dict["origin"]),
+                        direction=tuple(cl_dict["direction"]),
+                        n_stations=cl_dict["n_stations"],
+                    )
+                )
+
+            azimuth_deg = float(obj_entry.get("azimuth_deg", adj_cfg.azimuth_deg))
+            center_offset_mm = float(obj_entry.get("center_offset_mm", adj_cfg.center_offset_mm))
+            center_xy_raw = obj_entry.get("center_xy_mm")
+            if isinstance(center_xy_raw, list) and len(center_xy_raw) >= 2:
+                center_xy_mm = (float(center_xy_raw[0]), float(center_xy_raw[1]))
+            else:
+                az_rad = np.radians(azimuth_deg)
+                center_xy_mm = (
+                    center_offset_mm * float(np.cos(az_rad)),
+                    center_offset_mm * float(np.sin(az_rad)),
+                )
+
+            adjacent_artifacts.append(
+                AdjacentVesselArtifact(
+                    name=obj_entry.get("name", adj_cfg.branch.name),
+                    azimuth_deg=azimuth_deg,
+                    center_offset_mm=center_offset_mm,
+                    center_xy_mm=center_xy_mm,
+                    mean_radius_mm=float(adj_cfg.branch.cross_section.mean_radius_mm),
+                    outer_radius_bound_mm=float(
+                        obj_entry.get(
+                            "outer_radius_bound_mm", measured_outer_radius_mm(adj_cfg.branch)
+                        )
+                    ),
+                    centerline=neighbor_centerline,
+                    lumen_field=neighbor_lumen,
+                    surfaces=_load_surface_entries(obj_entry.get("surfaces", [])),
+                )
+            )
+
     if not surfaces:
         raise RuntimeError(
             f"vessel directory {in_dir} has no surface meshes (no manifest "
@@ -335,6 +438,8 @@ def load_vessel(in_dir: str | Path) -> Vessel:
         surfaces=surfaces,
         lesions=lesions,
         guidewire=guidewire,
+        adjacent_vessels=adjacent_artifacts,
+        parent_object_surfaces=parent_object_surfaces,
         world_background_material=world_bg,
     )
 

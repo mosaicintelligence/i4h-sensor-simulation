@@ -585,8 +585,10 @@ def test_no_objects_section_without_neighbors(tmp_path):
 
 
 def test_vessel_with_neighbors_roundtrips_through_load(tmp_path):
-    """Saving then loading a neighbor vessel must not error, and the config's
-    adjacent-vessel entries survive the round trip."""
+    """Round-tripping through load preserves runtime neighbor artifacts and
+    the per-object manifest contract used by raysim."""
+    import json
+
     from vesselgen.io import save_vessel
 
     cfg = _adjacent_config(5, n_neighbors=2)
@@ -596,6 +598,21 @@ def test_vessel_with_neighbors_roundtrips_through_load(tmp_path):
     loaded = Vessel.load(vdir)
     assert loaded.outer_mesh.is_watertight
     assert len(loaded.config.adjacent_vessels) == 2
+    assert len(loaded.adjacent_vessels) == 2
+    assert loaded.parent_object_surfaces
+
+    # The loader must preserve the split-object representation so re-saving a
+    # loaded vessel does not silently drop objects/surfaces_are_merged.
+    re_vdir = save_vessel(loaded, tmp_path / "adj_reloaded")
+    with (re_vdir / "vessel.json").open() as f:
+        re_manifest = json.load(f)
+    assert re_manifest.get("surfaces_are_merged") is True
+    assert len(re_manifest["objects"]) == 3
+    for obj in re_manifest["objects"]:
+        assert obj["surfaces"]
+        for s in obj["surfaces"]:
+            assert s["obj"].startswith("objects/")
+            assert (re_vdir / s["obj"]).is_file()
 
 
 def test_neighbor_bias_is_noop_without_neighbors():
