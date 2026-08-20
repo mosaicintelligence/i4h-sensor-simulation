@@ -87,6 +87,7 @@ from vesselgen.sim_randomization import (  # noqa: E402
 from vesselgen.vessel import Vessel  # noqa: E402
 
 PoseSlot = Literal["random", "side_branch", "parent_ostium"]
+DEFAULT_PAIRED_MAX_REFLECTION_DEPTH = 24
 
 
 # ---------------------------------------------------------------------------
@@ -785,7 +786,7 @@ def generate_paired_dataset(
     edge_margin_mm: float = 0.15,
     frames_per_vessel: int = 12,
     max_pose_attempts: int = 48,
-    max_reflection_depth: int | None = None,
+    max_reflection_depth: int | None = DEFAULT_PAIRED_MAX_REFLECTION_DEPTH,
     rand_cfg: SimRandomizationConfig | None = None,
     gen_cfg: GenerationConfig | None = None,
     max_gain_resamples: int = 8,
@@ -821,14 +822,18 @@ def generate_paired_dataset(
 
     rand_cfg = rand_cfg or SimRandomizationConfig()
     cfg, materials, _base_sim_params = load_calibrated_config()
-    if max_reflection_depth is not None:
-        # The calibrated default (15) is sized for a single vessel: the probe
-        # crosses 3 shells outward and that is the whole budget a ray needs.
-        # A scene with neighbours costs 8 crossings per neighbour a ray passes
-        # through (4 shells in, 4 out), so a two-neighbour vessel can exhaust
-        # 15 before the ray reaches the FOV and the tail of the A-line is
-        # silently dropped.
-        cfg.sim.max_reflection_depth = int(max_reflection_depth)
+    # The calibrated default (15) is sized for a single vessel: the probe
+    # crosses 3 shells outward and that is the whole budget a ray needs.
+    # A scene with neighbours costs 8 crossings per neighbour a ray passes
+    # through (4 shells in, 4 out), so a two-neighbour vessel can exhaust
+    # 15 before the ray reaches the FOV and the tail of the A-line is
+    # silently dropped.
+    effective_max_reflection_depth = (
+        DEFAULT_PAIRED_MAX_REFLECTION_DEPTH
+        if max_reflection_depth is None
+        else int(max_reflection_depth)
+    )
+    cfg.sim.max_reflection_depth = effective_max_reflection_depth
     base_gain_db = float(cfg.processing.gain_db)
     base_ring_down_amplitude = float(cfg.processing.ring_down.amplitude)
     base_t_far_mm = float(cfg.sim.t_far_mm)
@@ -1159,12 +1164,12 @@ def main() -> None:
     p.add_argument(
         "--max-reflection-depth",
         type=int,
-        default=None,
+        default=DEFAULT_PAIRED_MAX_REFLECTION_DEPTH,
         help=(
-            "Override the calibrated ray reflection-depth budget (15). A scene "
-            "with adjacent neighbours spends ~8 crossings per neighbour a ray "
-            "passes through, so raise it (e.g. 24) or the far end of those "
-            "A-lines is dropped."
+            "Ray reflection-depth budget for paired rendering. Default: 24. "
+            "A scene with adjacent neighbours spends ~8 crossings per "
+            "neighbour a ray passes through; too-low values (e.g. 15 from "
+            "single-vessel calibration) can drop far A-line tails."
         ),
     )
     p.add_argument(
