@@ -511,7 +511,7 @@ console / scope makes them cheap:
 | Bonus | When to run | Adds |
 |---|---|---|
 | **E1 (RF impulse response)** | Console exposes service-mode RF tap | populates `probe.impulse_response_path`, validates `pulse_duration_cycles` from FFT BW, validates `sim.sampling_freq_mhz` |
-| **E3 (slice-thickness sweep)** | Sim is being upgraded to ≥ 2.5D | populates `probe.elevational_height_mm`, sets the elevational PSF profile |
+| **E3 (slice-thickness sweep)** | YAML already ships a 2.5D placeholder (`elevational_height_mm = 1.5` / `num_elevational_samples = 8`); run E3 to replace 1.5 mm with a measured FWHM before treating height as calibrated | populates a bench-fit `probe.elevational_height_mm` (and any elevational PSF profile the sim exposes) |
 | **E7 standalone with RF injection** | Console exposes RF tap *and* you have a programmable RF generator | populates the full 256-entry `compression_lut` |
 | **E8 (tissue / material fit)** | Separate clinical / ex-vivo session, NOT part of onboarding | populates `materials[].*` for vessel_wall, calcium, fibrous, lipid_pool, extravascular |
 | **E9 (timing / PRF)** | Required only for the deferred motion / acquisition layer | populates the per-procedure motion config — not in the per-frame raysim YAML |
@@ -591,9 +591,11 @@ For traceability, here is the field-by-field map from the canonical
 
 Re-open this protocol when any of the following becomes true:
 
-1. **The sim adds elevational rendering.** Promote E3 from a bonus
-   path to a required experiment in O1's capture matrix (or as a
-   standalone O4).
+1. **E3 bench data lands (or the 1.5 mm placeholder is promoted to a
+   calibrated FWHM).** Promote E3 from a bonus path to a required
+   experiment in O1's capture matrix (or as a standalone O4), and
+   re-run Tier 1 under the shipping elevational default so the
+   elevational waiver can close.
 2. **The first AR-residual rendering bug is reported in clinical
    deployment.** The current `ar_residual_waveform_path` is documented
    in the YAML but not wired through `RingDownConfig`; that wiring +

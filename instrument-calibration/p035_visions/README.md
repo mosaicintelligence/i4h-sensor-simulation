@@ -1,18 +1,39 @@
 # PV .035 / Volcano s5i calibration
 
 Fits the simulator parameters for the **Visions PV .035 (10 MHz peripheral
-IVUS catheter)** running on a **Volcano s5 / s5i console**, using the bench
-captures in `../../P_035_PointScatter/`.
+IVUS catheter)** running on a **Volcano s5 / s5i console**.
+
+Primary bench anchors (raw DICOMs out of band; not committed to git):
+
+- `ivus_test_0508/` — E2 gain sweeps + E6 AR-on/off water captures
+- `ivus_test_0515/` — Wave-0 B2 tungsten wire PSF, E4a/E4c milk TGC/speckle/noise
+
+Historical first pass: `P_035_PointScatter/` (partial gain × diameter grid).
 
 The output is `volcano_s5i.yaml` (this folder), which the simulator at
 `../../i4h-sensor-simulation/ultrasound-raytracing/` consumes.
+
+## Shipping defaults (read first)
+
+| Field | Value | Notes |
+|-------|------:|-------|
+| `probe.elevational_height_mm` | **1.5** | Product default, **not** an E3-measured FWHM |
+| `probe.num_elevational_samples` | **8** | Planes averaged by `mean_planes` (~8× OptiX vs 2D) |
+| `processing.gain_db` | **58.09** | From `derive_gain_db.py` (see YAML comments) |
+
+Checked-in `tier1_results/` describe the last **2D** (`N = 1`) gate. Until a
+2.5D re-run, read them with [`tier1_elevational_waiver.md`](tier1_elevational_waiver.md).
+
+**Live status:** YAML comments + waiver + [`tier1_results/tier1_results.md`](tier1_results/tier1_results.md).
+Treat [`calibration_delta.md`](calibration_delta.md) as a lab notebook / history.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `volcano_s5i.yaml` | **Canonical output** — the simulator config produced by this calibration. Comments in the file document which stage produced each parameter and its uncertainty. |
-| `calibration_delta.md` | Current calibration status: which YAML fields are derived (vs. defaulted), what is still uncertain, and the specific bench-capture requests needed to close the remaining gaps. |
+| `tier1_elevational_waiver.md` | 2.5D product default vs checked-in 2D Tier 1 catalog |
+| `calibration_delta.md` | Lab notebook: historical fits, bench inventories, follow-up asks |
 | `parameter_sheet.csv` | Working spreadsheet that tracks every parameter's value, source experiment, and confidence. |
 
 ### Fitting scripts
@@ -43,8 +64,8 @@ Re-derive individual `volcano_s5i.yaml` fields from staged bench outputs:
 `derive_axial_psf_pulse_duration.py`, `derive_lateral_psf_sigma_theta.py`,
 `derive_ringdown_amplitude.py`.
 
-Most `derived/*` outputs land under `../../P_035_PointScatter/derived/` or
-`../../ivus_test_0508/raw/*/derived/` (see each script's header).
+Most `derived/*` outputs land under the relevant `ivus_test_*/raw/*/derived/`
+or `P_035_PointScatter/derived/` trees (see each script's header).
 
 ### Evaluation
 
@@ -67,4 +88,5 @@ Diagnostics: `visualize_wave0_psf.py`, `visualize_b2_diagnostic.py`.
 ## Quick re-run after new bench data arrives
 
 See `calibration_delta.md` § "What re-runs to do when the new data arrives"
-for the full sequence.
+for the historical sequence. For elevational calibration, run E3 and refresh
+Tier 1 under the 1.5 mm / 8-plane default (closes the waiver).

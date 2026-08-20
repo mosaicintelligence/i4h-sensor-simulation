@@ -16,7 +16,7 @@
 # P_035_PointScatter wire-phantom analysis (see the per-parameter comments
 # below for methodology, uncertainty, and known caveats). The dataset is a
 # partial / improvised version of the proper protocol in
-# ../../i4h-sensor-simulation/docs/ivus_calibration_protocol.md; a follow-up
+# `../docs/ivus_calibration_protocol.md`; a follow-up
 # bench session per the requests in calibration_delta.md will tighten
 # several of these values.
 # Anything tagged "Manual" is from the s5i Service Manual and is not
@@ -108,7 +108,7 @@ sim:
   # at the raycasting stage so the B2 wire-phantom no longer shows the
   # bimodal "5 bright / 7 dim" hit/miss pattern caused by accidental
   # alignment between sub-wavelength wires (angular subtense ~0.3-0.7°)
-  # and the scanline pitch (~1.4° with 256 scanlines).  See ivus_implementation_writeup.md §pass-5f.
+  # and the scanline pitch (~1.4° with 256 scanlines).  See ivus_implementation_writeup.md §4.1.
   ivus_rays_per_scanline: 8
   # --- Future ---
   sampling_freq_mhz: 40.0                 # currently hard-coded SAMPLING_FREQ in C++
@@ -252,7 +252,7 @@ processing:
   # saturation_palette = 239 (matching how the bench renders its
   # inner saturated wires, but over-saturating the outer ones). Closing
   # the contrast gap is a scattering-strength problem the gain_db scalar
-  # cannot fix — see ivus_implementation_writeup.md §11.9.
+  # cannot fix — see ivus_implementation_writeup.md §9.2.
   #
   # Derivation (derive_gain_db.py output:
   # P_035_PointScatter/derived/gain_lut/gain_db_derivation.json):

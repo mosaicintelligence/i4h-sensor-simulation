@@ -55,7 +55,7 @@ Both default to `0` so non-IVUS probes are unaffected. When both are positive th
 | Width / radius | 0 (point source) |
 | Probe type | `PROBE_TYPE_IVUS` |
 
-Construction parameters: `num_angular_rays` (stored as `num_elements_x_`), `frequency` (MHz; typical IVUS values 20–40 MHz), `elevational_height` (often 0), `element_radius_mm` (typical 0.6), `focal_length_mm` (typical 4), and the standard `Pose`. The finite physical aperture is represented downstream through the depth-dependent lateral PSF rather than via the ray geometry.
+Construction parameters: `num_angular_rays` (stored as `num_elements_x_`), `frequency` (MHz; typical IVUS values 20–40 MHz), `elevational_height` / `num_el_samples` (shipping PV .035 config: 1.5 mm / 8 planes — uncalibrated product default pending E3), `element_radius_mm` (typical 0.6), `focal_length_mm` (typical 4), and the standard `Pose`. The finite physical aperture in the imaging plane is represented downstream through the depth-dependent lateral PSF rather than via the ray geometry; elevational extent is sampled explicitly when `num_el_samples > 1`.
 
 ---
 
@@ -89,7 +89,12 @@ Citations in the source comments: Goss et al. compilations, PMC3570716 (Ultrasou
 
 ### 4.1 IVUS ray generation
 
-`generate_ivus_probe_ray_local` maps the launch dimension `d_x` to an angle in `[0, 2π]`, sets the ray origin to `(0, 0, 0)` in local coordinates, and emits a unit direction `(sin(angle), 0, cos(angle))` in the xz-plane (matching `IVUSProbe::get_local_element_direction`). The raygen entry point switches on `probe_type` and dispatches to this function for `PROBE_TYPE_IVUS`. Elevation handling is shared with the other probe types and is typically zero for 2D IVUS.
+`generate_ivus_probe_ray_local` maps the launch dimension `d_x` to an angle in `[0, 2π]`, sets the ray origin to `(0, 0, 0)` in local coordinates, and emits a unit direction `(sin(angle), 0, cos(angle))` in the xz-plane (matching `IVUSProbe::get_local_element_direction`). The raygen entry point switches on `probe_type` and dispatches to this function for `PROBE_TYPE_IVUS`.
+
+**Elevation.** Shared with the other probe types. For `N = num_el_samples == 1`, raygen fires at the geometric mid-plane (`d_y = 0`). For `N > 1`, samples span the full aperture `[-H/2, H/2]` with
+`d_y = idx.y / (N - 1) - 0.5` and `origin.y = elevational_height * d_y`. After PSF convolution on the 3D RF stack, planes are collapsed with `mean_planes` (no elevational Gaussian PSF cache). When `scatter_angular_decorrelate` is on, `scatter_integral_scale` is multiplied by `√N` so averaging independent elevational draws does not suppress speckle CoV by `1/√N`. OptiX cost scales ~`N×` vs a single plane. The shipping PV .035 YAML uses `H = 1.5 mm`, `N = 8` as an uncalibrated product default — see [`tier1_elevational_waiver.md`](../../../instrument-calibration/p035_visions/tier1_elevational_waiver.md); E3 is still required before treating height as a measured FWHM.
+
+**IVUS angular ray super-sampling.** For IVUS only, the raygen fires `K = ivus_rays_per_scanline` sub-rays per scanline at deterministic sub-bin angular offsets and averages them into the same scanline buffer (`K = 1` is the legacy path). The shipping config uses `K = 8` so sub-wavelength wire targets are not missed by scanline pitch alone.
 
 `ray.t_ancestors` is explicitly initialised to 0 in the raygen so every ray starts with a correct cumulative path length, which the scatter and hit stages use to compute depth bins.
 
@@ -197,7 +202,7 @@ Two corrections are applied to the textbook model so it matches synthetic-apertu
 
 When `element_radius_mm` and `focal_length_mm` are both zero, the 2D path is bypassed and a 1D lateral kernel with a safe fallback width is used.
 
-**Elevational.** Standard Gaussian PSF across the elevational planes followed by averaging. For 2D IVUS `num_el_samples = 1` and this stage is a no-op.
+**Elevational.** Elevational extent is handled at raygen + `mean_planes` collapse (§4.1), not by a separate elevational Gaussian PSF convolution. When `num_el_samples == 1` the collapse is a no-op.
 
 The lateral PSF is invalidated when the probe frequency, element radius, focal length, `buffer_size`, or `t_far` change.
 
