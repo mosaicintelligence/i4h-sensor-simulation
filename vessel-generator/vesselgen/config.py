@@ -27,6 +27,21 @@ from typing import Literal, Optional, Union
 
 import numpy as np
 
+
+def clamp_default_aortic_scale_probability(
+    small_vessel_probability: float, default_aortic_scale_probability: float
+) -> float:
+    """Return a safe default aortic share for a requested small-vessel share.
+
+    The small-vessel and aortic draws partition one uniform variate with the
+    typical-scale branch. When callers set only ``small_vessel_probability``,
+    keep the configured default aortic share when possible, but clamp it to the
+    remaining probability mass so ``small + aortic <= 1``.
+    """
+    remaining_probability = max(0.0, 1.0 - small_vessel_probability)
+    return min(default_aortic_scale_probability, remaining_probability)
+
+
 LesionKind = Literal["hard", "soft_lipid", "fibrous", "thrombus"]
 """Single-material lesion kinds. Maps 1:1 onto a simulator material:
 
