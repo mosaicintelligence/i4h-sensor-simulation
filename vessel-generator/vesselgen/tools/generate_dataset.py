@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from vesselgen.config import GenerationConfig, clamp_default_aortic_scale_probability
+from vesselgen.config import GenerationConfig
 from vesselgen.library import generate_dataset
 
 
@@ -28,17 +28,14 @@ def main() -> None:
     )
 
     args = p.parse_args()
-    aortic_scale_probability = (
-        args.aortic_scale_probability
-        if args.aortic_scale_probability is not None
-        else clamp_default_aortic_scale_probability(
-            small_vessel_probability=args.small_vessel_probability,
-            default_aortic_scale_probability=default_cfg.aortic_scale_probability,
-        )
-    )
+    # Adjacent and aortic scale draws are mutually exclusive buckets; cap the
+    # default aortic share so the config partition remains valid.
+    max_aortic_share = max(0.0, 1.0 - args.adjacent_vessel_probability)
+    aortic_scale_probability = min(default_cfg.aortic_scale_probability, max_aortic_share)
     cfg = GenerationConfig(
         side_branch_probability=args.side_branch_probability,
         adjacent_vessel_probability=args.adjacent_vessel_probability,
+        aortic_scale_probability=aortic_scale_probability,
     )
     written = generate_dataset(
         n=args.n,

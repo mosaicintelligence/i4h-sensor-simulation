@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from vesselgen.config import GenerationConfig, clamp_default_aortic_scale_probability
+from vesselgen.config import GenerationConfig
 
 
 def test_generation_config_peripheral_radii():
