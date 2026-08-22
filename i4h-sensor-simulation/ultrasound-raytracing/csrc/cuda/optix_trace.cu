@@ -476,8 +476,16 @@ extern "C" __global__ void __raygen__rg() {
       }
     }
 
-    // Add elevation in probe's local coordinate system (common for all probes)
-    const float d_y = (static_cast<float>(idx.y) / static_cast<float>(dim.y)) - 0.5f;
+    // Add elevation in probe's local coordinate system (common for all probes).
+    // For N>1, sample the full aperture [-H/2, H/2] (idx.y/(N-1) - 0.5).
+    // The old idx.y/N - 0.5 left the last bin unsampled.
+    // For N=1, d_y = 0 (mid-plane). Previously N=1 used 0/1 - 0.5 = -0.5,
+    // so origin.y was -H/2. IVUS 2D (H=0) is unchanged. Default
+    // curvilinear/linear/phased examples (H = 5–7 mm, N = 1) now fire on
+    // the geometric mid-plane instead of H/2 below it.
+    const float d_y = (dim.y <= 1u)
+                          ? 0.f
+                          : (static_cast<float>(idx.y) / static_cast<float>(dim.y - 1u)) - 0.5f;
     const float elevation = ray_gen_data->elevational_height * d_y;
     origin.y = elevation;
 

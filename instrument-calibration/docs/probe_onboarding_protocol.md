@@ -56,7 +56,7 @@ Three lessons came out of the PV .035 calibration:
 |---|---|---|
 | E1 — Flat-reflector pulse-echo | *Bonus path only* | Requires RF tap; never performed on PV .035; impulse_response_path remains `null`. Skipped unless the console exposes RF. |
 | **E2 — Spiral wire-phantom 2D PSF** | **O1 (mandatory)** | Workhorse. Drives `element_radius_mm`, `focal_length_mm`, `pulse_duration_cycles`, `lateral_psf_kernel`, `log_multiplier`, `gain_db`, slider→dB curve, dynamic range. |
-| E3 — Slice-thickness sweep | *Deferred* | Sim is 2D today (`elevational_height_mm = 0.0`); also blocked by a CUDA bug at elevational > 0. Run only when 2.5D rendering is needed. |
+| E3 — Slice-thickness sweep | Estimated in YAML; E3 still required before treating `elevational_height_mm` as calibrated | Canonical YAML ships `elevational_height_mm = 1.5` / `num_elevational_samples = 8` (~8× OptiX vs 2D). That is a placeholder, not a measured FWHM. Tier 1 thresholds tuned in strict 2D may need a waiver or re-derivation. |
 | E4 — Uniform attenuation phantom | **O3 (mandatory)** | Drives `tgc_control_points`, `noise.sigma` / `envelope_noise.sigma`, speckle correlation length, milk-material scattering parameters. Doubles as the E5 replacement (see below). |
 | E5 — Cyst phantom | *Dropped on onboarding* | Three takes were performed (`ivus_test_0515/raw/e5_milk_cyst_take*/`) but later marked `WAVE0_SPECKLE_PATHS_E5_LEGACY` in `tier1_evaluation.py`: a uniform phantom is a strictly better speckle anchor and is also a strictly better anechoic-tail anchor once the slider crosses the LUT-floored regime. Keep the cyst hardware for clinical-image dynamic-range demonstrations, not for parameter fitting. |
 | **E6 — Ring-down (anechoic water)** | **O2 (mandatory) — expanded** | Drives `ring_down.amplitude` / `extent_mm` / `decay` / `waveform_path` / `subtract_reference`, `catheter.dead_zone_mm`. **Onboarding upgrade: capture a full slider sweep (not just 2–3 anchors) AR-OFF + matched AR-ON at each slider, at the smallest available diameter.** Gives the slider→dB curve from ring-down peak directly, independent of O1, and a multi-gain AR-residual template. |
@@ -511,7 +511,7 @@ console / scope makes them cheap:
 | Bonus | When to run | Adds |
 |---|---|---|
 | **E1 (RF impulse response)** | Console exposes service-mode RF tap | populates `probe.impulse_response_path`, validates `pulse_duration_cycles` from FFT BW, validates `sim.sampling_freq_mhz` |
-| **E3 (slice-thickness sweep)** | Sim is being upgraded to ≥ 2.5D | populates `probe.elevational_height_mm`, sets the elevational PSF profile |
+| **E3 (slice-thickness sweep)** | YAML already ships a 2.5D placeholder (`elevational_height_mm = 1.5` / `num_elevational_samples = 8`); run E3 to replace 1.5 mm with a measured FWHM before treating height as calibrated | populates a bench-fit `probe.elevational_height_mm` (and any elevational PSF profile the sim exposes) |
 | **E7 standalone with RF injection** | Console exposes RF tap *and* you have a programmable RF generator | populates the full 256-entry `compression_lut` |
 | **E8 (tissue / material fit)** | Separate clinical / ex-vivo session, NOT part of onboarding | populates `materials[].*` for vessel_wall, calcium, fibrous, lipid_pool, extravascular |
 | **E9 (timing / PRF)** | Required only for the deferred motion / acquisition layer | populates the per-procedure motion config — not in the per-frame raysim YAML |
@@ -557,7 +557,7 @@ For traceability, here is the field-by-field map from the canonical
 | `probe.pulse_duration_cycles` | E1 + E2 axial PSF | **O1** axial PSF |
 | `probe.element_radius_mm` | E2 Gaussian-beam fit | **O1** |
 | `probe.focal_length_mm` | E2 depth-of-minimum-lateral-FWHM | **O1** |
-| `probe.elevational_height_mm` | E3 | *Deferred* (sim is 2D) |
+| `probe.elevational_height_mm` | E3 | Estimated 1.5 mm / `num_elevational_samples = 8` in YAML (uncalibrated 2.5D placeholder); E3 still required before treating height as calibrated |
 | `probe.speed_of_sound_mm_per_us` | E4 (TOF refinement) | **O3-B** wire-in-medium |
 | `probe.impulse_response_path` | E1 | *Bonus path* (E1 if RF available) |
 | `processing.tgc_control_points` | E4 | **O3-A** |
@@ -591,9 +591,11 @@ For traceability, here is the field-by-field map from the canonical
 
 Re-open this protocol when any of the following becomes true:
 
-1. **The sim adds elevational rendering.** Promote E3 from a bonus
-   path to a required experiment in O1's capture matrix (or as a
-   standalone O4).
+1. **E3 bench data lands (or the 1.5 mm placeholder is promoted to a
+   calibrated FWHM).** Promote E3 from a bonus path to a required
+   experiment in O1's capture matrix (or as a standalone O4), and
+   re-run Tier 1 under the shipping elevational default so the
+   elevational waiver can close.
 2. **The first AR-residual rendering bug is reported in clinical
    deployment.** The current `ar_residual_waveform_path` is documented
    in the YAML but not wired through `RingDownConfig`; that wiring +

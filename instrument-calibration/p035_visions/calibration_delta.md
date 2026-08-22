@@ -1,4 +1,16 @@
-# P_035_PointScatter calibration — current state and follow-up bench needs
+# P_035 calibration — lab notebook & historical follow-ups
+
+> **Current status (as of PR #21, 2026-08-19).** Live shipping values are in
+> [`volcano_s5i.yaml`](volcano_s5i.yaml) comments, not in the historical
+> sections below: `processing.gain_db: 58.09`,
+> `probe.elevational_height_mm: 1.5`, `probe.num_elevational_samples: 8`
+> (uncalibrated 2.5D product default; E3 still required for a measured
+> FWHM). Checked-in [`tier1_results/`](tier1_results/tier1_results.md) is
+> the last **2D** gate — see
+> [`tier1_elevational_waiver.md`](tier1_elevational_waiver.md). For live
+> truth prefer the YAML + waiver + Tier 1 report; treat everything below
+> as a lab notebook / chronology (including mid-doc notes that still cite
+> older `gain_db` figures such as 73.92).
 
 > **Update 2026-05-12:** the requested follow-up bench session has landed
 > in `ivus_test_0508/`. See **"Bench session received (2026-05-08)"**
@@ -417,9 +429,13 @@ In priority order:
    is also the only way to refit `tgc_control_points` for tissue
    imaging (the current values are in-water only). Highest ROI of any
    future bench session.
+4. **E3 slice-thickness sweep.** The sim now defaults to
+   `elevational_height_mm = 1.5` with 8 elevational samples (uniform
+   top-hat mean). That is an uncalibrated placeholder, not a measured
+   FWHM / elevational PSF. E3 is what replaces the estimate.
 
 For this dataset's calibration we proceed with (1) and document (2)
-+ (3) as future improvements.
++ (3) + (4) as future improvements.
 
 ### AR template (E6) -- delivered
 
@@ -710,9 +726,6 @@ Without RF data, two YAML fields cannot be improved:
 
 ## What we DON'T need from the bench session
 
-- **E3 (slice thickness)** -- the simulator's
-  `elevational_height_mm = 0.0` configures it as 2D; until that
-  changes there's no point measuring elevational PSF.
 - **E4 in tissue** -- the in-water TGC we have is correct for the
   P_035 dataset; tissue TGC is a separate question for a separate
   phantom.
@@ -855,7 +868,7 @@ For traceability after the new data lands:
   - `extract_ringdown.py`
   - `extract_gain_lut.py`
   - `polar_utils.py` (shared helpers)
-- Protocol document: `../../i4h-sensor-simulation/docs/ivus_calibration_protocol.md`
+- Protocol document: `../docs/ivus_calibration_protocol.md`
 - Calibrated YAML output (this folder): `volcano_s5i.yaml`
 
 ## One-line bottom line

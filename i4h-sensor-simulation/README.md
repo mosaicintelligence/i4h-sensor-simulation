@@ -1,30 +1,32 @@
-# Isaac for Healthcare - Sensor Simulation
+# Ultrasound raytracing (package docs)
 
-This repository contains high-performance GPU-accelerated sensor simulation tools for healthcare applications, powered by NVIDIA technologies.
+This directory is the **OptiX ultrasound / IVUS simulator** package inside
+the Mosaic IVUS simulation monorepo. For monorepo orientation (calibration,
+vessel-generator, demos), start at the [root README](../README.md).
 
-## Components
+A high-performance GPU-accelerated ultrasound simulator using NVIDIA OptiX
+raytracing with Python bindings. Supports curvilinear, linear-array,
+phased-array, and IVUS probes; ships with the PV .035 / Volcano s5i YAML
+(bench-derived processing params; elevational aperture is still an
+uncalibrated 2.5D product default — see
+[`tier1_elevational_waiver.md`](../instrument-calibration/p035_visions/tier1_elevational_waiver.md)).
 
-### Vessel Generator
-
-Procedural peripheral-vessel geometry and paired IVUS dataset generation
-for ML training. Builds trilaminar anatomy, samples probe poses, and
-renders B-mode + segmentation frames through the calibrated simulator.
-
-[Quick start](../vessel-generator/docs/quickstart.md) · [README](../vessel-generator/README.md)
+## Components in this tree
 
 ### Ultrasound Raytracing Simulator
 
 ![image](./docs/ultrasound-raytracing.png)
-
-
-A high-performance GPU-accelerated ultrasound simulator using NVIDIA OptiX raytracing with Python bindings. This simulator enables real-time ultrasound simulation for training, research, and development purposes.
 
 Key features:
 - GPU acceleration with CUDA and NVIDIA OptiX
 - Python interface for ease of use
 - Real-time simulation capabilities
 
-[Learn more about the Ultrasound Raytracing Simulator](./ultrasound-raytracing/README.md)
+[Simulator README / install](./ultrasound-raytracing/README.md)
+
+Sibling packages (same monorepo root):
+- [Vessel Generator](../vessel-generator/README.md) — procedural anatomy + paired IVUS datasets
+- [Instrument calibration](../instrument-calibration/README.md) — probe YAML fitting
 
 ## Repository Structure
 
@@ -48,10 +50,6 @@ i4h-sensor-simulation/
     └── utils/                 # Utility scripts (phantom maker, etc.)
 ```
 
-`vessel-generator/` is a sibling package in the same monorepo root
-(`../vessel-generator` from this directory) for procedural anatomy and paired
-dataset generation.
-
 ## Requirements
 
 - NVIDIA GPU with CUDA support
@@ -64,20 +62,16 @@ See individual component READMEs for specific requirements.
 
 ## Getting Started
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/isaac-for-healthcare/i4h-sensor-simulation.git
-   cd i4h-sensor-simulation
-   ```
+Work from the **monorepo root** (the parent of this `i4h-sensor-simulation/`
+folder). Clone the Mosaic repo / check out `ivus-probe`, then:
 
-2. Pick a starting point:
-   - **Just want a rendered frame?** → [Quick Start](./ultrasound-raytracing/docs/quick_start.md)
-   - **Generate realistic IVUS training data?** → [Vessel Generator Quick Start](../vessel-generator/docs/quickstart.md)
-   - **Setting up a fresh cloud GPU?** → [VM Setup (GCP)](./ultrasound-raytracing/docs/vm_setup.md)
-   - **Installing on a machine you already own?** → [Simulator README](./ultrasound-raytracing/README.md)
-   - **Want to learn the simulator step by step?** → [Tutorial](./docs/ultrasound_simulator_tutorial.md)
-   - **Curious about the physics?** → [Technical Guide](./docs/ultrasound_simulator_technical_guide.md)
-
+1. **Just want a rendered frame?** → [Quick Start](./ultrasound-raytracing/docs/quick_start.md)
+2. **Generate realistic IVUS training data?** → [Vessel Generator Quick Start](../vessel-generator/docs/quickstart.md)
+3. **Setting up a fresh cloud GPU?** → [VM Setup (GCP)](./ultrasound-raytracing/docs/vm_setup.md)
+4. **Installing on a machine you already own?** → [Simulator README](./ultrasound-raytracing/README.md)
+5. **Want to learn the simulator step by step?** → [Tutorial](./docs/ultrasound_simulator_tutorial.md)
+6. **Curious about the physics?** → [Technical Guide](./docs/ultrasound_simulator_technical_guide.md)
+7. **Calibrate a probe?** → [Probe onboarding](../instrument-calibration/docs/probe_onboarding_protocol.md)
 
 ## License
 
