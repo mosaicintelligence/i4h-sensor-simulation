@@ -42,7 +42,7 @@ def main() -> None:
         default=None,
         help=(
             "Outer radius (mm) of the catheter ring-down annulus to overlay on "
-            "previews (e.g. 2.8). Omit to disable the overlay."
+            "previews for small-vessel QA (e.g. 2.8). Omit to disable the overlay."
         ),
     )
     p.add_argument(

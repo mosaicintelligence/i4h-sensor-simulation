@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterator
 
+import warnings
+
 import numpy as np
 
 from vesselgen.bifurcation import BifurcationError
@@ -89,7 +91,11 @@ def iter_dataset(
             )
             try:
                 vessel = Vessel.from_config(cfg)
-            except BifurcationError:
+            except BifurcationError as exc:
+                # Loud, not silent: a missing boolean backend (e.g. ``manifold3d``)
+                # would otherwise turn every bifurcation draw into a straight
+                # vessel and quietly zero the dataset's side-branch rate.
+                warnings.warn(f"{cfg.name}: resampling after {exc}", stacklevel=2)
                 continue
             yield cfg, vessel
             break

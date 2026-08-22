@@ -735,9 +735,30 @@ class _UniformRange:
 class GenerationConfig:
     """Distributions over vessel parameters for batch generation.
 
-      Defaults target large peripheral arteries and veins (femoral, iliac, renal,
-    EVAR-scale aorta) for the PV .035 ICE catheter. Lumen radii place the wall
-    outside the ring-down zone (r >~ 4 mm). ~18% of draws use aortic-scale lumina.
+    Defaults target large peripheral arteries and veins (femoral, iliac, renal,
+    EVAR-scale aorta) for the PV .035 catheter. Each vessel's scale is drawn
+    from a single uniform variate that partitions into mutually exclusive
+    buckets:
+
+    * **small vessel** (``small_vessel_probability``, default 10%): lumen radii
+      of ~1.8-3.5 mm so the wall sits at or inside the catheter ring-down disc
+      (~2-3.6 mm), intentionally reproducing the obscured-wall case;
+    * **aortic scale** (``aortic_scale_probability``, default 18%): 8-11.5 mm
+      radii for EVAR-scale segments;
+    * **large beyond-FOV** (``large_vessel_beyond_fov_probability``, default
+      10%): 12-16 mm radii so the far wall runs past ``t_far_mm`` on some
+      angular sectors (NaN A-lines in the geometric ground truth);
+    * **adjacent vessels** (``adjacent_vessel_probability``, default 10%): a
+      small primary with 1-2 parallel neighbors; mutually exclusive with side
+      branches;
+    * **typical peripheral** (the remaining probability mass): 4-6.5 mm radii,
+      placing the wall clearly outside the ring-down disc.
+
+    The four bucket probabilities must sum to <= 1.0 (validated in
+    ``__post_init__``); the remainder is the typical-scale mass. Setting
+    exactly one of them to 1.0 is an explicit "only this bucket" request and
+    wins regardless of the others' (non-zero default) values, so a single-case
+    dataset never needs the other knobs zeroed by hand.
     """
 
     length_mm_range: tuple[float, float] = (45.0, 75.0)
@@ -753,12 +774,25 @@ class GenerationConfig:
     aortic_radius_mm_range: tuple[float, float] = (8.0, 11.5)
     aortic_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
 
+    small_vessel_probability: float = 0.10
+    small_vessel_radius_mm_range: tuple[float, float] = (1.8, 3.5)
+    small_vessel_wall_thickness_mm_range: tuple[float, float] = (0.5, 0.9)
+
+    # Large vessels whose wall runs past the imaging FOV on some angular
+    # sectors for typical (naturally off-centre) poses, so those A-lines
+    # have no wall echo. The lumen radius is drawn large enough that the
+    # far wall exceeds the smaller ``t_far_mm`` FOVs (17.5 / 20 mm); at the
+    # 30 mm FOV these vessels mostly stay in view.
+    large_vessel_beyond_fov_probability: float = 0.10
+    large_vessel_radius_mm_range: tuple[float, float] = (12.0, 16.0)
+    large_vessel_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
+
     # --- Adjacent parallel vessels ---------------------------------------
     adjacent_vessel_probability: float = 0.10
     """Fraction of vessels drawn as the adjacent-vessels case (1–2 parallel
-    neighbors; probe stays in the parent lumen). Own scale bucket carved
-    from the typical share. Mutually exclusive with side branches. Requires
-    ``adjacent_vessel_probability + aortic_scale_probability <= 1``."""
+    neighbors; probe stays in the parent lumen). Own bucket of the scale
+    partition (see the class docstring). Mutually exclusive with side
+    branches."""
 
     adjacent_parent_radius_mm_range: tuple[float, float] = (1.8, 3.5)
     """Lumen radius (mm) of the adjacent-case primary. Sized so the
@@ -868,15 +902,61 @@ class GenerationConfig:
     def __post_init__(self) -> None:
         if not 0.0 <= self.adjacent_vessel_pose_bias_prob <= 1.0:
             raise ValueError("adjacent_vessel_pose_bias_prob must be in [0, 1]")
-        if not 0.0 <= self.adjacent_vessel_probability <= 1.0:
-            raise ValueError("adjacent_vessel_probability must be in [0, 1]")
-        if self.adjacent_vessel_probability + self.aortic_scale_probability > 1.0 + 1e-9:
+        buckets = self._scale_bucket_probabilities()
+        for _, field_name, p in buckets:
+            if not 0.0 <= p <= 1.0:
+                raise ValueError(f"{field_name} must be in [0, 1]")
+        forced = [field_name for _, field_name, p in buckets if p >= 1.0 - 1e-9]
+        if len(forced) > 1:
+            raise ValueError(f"at most one scale bucket may be forced to 1.0; got {forced}")
+        total = sum(p for _, _, p in buckets)
+        if not forced and total > 1.0 + 1e-9:
             raise ValueError(
-                "adjacent_vessel_probability + aortic_scale_probability must be "
-                f"<= 1.0 (got {self.adjacent_vessel_probability} + "
-                f"{self.aortic_scale_probability}); the two are mutually-exclusive "
+                "small_vessel_probability + aortic_scale_probability + "
+                "large_vessel_beyond_fov_probability + adjacent_vessel_probability "
+                f"must be <= 1.0 (got {total:.3f}); they are mutually-exclusive "
                 "buckets of the scale partition carved out of the typical share"
             )
+
+    def _scale_bucket_probabilities(self) -> list[tuple[str, str, float]]:
+        """Ordered ``(bucket, field name, probability)`` for the scale partition.
+
+        The order fixes the cumulative thresholds one uniform draw is tested
+        against; the remainder of the unit interval is the typical draw.
+        """
+        return [
+            ("small", "small_vessel_probability", self.small_vessel_probability),
+            ("aortic", "aortic_scale_probability", self.aortic_scale_probability),
+            (
+                "large",
+                "large_vessel_beyond_fov_probability",
+                self.large_vessel_beyond_fov_probability,
+            ),
+            ("adjacent", "adjacent_vessel_probability", self.adjacent_vessel_probability),
+        ]
+
+    def _draw_scale_bucket(self, rng: np.random.Generator, *, allow_adjacent: bool) -> str:
+        """Partition one uniform variate into {small | aortic | large | adjacent | typical}.
+
+        A bucket set to 1.0 wins outright (the variate is still consumed so the
+        RNG stream matches the unforced path). ``allow_adjacent=False`` drops
+        the adjacent bucket and its mass falls through to the typical draw.
+        """
+        u = rng.random()
+        buckets = [
+            (name, p)
+            for name, _, p in self._scale_bucket_probabilities()
+            if allow_adjacent or name != "adjacent"
+        ]
+        for name, p in buckets:
+            if p >= 1.0 - 1e-9:
+                return name
+        cumulative = 0.0
+        for name, p in buckets:
+            cumulative += p
+            if u < cumulative:
+                return name
+        return "typical"
 
     def sample(
         self,
@@ -891,29 +971,22 @@ class GenerationConfig:
 
         length = _UniformRange(*self.length_mm_range).sample(rng)
 
-        # Scale partition: a single draw selects one mutually-exclusive
-        # bucket {adjacent | aortic | typical}. The adjacent bucket is
-        # carved out of the ``typical`` share; its rate is exactly
-        # ``adjacent_vessel_probability``. A forced side branch suppresses
-        # the adjacent bucket and draws the ordinary aortic/typical ladder.
-        u_scale = rng.random()
-        if force_side_branch:
-            is_adjacent = False
-            is_aortic = u_scale < self.aortic_scale_probability
-        else:
-            is_adjacent = u_scale < self.adjacent_vessel_probability
-            is_aortic = (not is_adjacent) and (
-                u_scale < self.adjacent_vessel_probability + self.aortic_scale_probability
-            )
-        if is_adjacent:
-            r_proximal = _UniformRange(*self.adjacent_parent_radius_mm_range).sample(rng)
-            wall_lo, wall_hi = self.adjacent_parent_wall_thickness_mm_range
-        elif is_aortic:
-            r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
-            wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
-        else:
-            r_proximal = _UniformRange(*self.parent_radius_mm_range).sample(rng)
-            wall_lo, wall_hi = self.parent_wall_thickness_mm_range
+        # Scale partition: one draw selects one mutually-exclusive bucket
+        # (see ``_draw_scale_bucket``). A forced side branch suppresses the
+        # adjacent bucket, since the two topologies are mutually exclusive.
+        bucket = self._draw_scale_bucket(rng, allow_adjacent=not force_side_branch)
+        is_adjacent = bucket == "adjacent"
+        radius_range, (wall_lo, wall_hi) = {
+            "small": (self.small_vessel_radius_mm_range, self.small_vessel_wall_thickness_mm_range),
+            "aortic": (self.aortic_radius_mm_range, self.aortic_wall_thickness_mm_range),
+            "large": (self.large_vessel_radius_mm_range, self.large_vessel_wall_thickness_mm_range),
+            "adjacent": (
+                self.adjacent_parent_radius_mm_range,
+                self.adjacent_parent_wall_thickness_mm_range,
+            ),
+            "typical": (self.parent_radius_mm_range, self.parent_wall_thickness_mm_range),
+        }[bucket]
+        r_proximal = _UniformRange(*radius_range).sample(rng)
         taper = _UniformRange(*self.parent_radius_taper_frac_range).sample(rng)
         r_distal = r_proximal * taper
 

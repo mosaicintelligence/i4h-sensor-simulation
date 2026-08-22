@@ -72,7 +72,11 @@ def test_adjacency_rate_matches_probability():
         v = cfg.sample(rng, seed=i)
         if v.adjacent_vessels:
             n_adjacent += 1
-        if v.parent.cross_section.mean_radius_mm >= 8.0:
+        if (
+            cfg.aortic_radius_mm_range[0]
+            <= v.parent.cross_section.mean_radius_mm
+            <= cfg.aortic_radius_mm_range[1]
+        ):
             n_aortic += 1
     adj_rate = n_adjacent / n
     aortic_rate = n_aortic / n

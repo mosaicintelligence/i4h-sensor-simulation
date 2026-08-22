@@ -5,7 +5,18 @@ from __future__ import annotations
 import numpy as np
 
 from vesselgen.config import GenerationConfig
+from vesselgen.sampling import clip_ground_truth_to_fov, ground_truth_is_valid_pose
 from vesselgen.vessel import Vessel
+
+
+def _large_vessel_config() -> GenerationConfig:
+    return GenerationConfig(
+        large_vessel_beyond_fov_probability=1.0,
+        side_branch_probability=0.0,
+        layered_wall_probability=0.0,
+        calcification_probability=0.0,
+        guidewire_probability=0.0,
+    )
 
 
 def test_large_vessel_forced_draw_respects_radius_and_wall_ranges():
@@ -145,3 +156,111 @@ def test_large_vessel_open_sector_rate_meets_threshold_by_fov():
             f"is below the required minimum {min_mean_finite_fraction:.2f} "
             "(vessels may be too large, blacking out the whole ring)"
         )
+
+
+def test_clip_ground_truth_to_fov_matches_bounded_trace():
+    """The exported convention (NaN beyond the FOV) is reproduced exactly by
+    tracing without a range limit and clipping afterwards -- which is what lets
+    the pose gate see the unclipped geometry."""
+    vessel = Vessel.from_config(_large_vessel_config().sample(np.random.default_rng(6), seed=0))
+    pose = vessel.sample_pose(np.random.default_rng(7), max_tilt_deg=15.0, edge_margin_mm=0.2)
+    gt_full = vessel.ground_truth_at(pose, n_angles=180, max_distance_mm=np.inf)
+    assert np.isfinite(gt_full.distance_to_lumen_wall_mm).all()
+    assert np.isfinite(gt_full.distance_to_outer_wall_mm).all()
+    for fov_mm in (17.5, 20.0, 30.0):
+        clipped = clip_ground_truth_to_fov(gt_full, fov_mm)
+        bounded = vessel.ground_truth_at(pose, n_angles=180, max_distance_mm=fov_mm)
+        for field in (
+            "distance_to_lumen_wall_mm",
+            "distance_to_outer_wall_mm",
+            "wall_thickness_mm",
+        ):
+            np.testing.assert_array_equal(getattr(clipped, field), getattr(bounded, field))
+
+
+def test_pose_gate_keeps_open_sector_frames_by_default():
+    """Beyond-FOV sectors are the anatomy this draw exists for, so the default
+    gate must not select against them. (The legacy gate counted beyond-FOV
+    A-lines as missing walls and, at 0.85, rejected ~95% of large-vessel poses
+    at the 17.5 mm FOV.)"""
+    cfg = _large_vessel_config()
+    rng_cfg = np.random.default_rng(8)
+    rng_pose = np.random.default_rng(9)
+    fov_mm = 17.5
+    n_poses = n_open = accepted_default = accepted_legacy = 0
+    for i in range(6):
+        vessel = Vessel.from_config(cfg.sample(rng_cfg, seed=i))
+        for _ in range(10):
+            pose = vessel.sample_pose(rng_pose, max_tilt_deg=15.0, edge_margin_mm=0.2)
+            gt_full = vessel.ground_truth_at(pose, n_angles=180, max_distance_mm=np.inf)
+            n_poses += 1
+            clipped = clip_ground_truth_to_fov(gt_full, fov_mm)
+            n_open += bool(np.isnan(clipped.distance_to_outer_wall_mm).any())
+            accepted_default += ground_truth_is_valid_pose(vessel, pose, gt_full, fov_mm=fov_mm)
+            accepted_legacy += ground_truth_is_valid_pose(
+                vessel, pose, gt_full, fov_mm=fov_mm, min_visible_fraction=0.85
+            )
+    assert n_open / n_poses >= 0.7
+    assert accepted_default / n_poses >= 0.9
+    assert accepted_legacy / n_poses <= 0.5
+
+
+def test_pose_gate_rejects_missing_wall_on_unbounded_trace():
+    """A NaN on an unbounded trace means the slice is broken, not truncated,
+    and is rejected regardless of the visibility policy."""
+    from dataclasses import replace
+
+    vessel = Vessel.from_config(_large_vessel_config().sample(np.random.default_rng(10), seed=0))
+    rng_pose = np.random.default_rng(11)
+    for _ in range(10):
+        pose = vessel.sample_pose(rng_pose, max_tilt_deg=15.0, edge_margin_mm=0.2)
+        gt_full = vessel.ground_truth_at(pose, n_angles=180, max_distance_mm=np.inf)
+        if ground_truth_is_valid_pose(vessel, pose, gt_full, fov_mm=17.5):
+            break
+    else:
+        raise AssertionError("no valid large-vessel pose found in 10 draws")
+    lumen = gt_full.distance_to_lumen_wall_mm.copy()
+    lumen[0] = np.nan
+    broken = replace(gt_full, distance_to_lumen_wall_mm=lumen)
+    assert not ground_truth_is_valid_pose(vessel, pose, broken, fov_mm=17.5)
+    assert not ground_truth_is_valid_pose(
+        vessel, pose, broken, fov_mm=17.5, min_visible_fraction=0.0
+    )
+
+
+def test_pose_gate_ignores_end_cap_beyond_fov():
+    """An end cap (zero-thickness wall) is a mesh artifact only where it is
+    imaged: past the FOV it must not reject the pose, inside it must."""
+    from dataclasses import replace
+
+    vessel = Vessel.from_config(_large_vessel_config().sample(np.random.default_rng(12), seed=0))
+    rng_pose = np.random.default_rng(13)
+    fov_mm = 17.5
+    for _ in range(20):
+        pose = vessel.sample_pose(rng_pose, max_tilt_deg=15.0, edge_margin_mm=0.2)
+        gt_full = vessel.ground_truth_at(pose, n_angles=180, max_distance_mm=np.inf)
+        beyond = np.flatnonzero(gt_full.distance_to_lumen_wall_mm > fov_mm)
+        inside = np.flatnonzero(gt_full.distance_to_outer_wall_mm < fov_mm)
+        if (
+            beyond.size
+            and inside.size
+            and ground_truth_is_valid_pose(vessel, pose, gt_full, fov_mm=fov_mm)
+        ):
+            break
+    else:
+        raise AssertionError("no valid open-sector large-vessel pose found in 20 draws")
+
+    def with_cap_at(idx: int):
+        outer = gt_full.distance_to_outer_wall_mm.copy()
+        outer[idx] = gt_full.distance_to_lumen_wall_mm[idx] + 0.01  # coincident surfaces
+        return replace(
+            gt_full,
+            distance_to_outer_wall_mm=outer,
+            wall_thickness_mm=outer - gt_full.distance_to_lumen_wall_mm,
+        )
+
+    assert ground_truth_is_valid_pose(vessel, pose, with_cap_at(beyond[0]), fov_mm=fov_mm)
+    assert not ground_truth_is_valid_pose(vessel, pose, with_cap_at(inside[0]), fov_mm=fov_mm)
+    assert not ground_truth_is_valid_pose(
+        vessel, pose, with_cap_at(beyond[0])
+    )  # fov unbounded: cap counts

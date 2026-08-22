@@ -10,18 +10,36 @@ Batch defaults in `GenerationConfig` target **large peripheral** vessels
 
 | Draw | Lumen diameter | Wall thickness | Segment length |
 |------|----------------|----------------|----------------|
-| Typical (72%) | 8–13 mm | 0.65–1.2 mm | 45–75 mm |
+| Typical (52%) | 8–13 mm | 0.65–1.2 mm | 45–75 mm |
 | Aortic-scale (18%) | 16–23 mm | 1.0–1.5 mm | 45–75 mm |
+| Large beyond-FOV (10%) | 24–32 mm | 1.0–1.5 mm | 45–75 mm |
+| Small-vessel (10%) | 3.6–7.0 mm | 0.5–0.9 mm | 45–75 mm |
 | Adjacent parallel vessels (10%) | 3.6–7.0 mm | 0.3–0.55 mm | 45–75 mm |
 | Side branch | 55–80% of parent radius | ~85% of parent wall | ≥ parent length |
 
-The scale buckets are mutually exclusive and drawn from a single partition;
-the adjacent-vessels share is carved out of the typical share (aortic stays
-at 18%). For typical/aortic draws, inner wall radii start around **4 mm**
-so anatomy sits outside the catheter ring-down disc (~2–3.6 mm). The
-adjacent-vessels bucket uses a dedicated primary size range so the
+The scale buckets are mutually exclusive and drawn from a single partition
+(`small_vessel_probability`, `aortic_scale_probability`,
+`large_vessel_beyond_fov_probability`, `adjacent_vessel_probability`). They
+must sum to ≤ 1.0 and the remainder is the typical draw; setting exactly one
+of them to `1.0` generates only that case regardless of the others' defaults.
+For typical/aortic draws, inner wall radii start around **4 mm** so anatomy
+sits outside the catheter ring-down disc (~2–3.6 mm). The **small-vessel**
+draw explicitly introduces cases with wall echoes inside or near that disc.
+The adjacent-vessels bucket uses a dedicated primary size range so the
 parent–neighbor boundary can sit in the ring-down zone, where the
 catheter artifact obscures it on B-mode (a merge frame).
+
+The **large beyond-FOV** draw scales the lumen up (radius 12–16 mm) so the
+wall runs past the imaging field of view (`t_far_mm` = 17.5 / 20 / 30 mm) on
+some angular sectors for typical, naturally off-centre poses. Those A-lines
+have no wall echo and their `distance_to_lumen_wall_mm` /
+`distance_to_outer_wall_mm` are `NaN`. Because triggering depends on the FOV,
+these vessels reliably show open sectors at the 17.5/20 mm FOVs and mostly
+stay in view at 30 mm. The paired renderer keeps these open-sector frames by
+default: its pose gate traces the wall without a range limit to check the
+geometry, then only requires that at least half of the A-lines see the wall
+inside the FOV (`--min-visible-fraction 0.5`), so a beyond-FOV sector is never
+by itself a reason to reject a pose.
 
 Calibration scenarios that motivated these scales:
 `instrument-calibration/p035_visions/vessel_evaluation.py` scenarios 06

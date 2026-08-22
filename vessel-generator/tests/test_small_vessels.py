@@ -46,7 +46,7 @@ def test_small_vessel_empirical_rate_default_config():
 
     for i in range(n_draws):
         v = cfg.sample(rng, seed=i)
-        if v.parent.cross_section.mean_radius_mm <= small_radius_hi_mm:
+        if not v.adjacent_vessels and v.parent.cross_section.mean_radius_mm <= small_radius_hi_mm:
             n_small += 1
 
     small_rate = n_small / n_draws

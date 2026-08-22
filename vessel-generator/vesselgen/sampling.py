@@ -20,7 +20,7 @@ frame. The two operations are:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Optional
 
 import numpy as np
@@ -197,7 +197,8 @@ def _ray_polygon_intersection_distance(
         [ Dy   -(By - Ay) ] [ s ] = [ Ay ]
 
     keeping the smallest ``t > 0`` with ``0 <= s <= 1``. Returns NaN if no
-    intersection is found within ``max_distance_mm``.
+    intersection is found within ``max_distance_mm`` (``np.inf`` traces without
+    a range limit, so a NaN then means the ray hits nothing at all).
     """
     dx = float(np.cos(theta_rad))
     dy = float(np.sin(theta_rad))
@@ -217,7 +218,7 @@ def _ray_polygon_intersection_distance(
                 continue
             if t < best:
                 best = t
-    if best <= max_distance_mm:
+    if np.isfinite(best) and best <= max_distance_mm:
         return float(best)
     return float("nan")
 
@@ -1010,19 +1011,64 @@ def ground_truth_shows_endcap(
     return bool(np.any(wall[finite] < min_wall_mm))
 
 
+def clip_ground_truth_to_fov(gt: GroundTruth, fov_mm: float) -> GroundTruth:
+    """Return a copy of ``gt`` with wall distances beyond ``fov_mm`` set to NaN.
+
+    NaN-beyond-the-FOV is the on-disk convention for "the wall lies past the
+    imaging field of view", and this is exactly what
+    ``ground_truth_at(max_distance_mm=fov_mm)`` produces. Tracing once without
+    a range limit and clipping afterwards lets :func:`ground_truth_is_valid_pose`
+    tell a truncated wall apart from a missing one.
+    """
+    lumen = np.asarray(gt.distance_to_lumen_wall_mm, dtype=float)
+    outer = np.asarray(gt.distance_to_outer_wall_mm, dtype=float)
+    lumen = np.where(lumen <= fov_mm, lumen, np.nan)
+    outer = np.where(outer <= fov_mm, outer, np.nan)
+    return replace(
+        gt,
+        distance_to_lumen_wall_mm=lumen,
+        distance_to_outer_wall_mm=outer,
+        wall_thickness_mm=outer - lumen,
+    )
+
+
 def ground_truth_is_valid_pose(
     vessel: Vessel,
     pose: PoseSample,
     gt: GroundTruth,
     *,
-    min_finite_fraction: float = 0.85,
+    fov_mm: float = np.inf,
+    min_visible_fraction: float = 0.5,
     endcap_wall_mm: float = 0.08,
     side_branch_cone_half_angle_deg: float = 45.0,
 ) -> bool:
-    """Reject poses whose GT is incomplete or includes mesh cap artifacts."""
-    finite = np.isfinite(gt.distance_to_lumen_wall_mm) & np.isfinite(gt.distance_to_outer_wall_mm)
-    if finite.mean() < min_finite_fraction or gt.lumen_csa_mm2 <= 0.0:
+    """Decide whether a pose yields a usable frame. Two separate questions:
+
+    1. **Is the geometry sound?** (hard guard) Every A-line must hit both the
+       lumen and the outer wall and the lumen cross-section must be positive.
+       For this to mean anything ``gt`` must come from an unbounded trace
+       (``ground_truth_at(max_distance_mm=np.inf)``): a NaN can then only mean
+       the slice is broken, never "beyond the field of view".
+    2. **Is enough wall in view?** (policy) At least ``min_visible_fraction``
+       of the A-lines must see both walls within ``fov_mm``. Sectors where the
+       wall runs past the FOV are legitimate anatomy (the large-vessel case)
+       and are kept; only frames with too little wall to segment are dropped.
+       ``fov_mm`` defaults to unbounded, i.e. no visibility requirement.
+    3. **Does the image show a mesh artifact?** A flat end cap or a broken
+       ostium sector is rejected only when it lies *inside* ``fov_mm`` -- a
+       cap past the FOV is never imaged, so it is not a reason to drop the
+       frame.
+    """
+    lumen = np.asarray(gt.distance_to_lumen_wall_mm, dtype=float)
+    outer = np.asarray(gt.distance_to_outer_wall_mm, dtype=float)
+    finite = np.isfinite(lumen) & np.isfinite(outer)
+    if not finite.all() or gt.lumen_csa_mm2 <= 0.0:
         return False
+    visible = finite & (lumen <= fov_mm) & (outer <= fov_mm)
+    if visible.mean() < min_visible_fraction:
+        return False
+    if np.isfinite(fov_mm):
+        gt = clip_ground_truth_to_fov(gt, fov_mm)
     if pose.branch_name != "parent":
         return not ground_truth_side_branch_sector_invalid(
             vessel,
