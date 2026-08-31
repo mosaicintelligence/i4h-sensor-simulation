@@ -591,6 +591,39 @@ class SideBranchConfig:
 
 
 # ---------------------------------------------------------------------------
+# Adjacent (parallel neighbor) vessels
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AdjacentVesselConfig:
+    """A parallel neighbor vessel running alongside the parent.
+
+    Unlike a :class:`SideBranchConfig` (which fuses into the parent wall
+    via boolean union at an ostium), an adjacent vessel is a
+    **separate, non-touching** tube offset laterally in the parent's
+    cross-section plane -- the "artery next to a vein" case. The
+    catheter stays in the parent lumen; the neighbor is visible only
+    because the IVUS beam reaches it laterally. At build time the
+    neighbor's per-layer meshes are concatenated into the parent's
+    surface meshes, so the neighbor shares the parent's materials and
+    segmentation labels.
+
+    ``azimuth_deg`` is the in-plane direction (measured in the parent's
+    local normal/binormal basis) from the parent centerline toward the
+    neighbor centerline. ``center_offset_mm`` is the center-to-center
+    distance in that plane; it is chosen so the outer walls never touch
+    (see :func:`vesselgen.adjacent.measured_outer_radius_mm`). ``branch``
+    carries the neighbor geometry; its centerline origin is shifted laterally
+    at build time in :meth:`Vessel.from_config`.
+    """
+
+    azimuth_deg: float = 0.0
+    center_offset_mm: float = 6.0
+    branch: BranchConfig = field(default_factory=BranchConfig)
+
+
+# ---------------------------------------------------------------------------
 # Vessel
 # ---------------------------------------------------------------------------
 
@@ -617,13 +650,27 @@ class VesselConfig:
     lesions: list[CalcificationLesionConfig] = field(default_factory=list)
     diseased_sector: Optional[DiseasedSectorConfig] = None
     guidewire: Optional[GuidewireConfig] = None
+    # Parallel (non-touching) neighbor vessels.
+    # Mutually exclusive with ``side_branches`` -- see ``__post_init__``.
+    # The catheter always stays in the parent lumen.
+    adjacent_vessels: list[AdjacentVesselConfig] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if self.side_branches and self.adjacent_vessels:
+            raise ValueError(
+                "adjacent_vessels and side_branches are mutually exclusive: "
+                "adjacent vessels are separate parallel neighbors that do not "
+                "touch the parent, while side branches fuse into the parent "
+                "wall at an ostium. Enable at most one per vessel."
+            )
         if self.parent.seed is None:
             self.parent.seed = self.seed
         for i, sb in enumerate(self.side_branches):
             if sb.branch.seed is None:
                 sb.branch.seed = self.seed + 100 + i
+        for i, adj in enumerate(self.adjacent_vessels):
+            if adj.branch.seed is None:
+                adj.branch.seed = self.seed + 200 + i
         # Side branches now flow through the per-layer
         # ``attach_side_branch_layered`` path, so multi-layer parent
         # walls are fully supported. The historical guard that forced
@@ -688,9 +735,30 @@ class _UniformRange:
 class GenerationConfig:
     """Distributions over vessel parameters for batch generation.
 
-      Defaults target large peripheral arteries and veins (femoral, iliac, renal,
-    EVAR-scale aorta) for the PV .035 ICE catheter. Lumen radii place the wall
-    outside the ring-down zone (r >~ 4 mm). ~18% of draws use aortic-scale lumina.
+    Defaults target large peripheral arteries and veins (femoral, iliac, renal,
+    EVAR-scale aorta) for the PV .035 catheter. Each vessel's scale is drawn
+    from a single uniform variate that partitions into mutually exclusive
+    buckets:
+
+    * **small vessel** (``small_vessel_probability``, default 10%): lumen radii
+      of ~1.8-3.5 mm so the wall sits at or inside the catheter ring-down disc
+      (~2-3.6 mm), intentionally reproducing the obscured-wall case;
+    * **aortic scale** (``aortic_scale_probability``, default 18%): 8-11.5 mm
+      radii for EVAR-scale segments;
+    * **large beyond-FOV** (``large_vessel_beyond_fov_probability``, default
+      10%): 12-16 mm radii so the far wall runs past ``t_far_mm`` on some
+      angular sectors (NaN A-lines in the geometric ground truth);
+    * **adjacent vessels** (``adjacent_vessel_probability``, default 10%): a
+      small primary with 1-2 parallel neighbors; mutually exclusive with side
+      branches;
+    * **typical peripheral** (the remaining probability mass): 4-6.5 mm radii,
+      placing the wall clearly outside the ring-down disc.
+
+    The four bucket probabilities must sum to <= 1.0 (validated in
+    ``__post_init__``); the remainder is the typical-scale mass. Setting
+    exactly one of them to 1.0 is an explicit "only this bucket" request and
+    wins regardless of the others' (non-zero default) values, so a single-case
+    dataset never needs the other knobs zeroed by hand.
     """
 
     length_mm_range: tuple[float, float] = (45.0, 75.0)
@@ -706,7 +774,51 @@ class GenerationConfig:
     aortic_radius_mm_range: tuple[float, float] = (8.0, 11.5)
     aortic_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
 
+    small_vessel_probability: float = 0.10
+    small_vessel_radius_mm_range: tuple[float, float] = (1.8, 3.5)
+    small_vessel_wall_thickness_mm_range: tuple[float, float] = (0.5, 0.9)
+
+    # Large vessels whose wall runs past the imaging FOV on some angular
+    # sectors for typical (naturally off-centre) poses, so those A-lines
+    # have no wall echo. The lumen radius is drawn large enough that the
+    # far wall exceeds the smaller ``t_far_mm`` FOVs (17.5 / 20 mm); at the
+    # 30 mm FOV these vessels mostly stay in view.
+    large_vessel_beyond_fov_probability: float = 0.10
+    large_vessel_radius_mm_range: tuple[float, float] = (12.0, 16.0)
+    large_vessel_wall_thickness_mm_range: tuple[float, float] = (1.0, 1.5)
+
+    # --- Adjacent parallel vessels ---------------------------------------
+    adjacent_vessel_probability: float = 0.10
+    """Fraction of vessels drawn as the adjacent-vessels case (1–2 parallel
+    neighbors; probe stays in the parent lumen). Own bucket of the scale
+    partition (see the class docstring). Mutually exclusive with side
+    branches."""
+
+    adjacent_parent_radius_mm_range: tuple[float, float] = (1.8, 3.5)
+    """Lumen radius (mm) of the adjacent-case primary. Sized so the
+    parent–neighbor boundary can fall in ring-down with pose bias."""
+
+    adjacent_parent_wall_thickness_mm_range: tuple[float, float] = (0.3, 0.55)
+    """Wall thickness (mm) of the adjacent-case primary vessel. Thin to keep the
+    outer boundary near ring-down without adding much to measured outer radius."""
+
+    adjacent_vessel_count_range: tuple[int, int] = (1, 2)
+    """Number of parallel neighbors per adjacent-vessels draw."""
+
+    adjacent_vessel_radius_frac_range: tuple[float, float] = (0.7, 1.1)
+    """Neighbor lumen radius as a fraction of the primary radius."""
+
+    adjacent_vessel_gap_mm_range: tuple[float, float] = (0.02, 0.15)
+    """Target edge-to-edge gap (mm) after measured outer radii; center
+    offset is ``measured(parent) + measured(neighbor) + gap``
+    (:func:`vesselgen.adjacent.place_adjacent_vessels`). Floor > 0 keeps
+    shells disjoint; near zero so the boundary falls in ring-down."""
+
     side_branch_probability: float = 0.45
+    """Side-branch probability for non-adjacent vessels only (conditional
+    rate). Dataset fraction ≈ ``side_branch_probability * (1 -
+    adjacent_vessel_probability)``."""
+
     side_branch_radius_frac_range: tuple[float, float] = (0.55, 0.80)
     side_branch_length_mm_range: tuple[float, float] = (40.0, 75.0)
     side_branch_polar_deg_range: tuple[float, float] = (35.0, 75.0)
@@ -782,6 +894,70 @@ class GenerationConfig:
     seen on real frames). Consumed by ``sampling.sample_pose`` when
     enabled via the per-vessel ``GenerationConfig`` knob."""
 
+    adjacent_vessel_pose_bias_prob: float = 0.8
+    """Adjacent case only: fraction of poses pushed eccentric toward a neighbor
+    (one chosen at random when several). Pulls the vessel–vessel boundary into
+    ring-down; passed to ``sampling.sample_pose(neighbor_bias_prob=...)``."""
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.adjacent_vessel_pose_bias_prob <= 1.0:
+            raise ValueError("adjacent_vessel_pose_bias_prob must be in [0, 1]")
+        buckets = self._scale_bucket_probabilities()
+        for _, field_name, p in buckets:
+            if not 0.0 <= p <= 1.0:
+                raise ValueError(f"{field_name} must be in [0, 1]")
+        forced = [field_name for _, field_name, p in buckets if p >= 1.0 - 1e-9]
+        if len(forced) > 1:
+            raise ValueError(f"at most one scale bucket may be forced to 1.0; got {forced}")
+        total = sum(p for _, _, p in buckets)
+        if not forced and total > 1.0 + 1e-9:
+            raise ValueError(
+                "small_vessel_probability + aortic_scale_probability + "
+                "large_vessel_beyond_fov_probability + adjacent_vessel_probability "
+                f"must be <= 1.0 (got {total:.3f}); they are mutually-exclusive "
+                "buckets of the scale partition carved out of the typical share"
+            )
+
+    def _scale_bucket_probabilities(self) -> list[tuple[str, str, float]]:
+        """Ordered ``(bucket, field name, probability)`` for the scale partition.
+
+        The order fixes the cumulative thresholds one uniform draw is tested
+        against; the remainder of the unit interval is the typical draw.
+        """
+        return [
+            ("small", "small_vessel_probability", self.small_vessel_probability),
+            ("aortic", "aortic_scale_probability", self.aortic_scale_probability),
+            (
+                "large",
+                "large_vessel_beyond_fov_probability",
+                self.large_vessel_beyond_fov_probability,
+            ),
+            ("adjacent", "adjacent_vessel_probability", self.adjacent_vessel_probability),
+        ]
+
+    def _draw_scale_bucket(self, rng: np.random.Generator, *, allow_adjacent: bool) -> str:
+        """Partition one uniform variate into {small | aortic | large | adjacent | typical}.
+
+        A bucket set to 1.0 wins outright (the variate is still consumed so the
+        RNG stream matches the unforced path). ``allow_adjacent=False`` drops
+        the adjacent bucket and its mass falls through to the typical draw.
+        """
+        u = rng.random()
+        buckets = [
+            (name, p)
+            for name, _, p in self._scale_bucket_probabilities()
+            if allow_adjacent or name != "adjacent"
+        ]
+        for name, p in buckets:
+            if p >= 1.0 - 1e-9:
+                return name
+        cumulative = 0.0
+        for name, p in buckets:
+            cumulative += p
+            if u < cumulative:
+                return name
+        return "typical"
+
     def sample(
         self,
         rng: np.random.Generator,
@@ -791,13 +967,26 @@ class GenerationConfig:
         force_side_branch: bool = False,
     ) -> VesselConfig:
         """Draw one VesselConfig from the configured distributions."""
+        from vesselgen.adjacent import place_adjacent_vessels, rescale_wall_to_thickness
+
         length = _UniformRange(*self.length_mm_range).sample(rng)
-        if rng.random() < self.aortic_scale_probability:
-            r_proximal = _UniformRange(*self.aortic_radius_mm_range).sample(rng)
-            wall_lo, wall_hi = self.aortic_wall_thickness_mm_range
-        else:
-            r_proximal = _UniformRange(*self.parent_radius_mm_range).sample(rng)
-            wall_lo, wall_hi = self.parent_wall_thickness_mm_range
+
+        # Scale partition: one draw selects one mutually-exclusive bucket
+        # (see ``_draw_scale_bucket``). A forced side branch suppresses the
+        # adjacent bucket, since the two topologies are mutually exclusive.
+        bucket = self._draw_scale_bucket(rng, allow_adjacent=not force_side_branch)
+        is_adjacent = bucket == "adjacent"
+        radius_range, (wall_lo, wall_hi) = {
+            "small": (self.small_vessel_radius_mm_range, self.small_vessel_wall_thickness_mm_range),
+            "aortic": (self.aortic_radius_mm_range, self.aortic_wall_thickness_mm_range),
+            "large": (self.large_vessel_radius_mm_range, self.large_vessel_wall_thickness_mm_range),
+            "adjacent": (
+                self.adjacent_parent_radius_mm_range,
+                self.adjacent_parent_wall_thickness_mm_range,
+            ),
+            "typical": (self.parent_radius_mm_range, self.parent_wall_thickness_mm_range),
+        }[bucket]
+        r_proximal = _UniformRange(*radius_range).sample(rng)
         taper = _UniformRange(*self.parent_radius_taper_frac_range).sample(rng)
         r_distal = r_proximal * taper
 
@@ -806,11 +995,12 @@ class GenerationConfig:
             rng
         )
 
-        # Decide side branches and wall layering independently;
-        # ``attach_side_branch_layered`` does per-layer boolean unions
-        # so both can be combined freely.
+        # Side branches are drawn only for non-adjacent vessels (the two
+        # topologies are mutually exclusive). ``attach_side_branch_layered``
+        # does per-layer boolean unions so branches + layered walls combine
+        # freely.
         n_side = 0
-        if force_side_branch or rng.random() < self.side_branch_probability:
+        if not is_adjacent and (force_side_branch or rng.random() < self.side_branch_probability):
             n_side = int(rng.integers(1, self.max_side_branches + 1))
 
         parent_wall: Union[WallConfig, LayeredWallConfig]
@@ -932,6 +1122,48 @@ class GenerationConfig:
         if n_side == 0 and rng.random() < self.guidewire_probability:
             guidewire = self._sample_guidewire(rng, parent_radius_mm=min(r_proximal, r_distal))
 
+        # Adjacent parallel neighbors (mutually exclusive with side
+        # branches). Each neighbor inherits the parent's wall structure
+        # rescaled to its own radius; lateral placement is
+        # computed by ``place_adjacent_vessels`` so the outer walls never
+        # touch and two neighbors cluster at realistic angles. The
+        # neighbor centerline origin is a placeholder here -- it is
+        # shifted in the parent cross-section plane at build time in
+        # ``Vessel.from_config`` from ``azimuth_deg`` + ``center_offset_mm``.
+        adjacent_vessels: list[AdjacentVesselConfig] = []
+        if is_adjacent:
+            lo, hi = self.adjacent_vessel_count_range
+            n_adj = int(rng.integers(lo, hi + 1))
+            neighbor_branches: list[BranchConfig] = []
+            gaps_mm: list[float] = []
+            for j in range(n_adj):
+                radius_frac = _UniformRange(*self.adjacent_vessel_radius_frac_range).sample(rng)
+                nb_radius = r_proximal * radius_frac
+                nb_wall_thickness = max(
+                    self.adjacent_parent_wall_thickness_mm_range[0],
+                    wall_thickness_mm * radius_frac,
+                )
+                neighbor_branches.append(
+                    BranchConfig(
+                        centerline=CenterlineConfig(
+                            length_mm=length,
+                            origin=(0.0, -length / 2.0, 0.0),
+                            direction=(0.0, 1.0, 0.0),
+                            n_stations=parent.centerline.n_stations,
+                        ),
+                        cross_section=CrossSectionConfig(
+                            mean_radius_mm=nb_radius,
+                            distal_radius_mm=nb_radius * taper,
+                            max_perturbation_frac=parent.cross_section.max_perturbation_frac,
+                        ),
+                        wall=rescale_wall_to_thickness(parent_wall, nb_wall_thickness),
+                        name=f"adjacent_{j}",
+                        seed=seed + 200 + j,
+                    )
+                )
+                gaps_mm.append(_UniformRange(*self.adjacent_vessel_gap_mm_range).sample(rng))
+            adjacent_vessels = place_adjacent_vessels(parent, neighbor_branches, gaps_mm, rng)
+
         return VesselConfig(
             parent=parent,
             side_branches=side_branches,
@@ -940,6 +1172,7 @@ class GenerationConfig:
             lesions=lesions,
             diseased_sector=diseased_sector,
             guidewire=guidewire,
+            adjacent_vessels=adjacent_vessels,
         )
 
     # ------------------------------------------------------------------

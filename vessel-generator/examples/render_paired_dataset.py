@@ -70,6 +70,7 @@ from vesselgen.library import iter_dataset  # noqa: E402
 from vesselgen.sampling import (  # noqa: E402
     GroundTruth,
     PoseSample,
+    clip_ground_truth_to_fov,
     ground_truth_is_valid_pose,
     side_branch_imaging_sector_mask,
 )
@@ -87,6 +88,24 @@ from vesselgen.sim_randomization import (  # noqa: E402
 from vesselgen.vessel import Vessel  # noqa: E402
 
 PoseSlot = Literal["random", "side_branch", "parent_ostium"]
+DEFAULT_PAIRED_MAX_REFLECTION_DEPTH = 24
+
+
+def default_paired_generation_config(**overrides) -> GenerationConfig:
+    """The paired renderer's ``GenerationConfig``: a trilaminar wall on every
+    vessel (the calibrated trilaminar materials need all three layers present)
+    and a 50/50 mix of bifurcation and straight vessels. ``overrides`` are
+    passed through, e.g. ``small_vessel_probability=1.0`` for a single-case
+    shard; the scale buckets default to their ``GenerationConfig`` rates."""
+    kwargs: dict = dict(
+        side_branch_probability=0.5,
+        layered_wall_probability=1.0,
+        n_layers_weights=(0.0, 0.0, 1.0),
+        intima_thickness_frac_range=(0.18, 0.30),
+        media_thickness_frac_range=(0.40, 0.55),
+    )
+    kwargs.update(overrides)
+    return GenerationConfig(**kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -94,15 +113,66 @@ PoseSlot = Literal["random", "side_branch", "parent_ostium"]
 # ---------------------------------------------------------------------------
 
 
-def _meshes_from_manifest(manifest: dict, vessel_dir: Path) -> list[tuple[Path, str]]:
-    """Return ``[(obj_path, material_name)]`` for every mesh the simulator
-    should load, in the order ``surfaces, lesions, guidewire``.
+def _inward_shifted_chain(obj: dict) -> list[str]:
+    """Material chain to declare for an object the probe sits **outside** of.
+
+    raysim decides enter-vs-exit by object identity, and a mesh's declared
+    material is the one a ray adopts on *entering* that mesh. The parent is
+    traversed inside->out (the probe is in its lumen), so the manifest's
+    "material just outside this surface" chain is already what a ray adopts
+    as it crosses each shell outward. A neighbour is reached from outside, so
+    the same crossings happen in the opposite order and every shell must
+    declare the material *inside* it instead -- the chain shifted one shell
+    inward, with the innermost (lumen) shell handing the ray the blood pool::
+
+        lumen.obj      intima      -> lumen        (interior_material)
+        interface_01   media       -> intima
+        interface_02   adventitia  -> media
+        outer          adventitia  -> adventitia   (closing shell, R = 0)
+    """
+    declared = [str(s["material"]) for s in obj.get("surfaces", [])]
+    interior = str(obj.get("interior_material", "lumen"))
+    return [interior if i == 0 else declared[i - 1] for i in range(len(declared))]
+
+
+def _surface_meshes_from_manifest(manifest: dict, vessel_dir: Path) -> list[tuple[Path, str]]:
+    """Return ``[(obj_path, material_name)]`` for the wall shells.
+
+    With no adjacent neighbours this is just the top-level ``surfaces`` list.
+    When ``surfaces_are_merged`` is set those top-level meshes fuse every
+    vessel into one mesh per shell -- correct for the geometry stack, wrong
+    for raysim, whose per-mesh crossing bookkeeping needs one mesh per closed
+    shell. In that case we load the ``objects`` decomposition instead (never
+    both: they are two views of the same geometry), each neighbour with its
+    chain shifted inward.
     """
     entries: list[tuple[Path, str]] = []
+    objects = manifest.get("objects") if manifest.get("surfaces_are_merged") else None
+    if objects:
+        for obj in objects:
+            surfaces = obj.get("surfaces", [])
+            materials = (
+                [str(s["material"]) for s in surfaces]
+                if obj.get("probe_inside", False)
+                else _inward_shifted_chain(obj)
+            )
+            for s, material in zip(surfaces, materials):
+                p = vessel_dir / s["obj"]
+                if p.exists():
+                    entries.append((p, material))
+        return entries
     for s in manifest.get("surfaces", []):
         p = vessel_dir / s["obj"]
         if p.exists():
             entries.append((p, str(s["material"])))
+    return entries
+
+
+def _meshes_from_manifest(manifest: dict, vessel_dir: Path) -> list[tuple[Path, str]]:
+    """Return ``[(obj_path, material_name)]`` for every mesh the simulator
+    should load, in the order ``surfaces, lesions, guidewire``.
+    """
+    entries: list[tuple[Path, str]] = list(_surface_meshes_from_manifest(manifest, vessel_dir))
     for lesion in manifest.get("lesions", []):
         p = vessel_dir / lesion["obj"]
         if p.exists():
@@ -125,6 +195,11 @@ def build_vessel_world(vessel_dir: Path, materials):
     the material a ray enters when it crosses the surface outward;
     nothing is loaded past the outermost emitted surface (rays stay in
     the outer-most material until the FOV).
+
+    When the manifest sets ``surfaces_are_merged`` (adjacent neighbours),
+    the per-object shells under ``objects/`` are loaded in place of the
+    merged top-level ones, with each neighbour's chain shifted one shell
+    inward -- see :func:`_surface_meshes_from_manifest`.
 
     Falls back to the pre-manifest two-file layout
     (``lumen.obj`` + ``outer.obj``) only if no ``vessel.json`` is
@@ -378,6 +453,7 @@ def _sample_pose_for_slot(
     edge_margin_mm: float,
     side_branch_ostium_bias_prob: float,
     side_branch_ostium_arclength_frac: float,
+    neighbor_bias_prob: float = 0.0,
 ) -> PoseSample:
     daughters = [b for b in vessel.branches if not b.is_parent]
     if slot == "random" or not daughters:
@@ -387,6 +463,7 @@ def _sample_pose_for_slot(
             edge_margin_mm=edge_margin_mm,
             side_branch_ostium_bias_prob=side_branch_ostium_bias_prob,
             side_branch_ostium_arclength_frac=side_branch_ostium_arclength_frac,
+            neighbor_bias_prob=neighbor_bias_prob,
         )
     side = daughters[0]
     # Tilt-cone reach that the imaging plane sweeps along the centerline.
@@ -727,6 +804,8 @@ def generate_paired_dataset(
     edge_margin_mm: float = 0.15,
     frames_per_vessel: int = 12,
     max_pose_attempts: int = 48,
+    min_visible_fraction: float = 0.5,
+    max_reflection_depth: int | None = DEFAULT_PAIRED_MAX_REFLECTION_DEPTH,
     rand_cfg: SimRandomizationConfig | None = None,
     gen_cfg: GenerationConfig | None = None,
     max_gain_resamples: int = 8,
@@ -762,6 +841,18 @@ def generate_paired_dataset(
 
     rand_cfg = rand_cfg or SimRandomizationConfig()
     cfg, materials, _base_sim_params = load_calibrated_config()
+    # The calibrated default (15) is sized for a single vessel: the probe
+    # crosses 3 shells outward and that is the whole budget a ray needs.
+    # A scene with neighbours costs 8 crossings per neighbour a ray passes
+    # through (4 shells in, 4 out), so a two-neighbour vessel can exhaust
+    # 15 before the ray reaches the FOV and the tail of the A-line is
+    # silently dropped.
+    effective_max_reflection_depth = (
+        DEFAULT_PAIRED_MAX_REFLECTION_DEPTH
+        if max_reflection_depth is None
+        else int(max_reflection_depth)
+    )
+    cfg.sim.max_reflection_depth = effective_max_reflection_depth
     base_gain_db = float(cfg.processing.gain_db)
     base_ring_down_amplitude = float(cfg.processing.ring_down.amplitude)
     base_t_far_mm = float(cfg.sim.t_far_mm)
@@ -785,13 +876,7 @@ def generate_paired_dataset(
         # ``layered_wall_probability`` to 1.0 and ``n_layers_weights``
         # to (0, 0, 1) so every vessel emits the full 3-layer
         # trilaminar wall.
-        gen_cfg = GenerationConfig(
-            side_branch_probability=0.5,
-            layered_wall_probability=1.0,
-            n_layers_weights=(0.0, 0.0, 1.0),
-            intima_thickness_frac_range=(0.18, 0.30),
-            media_thickness_frac_range=(0.40, 0.55),
-        )
+        gen_cfg = default_paired_generation_config()
     manifest_frames: list[dict] = list(resume_meta)
     frame_idx = len(resume_meta)
     if frame_idx >= n_frames:
@@ -870,18 +955,28 @@ def generate_paired_dataset(
                 edge_margin_mm=edge_margin_mm,
                 side_branch_ostium_bias_prob=rand_cfg.side_branch_ostium_bias_prob,
                 side_branch_ostium_arclength_frac=rand_cfg.side_branch_ostium_arclength_frac,
+                neighbor_bias_prob=gen_cfg.adjacent_vessel_pose_bias_prob,
             )
-            gt = vessel.ground_truth_at(
-                pose,
-                n_angles=n_theta,
-                max_distance_mm=float(vessel_sim_draw.t_far_mm),
-            )
+            # Trace the ground truth without a range limit so the pose gate
+            # can tell a wall that is merely past the FOV (kept: the large
+            # vessel case) from a wall that is missing (rejected: broken
+            # slice); then clip to the FOV for everything downstream, since
+            # the on-disk convention is NaN beyond ``t_far_mm``.
+            t_far_mm = float(vessel_sim_draw.t_far_mm)
+            gt_full = vessel.ground_truth_at(pose, n_angles=n_theta, max_distance_mm=np.inf)
             # Hot-path optimisation: ~96% of pose attempts used to get
             # rejected, and the segmentation mask costs ~5x the cheap
             # geometric validity check. Reject early on the cheap check,
             # then compute seg only when needed.
-            if not ground_truth_is_valid_pose(vessel, pose, gt):
+            if not ground_truth_is_valid_pose(
+                vessel,
+                pose,
+                gt_full,
+                fov_mm=t_far_mm,
+                min_visible_fraction=min_visible_fraction,
+            ):
                 continue
+            gt = clip_ground_truth_to_fov(gt_full, t_far_mm)
             seg: np.ndarray | None = None
             # The "side-branch sector missing wall" check rejects poses
             # whose imaging plane sees lumen with no wall behind it on
@@ -991,6 +1086,7 @@ def generate_paired_dataset(
         "acoustic_boundary_offset_mm": acoustic_offset,
         "boundary_type": "acoustic",
         "sim_config": str(VISIONS_DIR / "volcano_s5i.yaml"),
+        "max_reflection_depth": int(cfg.sim.max_reflection_depth),
         "randomization": {
             "gain_slider_range": list(rand_cfg.gain_slider_range),
             "ar_on_probability": rand_cfg.ar_on_probability,
@@ -999,6 +1095,7 @@ def generate_paired_dataset(
             "min_side_branch_frames_per_vessel": min_side_branch_frames,
             "min_parent_ostium_frames_per_vessel": min_parent_ostium_frames,
             "max_saturation_fraction": rand_cfg.max_saturation_fraction,
+            "min_visible_fraction": min_visible_fraction,
             "tier2_enabled": rand_cfg.enable_tier2,
             "tgc_deep_gain_scale_range": list(rand_cfg.tgc_deep_gain_scale_range),
             "ring_down_amplitude_scale_range": list(rand_cfg.ring_down_amplitude_scale_range),
@@ -1006,6 +1103,10 @@ def generate_paired_dataset(
             "t_far_mm_choices": list(rand_cfg.t_far_mm_choices),
         },
         "vessel_generation": {
+            "small_vessel_probability": gen_cfg.small_vessel_probability,
+            "aortic_scale_probability": gen_cfg.aortic_scale_probability,
+            "large_vessel_beyond_fov_probability": gen_cfg.large_vessel_beyond_fov_probability,
+            "adjacent_vessel_probability": gen_cfg.adjacent_vessel_probability,
             "side_branch_probability": gen_cfg.side_branch_probability,
             "layered_wall_probability": gen_cfg.layered_wall_probability,
             "n_layers_weights": list(gen_cfg.n_layers_weights),
@@ -1088,6 +1189,44 @@ def main() -> None:
     p.add_argument("--edge-margin-mm", type=float, default=0.15)
     p.add_argument("--frames-per-vessel", type=int, default=12)
     p.add_argument(
+        "--min-visible-fraction",
+        type=float,
+        default=0.5,
+        help=(
+            "Pose-gate policy: minimum fraction of A-lines that see both the "
+            "lumen and the outer wall inside the FOV. Geometry validity is "
+            "checked separately on an unbounded trace, so sectors where the "
+            "wall runs past t_far (the large-vessel case) never reject a pose; "
+            "this only drops frames with too little wall to segment."
+        ),
+    )
+    for flag in (
+        "small-vessel-probability",
+        "large-vessel-beyond-fov-probability",
+        "adjacent-vessel-probability",
+        "aortic-scale-probability",
+    ):
+        p.add_argument(
+            f"--{flag}",
+            type=float,
+            default=None,
+            help=(
+                f"Override GenerationConfig.{flag.replace('-', '_')}. The four scale "
+                "buckets must sum to <= 1; pass 1.0 to exactly one to render only that case."
+            ),
+        )
+    p.add_argument(
+        "--max-reflection-depth",
+        type=int,
+        default=DEFAULT_PAIRED_MAX_REFLECTION_DEPTH,
+        help=(
+            "Ray reflection-depth budget for paired rendering. Default: 24. "
+            "A scene with adjacent neighbours spends ~8 crossings per "
+            "neighbour a ray passes through; too-low values (e.g. 15 from "
+            "single-vessel calibration) can drop far A-line tails."
+        ),
+    )
+    p.add_argument(
         "--no-require-side-branch",
         action="store_true",
         default=True,
@@ -1154,9 +1293,25 @@ def main() -> None:
         max_tilt_deg=args.max_tilt_deg,
         edge_margin_mm=args.edge_margin_mm,
         frames_per_vessel=args.frames_per_vessel,
+        min_visible_fraction=args.min_visible_fraction,
+        gen_cfg=default_paired_generation_config(
+            **{
+                name: value
+                for name, value in {
+                    "small_vessel_probability": args.small_vessel_probability,
+                    "large_vessel_beyond_fov_probability": (
+                        args.large_vessel_beyond_fov_probability
+                    ),
+                    "adjacent_vessel_probability": args.adjacent_vessel_probability,
+                    "aortic_scale_probability": args.aortic_scale_probability,
+                }.items()
+                if value is not None
+            }
+        ),
         require_side_branch=bool(args.require_side_branch),
         min_side_branch_frames=args.min_side_branch_frames,
         min_parent_ostium_frames=args.min_parent_ostium_frames,
+        max_reflection_depth=args.max_reflection_depth,
         skip_overlay=args.skip_overlay,
         resume=args.resume,
     )

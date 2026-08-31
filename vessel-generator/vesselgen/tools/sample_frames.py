@@ -30,6 +30,27 @@ def main() -> None:
     p.add_argument(
         "--write-previews", action="store_true", help="Write a per-sample PNG (slow if N is large)"
     )
+    p.add_argument(
+        "--fov-mm",
+        type=float,
+        default=None,
+        help="Draw the imaging FOV as a dashed circle in previews (mm).",
+    )
+    p.add_argument(
+        "--ring-down-mm",
+        type=float,
+        default=None,
+        help=(
+            "Outer radius (mm) of the catheter ring-down annulus to overlay on "
+            "previews for small-vessel QA (e.g. 2.8). Omit to disable the overlay."
+        ),
+    )
+    p.add_argument(
+        "--ring-down-inner-mm",
+        type=float,
+        default=1.0,
+        help="Inner radius (mm) of the ring-down dead zone (default 1.0). Used with --ring-down-mm.",
+    )
     args = p.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -43,7 +64,9 @@ def main() -> None:
             max_tilt_deg=args.max_tilt_deg,
             edge_margin_mm=args.edge_margin_mm,
         )
-        gt = vessel.ground_truth_at(pose, n_angles=args.gt_angles)
+        gt = vessel.ground_truth_at(
+            pose, n_angles=args.gt_angles, max_distance_mm=args.max_distance_mm
+        )
 
         record = {
             "index": i,
@@ -76,7 +99,14 @@ def main() -> None:
         summary.append(record)
 
         if args.write_previews:
-            preview_ground_truth(pose, gt, args.out / f"frame_{i:05d}.png")
+            preview_ground_truth(
+                pose,
+                gt,
+                args.out / f"frame_{i:05d}.png",
+                fov_radius_mm=args.fov_mm,
+                ring_down_outer_mm=args.ring_down_mm,
+                ring_down_inner_mm=args.ring_down_inner_mm,
+            )
 
     with (args.out / "summary.json").open("w") as f:
         json.dump({"n_samples": len(summary), "vessel": str(args.vessel)}, f, indent=2)

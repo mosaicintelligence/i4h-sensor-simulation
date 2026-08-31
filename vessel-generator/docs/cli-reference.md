@@ -22,6 +22,11 @@ vesselgen-vessel --out OUT_DIR [options]
 | `--wall-mm` | `0.85` | Total wall thickness |
 | `--length-mm` | `55.0` | Parent segment length |
 | `--side-branch` | off | Attach one side-branch bifurcation |
+| `--adjacent-vessel` | off | Add parallel neighbor vessel(s); mutually exclusive with `--side-branch` |
+| `--n-adjacent` | `1` | Number of neighbors (`1` or `2`) |
+| `--adjacent-gap-mm` | `0.1` | Edge-to-edge gap from parent outer wall to a neighbor outer wall (batch range 0.02–0.15) |
+| `--adjacent-radius-frac` | `1.0` | Neighbor radius as a fraction of the parent radius |
+| `--adjacent-azimuth-deg` | `0.0` | In-plane direction to the first neighbor |
 | `--guidewire` | off | Add tungsten guidewire |
 | `--n-lesions` | `0` | In-wall lesions (requires no side branch) |
 | `--lesion-kinds` | `hard` | Comma-separated: `hard`, `soft_lipid`, `fibrous`, `thrombus` |
@@ -41,6 +46,15 @@ Side-branch bifurcation (single-slab wall on branches):
 vesselgen-vessel --out out/vessel_side --seed 7 --layers 3 --side-branch
 ```
 
+Adjacent-case primary with two parallel neighbors at a tight (ring-down
+scale) gap:
+
+```bash
+vesselgen-vessel --out out/vessel_adjacent --seed 7 --layers 3 \
+    --radius-mm 2.5 --wall-mm 0.6 \
+    --adjacent-vessel --n-adjacent 2
+```
+
 ## `vesselgen-dataset` — batch geometry
 
 Generate N vessel folders with parameters drawn from `GenerationConfig`.
@@ -55,8 +69,16 @@ vesselgen-dataset --out OUT_DIR --n COUNT [options]
 | `--n` | *(required)* | Number of vessels |
 | `--base-seed` | `0` | Seed for the batch |
 | `--name-prefix` | `vessel` | Folder prefix (`vessel_0000`, …) |
-| `--side-branch-probability` | `0.45` | Fraction of vessels with a side branch |
+| `--side-branch-probability` | `0.45` | Fraction of **non-adjacent-type** vessels with a side branch (conditional rate; see [configuration](configuration.md#side-branches)) |
+| `--small-vessel-probability` | `0.10` | Fraction of vessels drawn from the small-vessel scale (wall at/inside ring-down) |
+| `--large-vessel-beyond-fov-probability` | `0.10` | Fraction of vessels drawn from the large beyond-FOV scale (`NaN` wall A-lines) |
+| `--adjacent-vessel-probability` | `0.10` | Fraction of vessels drawn as the adjacent-vessels type (parallel neighbors; own scale bucket) |
+| `--aortic-scale-probability` | `0.18` | Fraction of vessels drawn at aortic scale |
 | `--no-previews` | off | Skip per-vessel `preview.png` |
+
+The four scale probabilities are mutually exclusive buckets of one partition
+and must sum to ≤ 1.0; pass `1.0` to exactly one of them to generate only that
+case (the others are then ignored).
 
 ## `vesselgen-frames` — pose + geometric GT
 
@@ -75,6 +97,13 @@ vesselgen-frames --vessel VESSEL_DIR --out OUT_DIR [options]
 | `--max-tilt-deg` | `15.0` | Maximum probe-axis tilt |
 | `--edge-margin-mm` | `0.2` | Minimum clearance from lumen wall |
 | `--write-previews` | off | Write per-frame contour PNGs |
+| `--fov-mm` | *(none)* | Draw the imaging FOV as a dashed circle in previews |
+| `--ring-down-mm` | *(none)* | Outer radius (mm) of the ring-down annulus shaded in previews (e.g. `2.8`) |
+| `--ring-down-inner-mm` | `1.0` | Inner radius (mm) of the ring-down dead zone; used with `--ring-down-mm` |
+
+The `--fov-mm` and `--ring-down-mm` overlays make it easy to verify by eye
+whether a neighbor wall (adjacent-vessels case) falls inside the ring-down
+band (obscured boundary) versus resolved within the FOV.
 
 ## `render_paired_dataset.py` — paired IVUS dataset
 
@@ -93,6 +122,9 @@ python vessel-generator/examples/render_paired_dataset.py [options]
 | `--max-tilt-deg` | `15.0` | Pose tilt limit |
 | `--edge-margin-mm` | `0.15` | Wall clearance for pose sampling |
 | `--require-side-branch` | off | Only emit bifurcation vessels |
+| `--min-visible-fraction` | `0.5` | Pose-gate policy: minimum fraction of A-lines that see both walls inside the FOV. Geometry validity is checked separately on an unbounded trace, so beyond-FOV sectors (large vessels) pass by default |
+| `--max-reflection-depth` | `24` | Ray reflection-depth budget (adjacent scenes spend ~8 crossings per traversed neighbour) |
+| `--small-vessel-probability` / `--large-vessel-beyond-fov-probability` / `--adjacent-vessel-probability` / `--aortic-scale-probability` | `GenerationConfig` defaults | Scale-bucket fractions; `1.0` on one of them renders only that case |
 | `--skip-overlay` | off | Skip overlay PNG (faster at scale) |
 | `--resume` | off | Continue an interrupted run |
 | `--regenerate-segmentations-only` | off | Recompute masks from saved B-mode |
