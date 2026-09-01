@@ -922,7 +922,13 @@ def generate_paired_dataset(
         vessel_sim_params = cfg.to_sim_params()
         apply_vessel_sim_draw(cfg, vessel_sim_params, vessel_sim_draw)
 
-        n_ar_on = (frames_per_vessel + 1) // 2
+        # ceil keeps the historical fixed 50/50 split bit-for-bit at the 0.5
+        # default (ceil(n/2) == (n+1)//2); 1.0 locks ring-down injection on
+        # for every frame, 0.0 disables it.
+        n_ar_on = min(
+            frames_per_vessel,
+            int(np.ceil(frames_per_vessel * rand_cfg.ar_on_probability)),
+        )
         ar_schedule = ["on"] * n_ar_on + ["off"] * (frames_per_vessel - n_ar_on)
         rng.shuffle(ar_schedule)
 
