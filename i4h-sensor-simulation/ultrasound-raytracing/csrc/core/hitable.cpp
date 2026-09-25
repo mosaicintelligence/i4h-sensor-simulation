@@ -121,6 +121,39 @@ Mesh::Mesh(const std::string& file_name, uint32_t material_id) : Hitable(materia
   aabb_max_.x = mesh->mAABB.mMax.x;
   aabb_max_.y = mesh->mAABB.mMax.y;
   aabb_max_.z = mesh->mAABB.mMax.z;
+
+  num_vertices_ = mesh->mNumVertices;
+}
+
+std::vector<float3> Mesh::get_vertices() const {
+  auto scene = importer_->GetScene();
+  auto mesh = scene->mMeshes[scene->mRootNode->mChildren[0]->mMeshes[0]];
+  std::vector<float3> vertices(mesh->mNumVertices);
+  for (unsigned int i = 0; i < mesh->mNumVertices; ++i) {
+    vertices[i] = make_float3(mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z);
+  }
+  return vertices;
+}
+
+void Mesh::update_vertices(CUdeviceptr device_ptr, size_t num_vertices, cudaStream_t stream) {
+  if (!cuda_vertex_buffer_) {
+    throw std::runtime_error("update_vertices() called before build()");
+  }
+  if (num_vertices != num_vertices_) {
+    throw std::runtime_error(fmt::format(
+        "update_vertices(): vertex count {} != mesh vertex count {} (topology must not change)",
+        num_vertices, num_vertices_));
+  }
+  // Device-to-device copy of the new positions (float3 per vertex, assimp order) into the
+  // buffer OptiX already references, so a subsequent World::refit() re-fits the GAS in place.
+  // NOTE: shading normals (cuda_normal_buffer_) are intentionally left at their rest values -
+  // for small radial distension the per-vertex normal drift is negligible, and recomputing
+  // them on-device would need a separate normal kernel (a future refinement).
+  CUDA_CHECK(cudaMemcpyAsync(reinterpret_cast<void*>(cuda_vertex_buffer_->get_device_ptr(stream)),
+                             reinterpret_cast<const void*>(device_ptr),
+                             num_vertices * sizeof(float3),
+                             cudaMemcpyDeviceToDevice,
+                             stream));
 }
 
 void Mesh::build(OptixBuildInput* optix_build_input, HitGroupData* hit_group_data,

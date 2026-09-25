@@ -79,8 +79,24 @@ class RaytracingUltrasoundSimulator {
    * @param world World object containing scene geometry
    * @param materials Materials
    */
-  explicit RaytracingUltrasoundSimulator(World* world, const Materials* materials);
+  /**
+   * @param allow_update build a refit-able GAS so update_vertices()/refit() can be used for
+   *   dynamic (deforming) geometry, e.g. pulsatile lumen dilation. Default false keeps the
+   *   original (compacted, immutable) build.
+   */
+  explicit RaytracingUltrasoundSimulator(World* world, const Materials* materials,
+                                         bool allow_update = false);
   RaytracingUltrasoundSimulator() = delete;
+
+  /**
+   * Overwrite object @p obj_index's vertices in place from a device buffer of @p num_vertices
+   * float3 (assimp order), e.g. a Warp array of dilated positions. Follow with refit().
+   * Requires allow_update == true at construction.
+   */
+  void update_vertices(size_t obj_index, CUdeviceptr device_ptr, size_t num_vertices);
+
+  /// Refit the GAS in place after update_vertices() calls (cheap vs a rebuild).
+  void refit();
 
   /// Simulation parameters
   struct SimParams {
